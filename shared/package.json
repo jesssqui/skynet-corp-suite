@@ -8,7 +8,8 @@
     "./ids": "./ids.js",
     "./time": "./time.js",
     "./hlc": "./hlc.js",
-    "./actors": "./actors.js"
+    "./actors": "./actors.js",
+    "./fields": "./fields.js"
   },
   "scripts": {
     "test": "node --test \"test/*.test.js\""
