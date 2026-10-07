@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     "./ids": "./ids.js",
-    "./time": "./time.js"
+    "./time": "./time.js",
+    "./hlc": "./hlc.js"
   },
   "scripts": {
     "test": "node --test \"test/*.test.js\""

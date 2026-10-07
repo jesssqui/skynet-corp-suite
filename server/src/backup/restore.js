@@ -2,7 +2,8 @@
 //
 //  1. Refuse if the server's heartbeat file is fresh (it is still running).
 //  2. Copy the backup next to the database as <db>.restoring and check it:
-//     integrity_check must pass and it must be a suite database.
+//     integrity_check must pass and it must be a suite database. Mark the copy
+//     as restored so sync starts a new generation (devices resync).
 //  3. Take a safety copy of the current database (backup API, so WAL content is
 //     included) into the backup folder as pre-restore-<time>.db.
 //  4. Remove the old -wal/-shm files and rename the checked copy into place.
@@ -12,6 +13,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { openDb } from '../db/open.js';
 import { runningServer } from '../lib/serverLock.js';
+import { markRestoredCopy } from '../modules/sync/restoreMarker.js';
 
 export function lockPathFor(dbPath) {
   return `${dbPath}.server-lock`;
@@ -62,6 +64,14 @@ export async function restoreBackup({ from, dbPath, backupDir, force = false, no
   let info;
   try {
     info = verifyBackupFile(staging);
+    // Tell the sync module this database went back in time (new generation on next start).
+    const copy = new Database(staging);
+    try {
+      copy.pragma('journal_mode = DELETE'); // keep the write in this one file (no -wal left behind)
+      markRestoredCopy(copy, now.toISOString());
+    } finally {
+      copy.close();
+    }
   } catch (err) {
     fs.rmSync(staging, { force: true });
     throw err;
