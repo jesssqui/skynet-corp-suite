@@ -6,8 +6,9 @@ core (later packages); this repo currently holds the skeleton from package **C0*
 module `health`, tests, Docker, nightly backups), the server half of offline sync from **C2a** (module `sync`),
 sign-in from **C1** (module `auth`: two accounts, password + authenticator code, sessions, devices), the browser half
 of offline sync from **C2b** (the on-device copy and outbox in IndexedDB, a service worker so the app opens with no
-signal, the sync bar and the Needs attention page) and the CRM's core records from **C3a** (module `crm`: our businesses,
-clients, accounts, contacts, consent, relationships, services, activities, links — all synced; screens are C3b).
+signal, the sync bar and the Needs attention page), the CRM's core records from **C3a** (module `crm`: our businesses,
+clients, accounts, contacts, consent, relationships, services, activities, links — all synced) and its screens from
+**C3b** (client list and search, the client page with its timeline, quick notes and call logs — all offline).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -71,13 +72,18 @@ client/src/
   sw/                      service-worker.js (built to dist/sw.js), register.js (registration + update flow)
   shell/                   AppShell (sidebar on desktop, bottom tab bar on phones), shell.css, SyncBar slot,
                            UpdateBanner ("new version ready · Reload"), BackupBanner
-  ui/                      the shared look: theme.css (tokens, light/dark), theme.jsx, components.jsx, icons.jsx; import from ui/index.js
+  ui/                      the shared look: theme.css (tokens, light/dark), theme.jsx, components.jsx (incl. Sheet, SelectField,
+                           TextAreaField, CheckboxField), ui.css (the Sheet's media queries), icons.jsx; import from ui/index.js.
+                           ui/format.js: formatDate/formatDateTime/formatDay (local time), toDateTimeInput/fromDateTimeInput
   modules/index.js         client module registration list -> nav + routes
   modules/<name>/          index.jsx ({ id, nav, routes }) + pages
   api/client.js            fetch wrapper (api.get/post/put/del, ApiError); sends X-Suite-Device; 401 session codes
                            fire SESSION_LOST_EVENT
   modules/sync/            /sync (Offline data), /sync/attention (Needs attention), /sync/data/:entity (plain records view)
-  modules/crm/             /crm ("Clients" in the nav): our businesses + links to each CRM record type's plain view (C3b replaces it)
+  modules/crm/             C3b screens: ClientListPage (/crm), ClientPage (/crm/clients/:id), BusinessesPage
+                           (/crm/businesses), forms.jsx (add/edit sheets), parts.jsx (chips, RecordSync, FormSheet),
+                           data.js (the offline reads), logic.js (search, timeline filters, money, consent, errors — no
+                           React, tested in client/test/clients.test.js), crm.css (layout media queries)
 client/public/             manifest.webmanifest, icons (placeholders)
 client/test/               node --test: the engine against a real server with syncdemo + fixtures/chk (a UNIQUE column),
                            overlay; fake-indexeddb
@@ -264,8 +270,9 @@ gets 401 `device_signed_out`):
   field lists, `clashes` ids, `kept`) | `rejected` (`code` + `reason`; nothing written — show it in "needs attention", never
   drop it). Each step is its own transaction. Max 500 steps/push, 64 KB/step, 1 MB/body (413 beyond).
 - `GET /pull?since=<cursor>&limit=<1–1000, default 200>` → `{ generation, reset, cursor, hasMore, hlc, changes }`;
-  a change is `{ entity, id, seq, deleted:false, flagged, fields, clashes:[open clashes] }` or `{ entity, id, seq,
-  deleted:true }`. Keep calling with the returned cursor until `hasMore` is false. Cursors are opaque (`<generation>.<seq>`).
+  a change is `{ entity, id, seq, deleted:false, flagged, fields, meta?, clashes:[open clashes] }` or `{ entity, id, seq,
+  deleted:true }`. `meta` = `{ createdAt, createdBy, updatedAt, updatedBy }` (the table's standard columns that exist;
+  not synced fields — "who logged it"). Keep calling with the returned cursor until `hasMore` is false. Cursors are opaque (`<generation>.<seq>`).
 - `GET /clashes?status=open|all&entity=&recordId=&limit=<1–1000>` (each at most once, else 400), `POST /clashes/:id/resolve {resolution: keep_winner|keep_loser}`
   (keep_loser applies the other value, or the delete, as a new change; 409 if the detail changed again since).
 - `GET /info` → generation, current cursor, server clock, registered entities with their fields (for client-side checks).
@@ -392,8 +399,10 @@ a service of a relationship of a deleted account. `{ orphans: true }` (list/get,
 device holds; `counts()` is raw too). Such a record can't be updated or removed (`not_found`). `engine.ancestorsOf(entity)`
 names the types it belongs to; the hooks re-read on changes to those too. Every CRM list (C3b) gets this for free;
 custom `useSyncData` reads should pass `entities: () => [entity, ...engine.ancestorsOf(entity)]`.
-A record is `{ id, ...fields, _sync: { entity, pending, local, flagged, clashes } }` (`pending`: a change is waiting to
-be sent; `local`: made here, not in the pulled copy yet). Record pages show `<SyncBadges record={r} />` and
+A record is `{ id, ...fields, _sync: { entity, pending, local, flagged, clashes, createdBy, createdAt, updatedBy, updatedAt } }`
+(`pending`: a change is waiting to be sent; `local`: made here, not in the pulled copy yet — so by this device's person;
+the who/when come from the pull's `meta`: null for local records, and for records pulled before C3b until they change
+or "Download everything again"). Record pages show `<SyncBadges record={r} />` and
 `<ClashPanel record={r} definition={engine.definition(entity)} />` (both cheap per row: ClashPanel subscribes to
 nothing unless the record has clashes). Every write is checked first against the entity's definition with
 `@suite/shared/fields` (the server's own rules); everything the store throws is a `SyncError` with a `code`:
@@ -633,16 +642,52 @@ Value lists live in `@suite/shared/crm` (use them for labels/pickers). New field
   `/clients/:id/activities?business=&account=&type=&limit=&offset=` (newest first). Screens can read the device's offline copy
   (`useRecords`) instead; the API is for search across everything, records a device may not hold once the pull scope
   exists, and server-side consumers.
-- **Not in C3a**: screens (C3b; `/crm` is a plain doorway to the generic views), tasks (C4a), lead stages (D8), the
-  matching itself (D2: the link record exists), the pull scope (see Offline sync C2b, "Scope").
+- **Not in C3a/C3b**: tasks (C4a), lead stages (D8), the matching itself (D2: the link record exists; C3b only shows
+  links), the pull scope (see Offline sync C2b, "Scope").
+
+## CRM screens (C3b)
+Code `client/src/modules/crm/`; tests `client/test/clients.test.js` (logic) and `test/e2e/clients.e2e.test.js` (the plan's
+one-owner, three-business example entered and filtered on iPhone and desktop, phone search, a note made in an outage).
+- **Offline only**: pages read through `data.js` (`useSyncData` over `engine.list/get`, one subscription per page,
+  watching the CRM entities) and write with `store.create/update/remove` — never `/api/crm`. Lookup structures are
+  built once per data change (`useMemo` on the loaded lists: `buildClientIndex`, the client page's maps); filtering is
+  per keystroke over them; lists show 50 at a time ("Show more"). `logic.js` tests 5,000 clients (index < 1 s,
+  keystroke < 50 ms in Node).
+- **`/crm` client list**: search (`parseQuery`/`matchesQuery`: every word must appear in the client's, an account's or a
+  contact's name or an email — accents and apostrophes folded; a query of phone characters with 3+ digits is also
+  normalised with `normalizePhone` and matched as part of a stored phone, the server's rule), business filter (any live
+  relationship with it, any status — as `GET /api/crm/clients?business=`), status (Active default / Closed / All).
+  Filters live in the URL (`?q=&business=&status=`) so Back restores them. Rows: name, account names, business chips
+  (short names, `businessColor`), last activity day. Links to Our businesses and Offline data.
+- **`/crm/clients/:id`** (keyed by id: filters reset per client): header (status, tags, notes, Edit, Close/Reopen),
+  Accounts → relationships (business chip, kind, status, since) → services (status, stage, `billingSummary`, renewal),
+  Contacts (mailto/tel, `formatPhone`, prefers, consent per business: rows for the businesses with a relationship on
+  this client plus any with a consent row, via `consentView` = `consentStatus` with the device's `localDate()`), links
+  read-only under their account/contact, and the Timeline (newest first; filters our business / their account / type,
+  each "All" or one value — an activity without that value shows only under All; 50 at a time). Wide screens
+  (≥ 1100 px): records left, timeline right; phones: one column plus a fixed **capture bar** (Add note / Log call)
+  above the tab bar. Quick capture pre-selects the timeline's current business/account filter; `at` defaults to now
+  (datetime-local, local time) for back-dating; types note/call/email/meeting/milestone (`order` is for automations).
+- **Forms** (`forms.jsx`, in a `Sheet`): business pickers hide archived businesses (`pickableBusinesses` keeps the
+  record's own); relationship kind is pre-filled from the business (wholesale/consulting/agency → website); services
+  take dollars (`parseDollars`) and store cents; consent is a new row each time (given: kind + date, `expires_on`
+  pre-filled from `consentExpiresOn` and editable; withdrawn: date); store errors show inline via `errorText` (SyncError
+  codes in plain English). **Delete** sits in each edit sheet behind a confirm that says children are hidden, not
+  deleted; normal use is Close / Ended / Done. Activities and consent are append-only (no edit: a correction is a new one).
+- **Sync state**: `RecordSync` (flagged banner + `ClashPanel`) and `SyncBadges` on client, accounts, relationships,
+  services, contacts; activities show "Waiting to sync" and who logged them ("by you" / "by your partner").
+- **Our businesses** (`/crm/businesses`): owner label from each person's side, a colour picker (`business.color`;
+  seeded businesses have none, so `businessColor` falls back to a fixed colour per seeded id) and Archived.
+- For **C4a**: reuse `Sheet`, `FormSheet`, `useAction`/`errorText`, `BusinessChip`, `pickableBusinesses`, `actorLabel`
+  and `ui/format.js`. The client page has room for a Tasks card in the left column (or above the timeline); the timeline
+  filter state is the natural default for a new task's business/account, as quick capture does.
 
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
   sections). `health_meta.instance_id` still names the database and survives restores; the sync `generation` is what
   changes on a restore.
-- **C3a (core records)**: done — see "CRM". Next: C3b screens (client list/search, client page with timeline and
-  clashes, quick capture), C4a tasks (`OWNERS` for the owner, `business_id`⇧ + optional client/account refs, the
+- **C3a (core records)**: done — see "CRM". **C3b (screens)**: done — see "CRM screens". Next: C4a tasks (`OWNERS` for the owner, `business_id`⇧ + optional client/account refs, the
   business's `default_owner` for automated tasks), D2 matching (links), the pull scope when volumes need it.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
