@@ -10,4 +10,8 @@ export default {
   migrationsDir: fileURLToPath(new URL('./migrations', import.meta.url)),
   createService: createSyncService,
   createRouter: createSyncRouter,
+  // Every module has registered its entities by now: each `ref` must name one of them.
+  start(_ctx, service) {
+    service.checkRefs();
+  },
 };

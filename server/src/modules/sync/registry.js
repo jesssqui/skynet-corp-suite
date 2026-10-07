@@ -3,9 +3,18 @@
 //
 //   ctx.services.sync.registerEntity({
 //     module: 'crm', entity: 'task', table: 'crm_tasks',
-//     fields: { title: { type: 'text', max: 300, required: true }, done: { type: 'boolean' } },
+//     fields: { title: { type: 'text', max: 300, required: true }, done: { type: 'boolean' },
+//               client_id: { type: 'id', ref: 'client', parent: true }, email: { type: 'text', format: 'email' } },
 //     ops: ['create', 'update', 'delete'],          // or appendOnly: true (create only)
 //   });
+//
+// `ref` (id fields): the entity the id points to; a step naming a record that isn't there is
+// refused `not_found` (devices park it and retry after their next pull).
+// `parent: true` (with ref): the record belongs to that one (a task to its client). Deletes don't
+// cascade — reads hide what belongs to a deleted record — and the delete-vs-edit rule follows the
+// chain: a change under a record deleted concurrently keeps it (flagged), and a delete of a record
+// whose subtree changed unseen is kept (flagged). See service.js, "belonging".
+// `format` (text fields): the value is stored normalised (@suite/shared/normalize); see fields.js.
 //
 // The table needs `id TEXT PRIMARY KEY` and `deleted_at TEXT` (deletes are soft).
 // Optional columns the sync module fills when present: created_at, created_by,
@@ -14,7 +23,7 @@
 // The registry also installs per-connection TEMP triggers so a registered table
 // can only be written while the sync module is applying a step: a stray
 // `INSERT INTO crm_tasks` anywhere else fails loudly.
-import { FIELD_TYPES as TYPES, DEFAULT_TEXT_MAX, checkFieldValue } from '@suite/shared/fields';
+import { FIELD_TYPES as TYPES, FORMATS, DEFAULT_TEXT_MAX, checkFieldValue } from '@suite/shared/fields';
 
 const NAME_RE = /^[a-z][a-z0-9_]{0,62}$/;
 export const OPS = ['create', 'update', 'delete'];
@@ -106,12 +115,27 @@ export function createRegistry(db) {
       if (f.type === 'enum' && !(Array.isArray(f.values) && f.values.length)) {
         throw new Error(`${where}: enum field ${name} needs values`);
       }
-      fieldDefs.set(name, { name, type: f.type, required: Boolean(f.required), max: f.max, values: f.values });
+      if (f.format !== undefined && (f.type !== 'text' || !Object.hasOwn(FORMATS, f.format))) {
+        throw new Error(`${where}: field ${name}: format ${f.format} needs a text field and one of ${Object.keys(FORMATS).join(', ')}`);
+      }
+      if (f.ref !== undefined && (f.type !== 'id' || !NAME_RE.test(f.ref ?? ''))) {
+        throw new Error(`${where}: field ${name}: ref needs an id field and an entity name`);
+      }
+      if (f.parent !== undefined && (f.parent !== true || f.ref === undefined)) {
+        throw new Error(`${where}: field ${name}: parent (true) needs a ref`);
+      }
+      fieldDefs.set(name, {
+        name, type: f.type, required: Boolean(f.required), max: f.max, values: f.values, format: f.format, ref: f.ref,
+        parent: f.parent === true,
+      });
     }
     if (!fieldDefs.size) throw new Error(`${where}: no fields`);
 
+    const parents = [...fieldDefs.values()].filter((f) => f.parent);
     const entry = {
-      module, entity, table, fields: fieldDefs, ops, appendOnly: Boolean(appendOnly),
+      module, entity, table, fields: fieldDefs, ops, appendOnly: Boolean(appendOnly), parents,
+      selectParents: parents.length ? db.prepare(`SELECT ${parents.map((f) => q(f.name)).join(', ')} FROM ${q(table)} WHERE id = ?`) : null,
+      liveChildren: new Map(), // field name -> statement: live ids whose field names a record
       standard: new Set(STANDARD_COLUMNS.filter((c) => columns.includes(c))),
       inserts: new Map(), // column list -> statement
       selectRow: db.prepare(`SELECT ${['id', 'deleted_at', ...fieldDefs.keys()].map(q).join(', ')} FROM ${q(table)} WHERE id = ?`),
@@ -125,6 +149,39 @@ export function createRegistry(db) {
 
   function get(entity) {
     return entities.get(entity) ?? null;
+  }
+
+  /** Every ref field must point at a registered entity (checked once all modules registered). */
+  function checkRefs() {
+    for (const e of entities.values()) {
+      for (const f of e.fields.values()) {
+        if (f.ref && !entities.has(f.ref)) throw new Error(`sync: ${e.entity}.${f.name} points to ${f.ref}, which is not registered`);
+      }
+    }
+  }
+
+  /** The `parent` fields (of any entity) that point at `entity`: [{ entry, field }] — what belongs to it. */
+  function children(entity) {
+    const out = [];
+    for (const e of entities.values()) for (const f of e.parents) if (f.ref === entity) out.push({ entry: e, field: f });
+    return out;
+  }
+
+  /** Ids of live `entry` records whose parent `field` is `id`. */
+  function liveChildren(entry, field, id) {
+    let stmt = entry.liveChildren.get(field.name);
+    if (!stmt) {
+      stmt = db.prepare(`SELECT id FROM ${q(entry.table)} WHERE ${q(field.name)} = ? AND deleted_at IS NULL`).pluck();
+      entry.liveChildren.set(field.name, stmt);
+    }
+    return stmt.all(id);
+  }
+
+  /** A record's parents as [{ field, id }] (non-null parent refs, from its row). */
+  function parentsOf(entry, id) {
+    if (!entry.selectParents) return [];
+    const row = entry.selectParents.get(id);
+    return row ? entry.parents.filter((f) => row[f.name] !== null).map((f) => ({ field: f, id: row[f.name] })) : [];
   }
 
   /** Run fn with the guard triggers relaxed (only the sync apply path does this). */
@@ -199,11 +256,14 @@ export function createRegistry(db) {
         ...(f.required ? { required: true } : {}),
         ...(f.type === 'text' ? { max: f.max ?? DEFAULT_TEXT_MAX } : {}),
         ...(f.values ? { values: f.values } : {}),
+        ...(f.format ? { format: f.format } : {}),
+        ...(f.ref ? { ref: f.ref } : {}),
+        ...(f.parent ? { parent: true } : {}),
       }])),
     }));
   }
 
   return {
-    registerEntity, get, asWriter, checkValue, encode, decode, decodeRow, standardValues, insertRow, updateRow, describe,
+    registerEntity, get, checkRefs, children, liveChildren, parentsOf, asWriter, checkValue, encode, decode, decodeRow, standardValues, insertRow, updateRow, describe,
   };
 }

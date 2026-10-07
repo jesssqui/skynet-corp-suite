@@ -16,7 +16,9 @@ const DAY = 24 * HOUR;
 const apps = new Map();
 
 async function startApp(t, config) {
-  const env = await startTestApp(t, config, { modules: [...modules, syncdemo] });
+  // The sync rules, proven with the test-only syncdemo module. The CRM (its seeded businesses
+  // would shift every count and seq here) is tested with sync in crm.test.js.
+  const env = await startTestApp(t, config, { modules: [...modules.filter((m) => m.name !== 'crm'), syncdemo] });
   const users = await ensureTestUsers(env.ctx);
   // A separate signed-in browser for requests that aren't about a particular device (clash lists, info).
   const observer = sessionFor(env.ctx, users.owner);
@@ -623,6 +625,11 @@ test('module tables are written only through sync, and only a module\'s own tabl
   assert.throws(() => sync.registerEntity({ ...base, table: 'syncdemo_items', fields: { title: { type: 'blob' } } }), /unknown type/);
   assert.throws(() => sync.registerEntity({ ...base, table: 'syncdemo_items', fields: { flagged: { type: 'boolean' } } }), /bad field name/);
   assert.throws(() => sync.registerEntity({ ...base, table: 'syncdemo_items', ops: ['update'] }), /'create' must be allowed/);
+  const f = (field) => ({ ...base, table: 'syncdemo_items', fields: { title: { type: 'text' }, ...field } });
+  assert.throws(() => sync.registerEntity(f({ qty: { type: 'integer', format: 'phone' } })), /format phone needs a text field/);
+  assert.throws(() => sync.registerEntity(f({ phone: { type: 'text', format: 'fax' } })), /format fax needs a text field and one of email, phone/);
+  assert.throws(() => sync.registerEntity(f({ phone: { type: 'text', ref: 'item' } })), /ref needs an id field/);
+  assert.throws(() => sync.registerEntity(f({ phone: { type: 'text', parent: true } })), /parent \(true\) needs a ref/);
 
   const info = sync.info();
   assert.deepEqual(info.entities.map((e) => e.entity), ['item', 'note']);
