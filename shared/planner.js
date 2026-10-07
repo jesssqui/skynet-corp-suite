@@ -1,8 +1,9 @@
-// Planner facts shared by the server and devices (C4a): the value lists of tasks and inbox items,
-// the "HH:MM" due time, who an automated task goes to, and the "no next step" rule. The record
-// types themselves are registered by the server's planner module
+// Planner facts shared by the server and devices: the value lists of tasks and inbox items,
+// the "HH:MM" due time, who an automated task goes to and the "no next step" rule (C4a); goals,
+// their periods, calendar-day arithmetic, each person's day length and "unplanned" (C4b). The
+// record types themselves are registered by the server's planner module
 // (server/src/modules/planner/entities.js) and reach devices through GET /api/sync/info.
-// See CLAUDE.md, "Planner (C4a)".
+// See CLAUDE.md, "Planner (C4a)" and "Planning (C4b)".
 import { ACTORS, OWNERS, SHARED } from './actors.js';
 
 export { OWNERS, SHARED };
@@ -22,7 +23,7 @@ export function topField(actor) {
 }
 
 /** The planner's synced record types (entity names). */
-export const PLANNER_ENTITY_NAMES = Object.freeze(['task', 'inbox_item']);
+export const PLANNER_ENTITY_NAMES = Object.freeze(['task', 'inbox_item', 'goal', 'workday']);
 
 /** Where an inbox item was captured: typed (on the Mac), phone, Siri or the share sheet (C5). */
 export const INBOX_SOURCES = Object.freeze(['typed', 'phone', 'siri', 'share']);
@@ -34,8 +35,104 @@ export const TASK_TITLE_MAX = 300;
 export const INBOX_TEXT_MAX = 5000;
 /** A task's estimate is 1 minute to a working week. */
 export const ESTIMATE_MAX_MINUTES = 60 * 24 * 7;
-/** The day the morning plan measures estimates against (C4b replaces it with the real overbooking warning). */
-export const DAY_MINUTES = 8 * 60;
+/** A person's day length when they haven't set one (C4b: each person's `workday.day_minutes`). */
+export const DEFAULT_DAY_MINUTES = 8 * 60;
+/** @deprecated C4a's name for DEFAULT_DAY_MINUTES. */
+export const DAY_MINUTES = DEFAULT_DAY_MINUTES;
+/** A day length is 30 minutes to 24 hours. */
+export const DAY_MINUTES_MIN = 30;
+export const DAY_MINUTES_MAX = 24 * 60;
+
+// ---- goals (C4b) ---------------------------------------------------------------------------------
+// A goal is a week goal ("finish the Lefty's homepage") or a month priority (one to three per
+// business a month). Its `period` is the Monday of its week or the 1st of its month.
+
+export const GOAL_KINDS = Object.freeze(['week', 'month']);
+export const GOAL_TITLE_MAX = 300;
+/** One to three priorities per business a month: more is warned about, never refused. */
+export const MONTH_PRIORITY_LIMIT = 3;
+
+/**
+ * Each person's planner settings (the day length the overbooking warning uses) live in one
+ * `workday` record per person, with a fixed id, made by the server at start (never by a device:
+ * two phones creating "my settings" offline would make two). Devices only update it.
+ */
+export const WORKDAY_IDS = Object.freeze({
+  owner: '01a1163c-1b00-7000-8000-00000000a001',
+  partner: '01a1163c-1b00-7000-8000-00000000a002',
+});
+
+/** The day length (minutes) from a person's workday record (the default when unset). */
+export function dayMinutesOf(workday) {
+  const m = workday?.day_minutes;
+  return Number.isSafeInteger(m) && m >= DAY_MINUTES_MIN && m <= DAY_MINUTES_MAX ? m : DEFAULT_DAY_MINUTES;
+}
+
+// ---- calendar days ("YYYY-MM-DD", the local calendar, compared as text) ---------------------------
+// Arithmetic is done on the calendar with Date.UTC (no time zone, no DST): never new Date('YYYY-MM-DD').
+
+function ymdParts(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd ?? '');
+  if (!m) throw new TypeError(`Not a YYYY-MM-DD date: ${ymd}`);
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+/** "2026-10-07" + n days on the calendar (month and year ends, leap days). */
+export function addDays(ymd, n) {
+  const [y, m, d] = ymdParts(ymd);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+/** Day of the week, Monday = 0 … Sunday = 6. */
+export function weekday(ymd) {
+  const [y, m, d] = ymdParts(ymd);
+  return (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+}
+
+/** The Monday of the week `ymd` is in (weeks run Monday to Sunday). */
+export function weekStart(ymd) {
+  return addDays(ymd, -weekday(ymd));
+}
+
+/** The 1st of the month `ymd` is in. */
+export function monthStart(ymd) {
+  ymdParts(ymd);
+  return `${ymd.slice(0, 8)}01`;
+}
+
+/** The 1st of the month `n` months after the one `ymd` is in. */
+export function addMonthStarts(ymd, n) {
+  const [y, m] = ymdParts(ymd);
+  return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 10);
+}
+
+/** The period a goal of `kind` covering the day `ymd` has: its week's Monday, or its month's 1st. */
+export function goalPeriod(kind, ymd) {
+  return kind === 'month' ? monthStart(ymd) : weekStart(ymd);
+}
+
+/** Is `period` a valid period for a goal of `kind` (a Monday for 'week', a 1st for 'month')? */
+export function isGoalPeriod(kind, period) {
+  if (!GOAL_KINDS.includes(kind) || typeof period !== 'string') return false;
+  try {
+    return goalPeriod(kind, period) === period;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A goal's period as readers use it: snapped to its kind (a clash settled field by field could in
+ * theory leave a week goal with a 1st that isn't a Monday — it counts for the week that day is in).
+ */
+export function goalPeriodOf(goal) {
+  if (!goal?.period) return null;
+  try {
+    return goalPeriod(goal.kind === 'month' ? 'month' : 'week', goal.period);
+  } catch {
+    return null;
+  }
+}
 
 const DUE_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -56,6 +153,16 @@ export function automatedTaskOwner(business) {
 /** Open = not finished (done_at empty). */
 export function isOpenTask(task) {
   return Boolean(task) && !task.done_at;
+}
+
+/**
+ * "Every task belongs to a day, a week goal or a month priority": an open task with no due date
+ * and no live goal (none, or one that was deleted) is unplanned — it waits to be sorted.
+ * @param {object} task
+ * @param {{ has(id): boolean }} liveGoals  the live goals' ids (a Set or a Map)
+ */
+export function isUnplannedTask(task, liveGoals) {
+  return isOpenTask(task) && !task.due_date && !(task.goal_id && liveGoals?.has(task.goal_id));
 }
 
 /**

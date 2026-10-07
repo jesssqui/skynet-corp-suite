@@ -65,7 +65,7 @@ function makeDevice(env, actor) {
 const row = (db, table, id) => db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
 const n = (db, sql, ...args) => db.prepare(sql).get(...args).n;
 
-test('the planner registers task and inbox_item with sync: fields, refs, ops; columns match the field types', async (t) => {
+test('the planner registers task, inbox_item, goal and workday with sync: fields, refs, ops; columns match the field types', async (t) => {
   const { ctx, db } = await setup(t);
   const info = ctx.services.sync.info();
   const mine = info.entities.filter((e) => e.module === 'planner');
@@ -75,12 +75,12 @@ test('the planner registers task and inbox_item with sync: fields, refs, ops; co
   assert.deepEqual(by.inbox_item.ops, ['create', 'update', 'delete']);
   assert.deepEqual(by.task.fields.owner, { type: 'enum', required: true, values: ['owner', 'partner', 'shared'] });
   assert.deepEqual(by.task.fields.business_id, { type: 'id', required: true, ref: 'business', parent: true }, 'a task belongs to one of our businesses');
-  for (const f of ['client_id', 'account_id', 'relationship_id']) {
+  for (const f of ['client_id', 'account_id', 'relationship_id', 'goal_id']) {
     assert.equal(by.task.fields[f].parent, undefined, `${f} is a plain ref: deleting a client must not hide the person's tasks`);
   }
   assert.deepEqual(
     Object.fromEntries(Object.entries(by.task.fields).filter(([, f]) => f.ref).map(([k, f]) => [k, f.ref])),
-    { business_id: 'business', client_id: 'client', account_id: 'account', relationship_id: 'relationship' },
+    { business_id: 'business', client_id: 'client', account_id: 'account', relationship_id: 'relationship', goal_id: 'goal' },
   );
   assert.deepEqual(by.task.fields.due_date, { type: 'date' });
   assert.deepEqual(by.task.fields.due_time, { type: 'text', max: 5 });
@@ -220,7 +220,8 @@ test('nothing writes around the sync steps: direct SQL on the planner tables fai
   const sync = ctx.services.sync;
   const task = sync.applyLocal({ entity: 'task', op: 'create', fields: { title: 'Renew the domain', owner: 'shared', business_id: PERSONAL } });
   const item = sync.applyLocal({ entity: 'inbox_item', op: 'create', fields: { text: 'Idea', source: 'typed', captured_at: nowIso() } });
-  assert.deepEqual([task.status, item.status], ['applied', 'applied']);
+  const goal = sync.applyLocal({ entity: 'goal', op: 'create', fields: { kind: 'week', period: '2026-10-05', business_id: PERSONAL, title: 'Tidy the garage' } });
+  assert.deepEqual([task.status, item.status, goal.status], ['applied', 'applied', 'applied']);
   for (const table of PLANNER_ENTITIES.map((e) => e.table)) {
     assert.throws(() => db.prepare(`INSERT INTO ${table} (id) VALUES (?)`).run(newId()), /written only through the sync module/, table);
     assert.throws(() => db.prepare(`UPDATE ${table} SET deleted_at = 'x'`).run(), /written only through the sync module/, table);

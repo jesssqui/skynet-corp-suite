@@ -1,8 +1,12 @@
-// The planner (C4a): registers tasks and inbox items with sync, with the module's own checks.
+// The planner: registers tasks and inbox items (C4a), goals and workdays (C4b) with sync, with the
+// module's own checks, and makes each person's workday record at start.
 // It never writes its tables itself: every change is a sync step (devices) or sync.applyLocal
 // (server code) — the sync module's guard makes any other write fail. It reads only its own
 // tables; the CRM records a task points at are reached through sync refs (and ctx.services.crm).
-import { isDueTime, ESTIMATE_MAX_MINUTES, automatedTaskOwner } from '@suite/shared/planner';
+import {
+  isDueTime, ESTIMATE_MAX_MINUTES, automatedTaskOwner, isGoalPeriod, WORKDAY_IDS, DAY_MINUTES_MIN, DAY_MINUTES_MAX,
+} from '@suite/shared/planner';
+import { ACTORS } from '@suite/shared/actors';
 import { PLANNER_ENTITIES } from './entities.js';
 
 /**
@@ -30,18 +34,60 @@ export function checkTask({ op, fields }) {
   return null;
 }
 
-export function createPlannerService({ db, services }) {
+/**
+ * Rules for a goal step (C4b), again only the step's own values:
+ *  - `period` fits `kind`: a week goal's is the Monday of its week, a month priority's the 1st of
+ *    its month;
+ *  - an update changing either sends both, so the pair is checked together and the later step
+ *    wins both fields (a step with only one of them could pair with the other device's change);
+ *  - target is more than 0, progress 0 or more.
+ * Month priorities above three a business are not refused: two devices adding one offline must
+ * never lose one (the screens warn instead).
+ */
+export function checkGoal({ op, fields }) {
+  if (op === 'delete' || !fields) return null;
+  const has = (k) => Object.hasOwn(fields, k);
+  if (op === 'update' && has('kind') !== has('period')) {
+    return { code: 'invalid_value', reason: 'kind and period change together: send both' };
+  }
+  if (has('period') && !isGoalPeriod(fields.kind, fields.period)) {
+    return {
+      code: 'invalid_value',
+      reason: fields.kind === 'month'
+        ? 'period: a month priority’s period is the 1st of its month'
+        : 'period: a week goal’s period is the Monday of its week',
+    };
+  }
+  if (has('target') && fields.target !== null && !(fields.target > 0)) return { code: 'invalid_value', reason: 'target: more than 0' };
+  if (has('progress') && fields.progress !== null && !(fields.progress >= 0)) return { code: 'invalid_value', reason: 'progress: 0 or more' };
+  return null;
+}
+
+/** A person's day length is 30 minutes to 24 hours (null = the default). */
+export function checkWorkday({ op, fields }) {
+  if (!fields || !Object.hasOwn(fields, 'day_minutes') || fields.day_minutes === null) return null;
+  const m = fields.day_minutes;
+  return m >= DAY_MINUTES_MIN && m <= DAY_MINUTES_MAX ? null
+    : { code: 'invalid_value', reason: `day_minutes: ${DAY_MINUTES_MIN} to ${DAY_MINUTES_MAX}` };
+}
+
+/** Workday seeds are stamped at an old fixed time, so any real edit (even re-sent after a restore) wins. */
+export const WORKDAY_SEED_STAMP_MS = Date.UTC(2026, 0, 1);
+
+export function createPlannerService({ db, services, log }) {
   const sync = services.sync;
   if (!sync) throw new Error('planner needs the sync module registered before it (modules/index.js)');
   if (!services.crm) throw new Error('planner needs the crm module registered before it (its tasks point at CRM records)');
 
-  const checks = { task: checkTask };
+  const checks = { task: checkTask, goal: checkGoal, workday: checkWorkday };
   for (const def of PLANNER_ENTITIES) {
     sync.registerEntity({ module: 'planner', ...def, ...(checks[def.entity] ? { check: checks[def.entity] } : {}) });
   }
 
   const q = {
     openInbox: db.prepare('SELECT count(*) AS n FROM planner_inbox_items WHERE deleted_at IS NULL AND cleared_at IS NULL'),
+    goals: db.prepare(`SELECT * FROM planner_goals WHERE deleted_at IS NULL AND kind = ? AND period = ?
+      ORDER BY business_id, position IS NULL, position, id`),
   };
 
   return {
@@ -54,5 +100,27 @@ export function createPlannerService({ db, services }) {
     },
     /** Items still in the capture inbox (for System / later notifications). */
     openInboxCount: () => q.openInbox.get().n,
+    /**
+     * Live goals of one period (C8's overview: "goals against targets"): kind 'week' with a
+     * Monday, or 'month' with a 1st. Goals of a deleted business don't exist (businesses are never
+     * deleted).
+     */
+    goals: (kind, period) => q.goals.all(kind, period),
+    /**
+     * Each person's workday record, with its fixed id (WORKDAY_IDS), made once: only an id that has
+     * never existed here is created, so nothing is duplicated after a restart or a restore.
+     */
+    seedWorkdays() {
+      const made = [];
+      for (const actor of ACTORS) {
+        const id = WORKDAY_IDS[actor];
+        if (sync.recordState('workday', id)) continue;
+        const r = sync.applyLocal({ entity: 'workday', op: 'create', recordId: id, stampMs: WORKDAY_SEED_STAMP_MS, fields: { actor } });
+        if (r.status !== 'applied') throw new Error(`planner: could not create the ${actor}'s workday: ${r.code} ${r.reason}`);
+        made.push(id);
+      }
+      if (made.length) log?.info?.(`created ${made.length} workday settings`);
+      return made;
+    },
   };
 }
