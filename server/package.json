@@ -1,0 +1,20 @@
+{
+  "name": "@suite/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch-path=src --watch-path=../shared src/index.js",
+    "test": "node --test --test-concurrency=1 \"test/*.test.js\"",
+    "backup": "node scripts/backup.js",
+    "restore": "node scripts/restore.js"
+  },
+  "dependencies": {
+    "@suite/shared": "*",
+    "better-sqlite3": "^12.8.0",
+    "express": "^5.2.1",
+    "helmet": "^8.1.0"
+  }
+}

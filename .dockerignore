@@ -1,0 +1,9 @@
+**/node_modules
+client/dist
+data
+.git
+.env
+*.db
+*.db-wal
+*.db-shm
+**/.DS_Store
