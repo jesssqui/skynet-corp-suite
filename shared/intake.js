@@ -347,8 +347,8 @@ const without = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) =
  * The records to create for a clean row, in order (each one's parents first):
  *  - action 'create': a new client, its account, a relationship per business, the contact;
  *  - action 'add' (target = an existing client with its live accounts, contacts, relationships):
- *    only what is missing — the account with the same name (or the client's only/first one when
- *    the row named none of its own; a new account otherwise), relationships that account doesn't
+ *    only what is missing — the account with the same (or a similar) name, or the client's first
+ *    one when the row named none of its own; a new account otherwise — relationships that account doesn't
  *    have (same business and kind), and the contact unless one with the same email or phone (or,
  *    with neither, the same name) is already on the client. Nothing existing is changed.
  * `makeId(key)` gives each new record its id (key: 'client' | 'account' | 'contact' | 'rel:<business>:<kind>'),
@@ -373,7 +373,7 @@ export function planRow(row, { action = 'create', target = null, makeId }) {
     contacts = target.contacts ?? [];
     rels = target.relationships ?? [];
     const key = nameKey(row.account.name);
-    const named = accounts.find((x) => nameKey(x.name) === key);
+    const named = accounts.find((x) => nameKey(x.name) === key) ?? accounts.find((x) => similarNames(x.name, row.account.name));
     const ownName = key && key !== nameKey(row.client.name) && key !== nameKey(target.client.name);
     const pick = named ?? (!ownName ? accounts[0] : null);
     if (pick) {
