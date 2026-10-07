@@ -22,7 +22,8 @@ const rowLink = {
 
 export default function CrmPage() {
   const { records: businesses, loading } = useRecords('business', { sort: 'position' });
-  const { data: counts } = useSyncData((engine) => engine.counts());
+  // As people see them: records under a deleted client (and so on) aren't counted.
+  const { data: counts } = useSyncData((engine) => engine.liveCounts(CRM_ENTITY_NAMES));
   const { session } = useAuth();
   const me = session?.user?.actor ?? null;
   return (

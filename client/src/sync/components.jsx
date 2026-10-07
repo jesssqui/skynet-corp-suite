@@ -233,6 +233,7 @@ function recordLabel(def, rec) {
  * subscribe to this.
  */
 function IdSelect({ field, id, value, onChange }) {
+  const current = useSyncEngine();
   const { data } = useSyncData(async (engine) => {
     const out = [];
     for (const def of engine.entities().filter((d) => !field.ref || d.entity === field.ref)) {
@@ -241,7 +242,7 @@ function IdSelect({ field, id, value, onChange }) {
       }
     }
     return out;
-  }, [field.ref], { entities: field.ref ? [field.ref] : null });
+  }, [field.ref], { entities: field.ref ? () => [field.ref, ...(current?.ancestorsOf(field.ref) ?? [])] : null });
   const opts = data ?? [];
   return (
     <select id={id} value={value ?? ''} onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)} style={inputStyle}>

@@ -6,7 +6,9 @@
 // digits only… — @suite/shared/normalize, the server refuses anything else) and check the change
 // against the entity's field definitions, then write it as a step to the outbox in one IndexedDB transaction (with the device's HLC
 // stamp and the cursor of the last complete pull as `seen`), and ask for a sync soon.
-// Reading: list/get return the pulled copy with the outbox replayed on top (./overlay.js).
+// Reading: list/get return the pulled copy with the outbox replayed on top (./overlay.js), without
+// records that belong (`parent` refs) to one this device doesn't hold — deleted, or a refused create
+// ({ orphans: true } shows them too).
 // Syncing (one cycle at a time per device, across tabs, under the Web Lock 'suite-sync'):
 //   1. GET /info (entity definitions, generation; a new generation = the server was restored)
 //   2. push the outbox in order (lane 0 = kept steps re-sent after a restore, then lane 1)
@@ -337,6 +339,55 @@ export function createSyncEngine({
     return Object.keys(definitions.get(entity)?.fields ?? {});
   }
 
+  /** The entity's `parent` ref fields: what its records belong to. */
+  function parentFields(entity) {
+    return Object.values(definitions.get(entity)?.fields ?? {}).filter((f) => f.parent && f.ref);
+  }
+
+  /** Every entity `entity` belongs to, directly or not: a change to one can hide or show its records. */
+  function ancestorsOf(entity) {
+    const out = new Set();
+    const walk = (e) => {
+      for (const f of parentFields(e)) {
+        if (out.has(f.ref) || f.ref === entity) continue;
+        out.add(f.ref);
+        walk(f.ref);
+      }
+    };
+    walk(entity);
+    return [...out];
+  }
+
+  /** An entity's records as shown (pulled copy + replayed changes), read once per `cache`. */
+  async function viewMap(entity, cache) {
+    if (!cache.has(entity)) {
+      const data = await readEntity(entity);
+      cache.set(entity, overlay(data.records, changesFor(entity, data), fieldNames(entity)));
+    }
+    return cache.get(entity);
+  }
+
+  /**
+   * Ids of the entity's records whose parents (and theirs, up the chain) are all here: deletes
+   * don't cascade (CLAUDE.md "Belonging"), so a record under a deleted client is hidden with it.
+   * An empty optional parent ref (a link's other side) doesn't hide anything.
+   */
+  async function liveIds(entity, cache) {
+    const key = `live:${entity}`;
+    if (cache.has(key)) return cache.get(key) ?? new Set((await viewMap(entity, cache)).keys()); // (a cycle: no filter)
+    cache.set(key, null);
+    const map = await viewMap(entity, cache);
+    const parents = parentFields(entity);
+    const parentLive = new Map();
+    for (const f of parents) if (!parentLive.has(f.ref)) parentLive.set(f.ref, await liveIds(f.ref, cache));
+    const ids = new Set();
+    for (const [id, rec] of map) {
+      if (parents.every((f) => rec.fields[f.name] === null || rec.fields[f.name] === undefined || parentLive.get(f.ref).has(rec.fields[f.name]))) ids.add(id);
+    }
+    cache.set(key, ids);
+    return ids;
+  }
+
   async function readEntity(entity, id) {
     return tx(['records', 'outbox', 'sent', 'meta'], 'readonly', async (t) => ({
       records: id === undefined
@@ -350,24 +401,47 @@ export function createSyncEngine({
   }
 
   /**
-   * Records of one entity as the person should see them (pulled copy + their pending changes).
+   * Records of one entity as the person should see them (pulled copy + their pending changes),
+   * without those under a record this device doesn't hold (deleted, or a refused create).
    * @param {string} entity
-   * @param {{ where?: object | ((rec) => boolean), sort?: string | ((a, b) => number) }} [opts]
-   *   where: field equality ({ done: false }) or a function; sort: a field name ('-due' = descending) or a compare function
+   * @param {{ where?: object | ((rec) => boolean), sort?: string | ((a, b) => number), orphans?: boolean }} [opts]
+   *   where: field equality ({ done: false }) or a function; sort: a field name ('-due' = descending) or a compare
+   *   function; orphans: true also lists records whose parent chain is gone (what the device holds)
    */
-  async function list(entity, { where, sort } = {}) {
+  async function list(entity, { where, sort, orphans = false } = {}) {
     await opened();
-    const data = await readEntity(entity);
-    const map = overlay(data.records, changesFor(entity, data), fieldNames(entity));
-    return [...map.values()].map((r) => toView(entity, r)).filter((r) => matches(where, r)).sort(sorter(sort));
+    const cache = new Map();
+    const map = await viewMap(entity, cache);
+    const live = orphans || !parentFields(entity).length ? null : await liveIds(entity, cache);
+    return [...map.values()].filter((r) => !live || live.has(r.id)).map((r) => toView(entity, r))
+      .filter((r) => matches(where, r)).sort(sorter(sort));
   }
 
-  /** One record, or null when this device doesn't have it (or it was deleted). */
-  async function get(entity, id) {
+  /**
+   * One record, or null when this device doesn't have it (or it was deleted) — or, unless
+   * `orphans`, when something up its parent chain is gone.
+   */
+  async function get(entity, id, { orphans = false } = {}, depth = 0) {
     await opened();
     const data = await readEntity(entity, id);
     const rec = overlay(data.records, changesFor(entity, data).filter((c) => c.step.recordId === id), fieldNames(entity)).get(id);
-    return rec ? toView(entity, rec) : null;
+    if (!rec) return null;
+    if (!orphans && depth < 16) {
+      for (const f of parentFields(entity)) {
+        const parent = rec.fields[f.name];
+        if (parent !== null && parent !== undefined && !(await get(f.ref, parent, {}, depth + 1))) return null;
+      }
+    }
+    return toView(entity, rec);
+  }
+
+  /** How many records of each entity a person sees (list() counts, parents taken into account). */
+  async function liveCounts(entities = [...definitions.keys()]) {
+    await opened();
+    const cache = new Map();
+    const out = {};
+    for (const e of entities) out[e] = (await liveIds(e, cache)).size;
+    return out;
   }
 
   // ---- writing ----------------------------------------------------------------
@@ -441,7 +515,7 @@ export function createSyncEngine({
     const recordId = id ?? newId();
     if (!isId(recordId)) throw new SyncError('invalid_step', 'id must be a UUIDv7 from newId()');
     const clean = checkFields(def, fields ?? {}, { create: true });
-    if (id && (await get(entity, id))) throw new SyncError('already_exists', 'a record with this id already exists');
+    if (id && (await get(entity, id, { orphans: true }))) throw new SyncError('already_exists', 'a record with this id already exists');
     await addStep({ entity, recordId, op: 'create', fields: clean });
     return recordId;
   }
@@ -672,8 +746,13 @@ export function createSyncEngine({
             kept: Boolean(r.kept),
           });
         } else if (r.status === 'rejected' && r.code === 'not_found') {
-          // Its record isn't on the server (yet): keep it, try again after the next pull or reset.
-          await t.put('outbox', { ...entry, parked: { code: r.code, reason: r.reason, at } });
+          // Its record (or one it points to: r.missing) isn't on the server (yet): keep it, try again
+          // after the next pull or reset. `at` stays when it started waiting; `triedAt` moves.
+          const current = (await t.get('outbox', entry.k)) ?? entry;
+          await t.put('outbox', {
+            ...current,
+            parked: { code: r.code, reason: r.reason, missing: r.missing ?? null, at: current.parked?.at ?? at, triedAt: at },
+          });
         } else if (r.status === 'rejected') {
           await t.delete('outbox', entry.k);
           await t.put('attention', { n: entry.n, step: entry.step, code: r.code, reason: r.reason, at });
@@ -795,29 +874,58 @@ export function createSyncEngine({
     return (await tx('outbox', 'readonly', (t) => t.getAll('outbox'))).filter((e) => e.parked).sort(sortByKey);
   }
 
-  /** Let a refused change go. Discarding a refused create also drops later changes to that record. */
+  /**
+   * A create was let go (discarded), so its record will never reach the server: drop the record's
+   * later changes, and move every waiting change that points to it (a contact of a discarded
+   * client: it would wait forever) to Needs attention, with that reason — to fix (point it
+   * elsewhere) or discard in turn. Inside transaction `t` (outbox + attention).
+   * Returns { touched: entities, dropped: how many of the record's own later changes went }.
+   */
+  async function letCreateGo(t, { entity, recordId }) {
+    const touched = new Set([entity]);
+    const at = new Date(wallClock()).toISOString();
+    const same = (e) => e.step.entity === entity && e.step.recordId === recordId;
+    let dropped = 0;
+    for (const e of (await t.getAll('outbox')).filter(same)) {
+      await t.delete('outbox', e.k);
+      dropped += 1;
+    }
+    for (const e of (await t.getAll('attention')).filter(same)) {
+      await t.delete('attention', e.n);
+      dropped += 1;
+    }
+    for (const e of await t.getAll('outbox')) {
+      const fields = definitions.get(e.step.entity)?.fields ?? {};
+      const via = Object.values(fields).find((f) => f.ref === entity && e.step.fields?.[f.name] === recordId);
+      if (!via) continue;
+      await t.delete('outbox', e.k);
+      await t.put('attention', {
+        n: e.n, step: e.step, code: 'parent_discarded', at,
+        missing: { field: via.name, entity, id: recordId },
+        reason: `${via.name}: the ${entity} it points to was discarded on this device, so it can never be sent`,
+      });
+      touched.add(e.step.entity);
+    }
+    return { touched: [...touched], dropped };
+  }
+
+  /**
+   * Let a refused change go. Discarding a refused create also drops later changes to that record
+   * and moves what waits for it to Needs attention (letCreateGo). Returns how many changes went.
+   */
   async function discardAttention(n) {
-    let entity = null;
+    let entities = [];
     const dropped = await tx(['attention', 'outbox'], 'readwrite', async (t) => {
       const entry = await t.get('attention', n);
       if (!entry) return 0;
-      entity = entry.step.entity;
+      entities = [entry.step.entity];
       await t.delete('attention', n);
-      let count = 1;
-      if (entry.step.op === 'create') {
-        const same = (e) => e.step.entity === entry.step.entity && e.step.recordId === entry.step.recordId;
-        for (const e of (await t.getAll('outbox')).filter(same)) {
-          await t.delete('outbox', e.k);
-          count += 1;
-        }
-        for (const e of (await t.getAll('attention')).filter(same)) {
-          await t.delete('attention', e.n);
-          count += 1;
-        }
-      }
-      return count;
+      if (entry.step.op !== 'create') return 1;
+      const gone = await letCreateGo(t, entry.step);
+      entities = gone.touched;
+      return 1 + gone.dropped;
     });
-    await dataChanged(entity ? [entity] : []);
+    await dataChanged(entities);
     return dropped;
   }
 
@@ -862,12 +970,14 @@ export function createSyncEngine({
     return step;
   }
 
-  /** Drop a change that is waiting for its record. */
+  /** Drop a change that is waiting for its record (a create: as discardAttention does). */
   async function discardWaiting(n) {
-    const entities = await tx('outbox', 'readwrite', async (t) => {
+    const entities = await tx(['outbox', 'attention'], 'readwrite', async (t) => {
       const gone = (await t.getAll('outbox')).filter((e) => e.n === n && e.parked);
       for (const e of gone) await t.delete('outbox', e.k);
-      return gone.map((e) => e.step.entity);
+      const touched = gone.map((e) => e.step.entity);
+      for (const e of gone.filter((g) => g.step.op === 'create')) touched.push(...(await letCreateGo(t, e.step)).touched);
+      return touched;
     });
     await dataChanged(entities);
   }
@@ -904,6 +1014,8 @@ export function createSyncEngine({
     // read
     list,
     get,
+    liveCounts,
+    ancestorsOf,
     // write
     create,
     update,

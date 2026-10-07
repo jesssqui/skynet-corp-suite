@@ -113,3 +113,96 @@ test('a note added offline to a client the other person deleted keeps the client
   assert.equal((await a.engine.get('client', client))._sync.flagged, false);
   assert.equal(row(server.db, 'crm_clients', client).flagged, 0);
 });
+
+test('records under a deleted parent are hidden on the device (list, get, counts) and come back with it', async (t) => {
+  const server = await startServer(t, undefined, { crm: true });
+  const a = await makeDevice(t, server, 'owner');
+  const b = await makeDevice(t, server, 'partner');
+  const client = await a.engine.create('client', { name: 'Lefty’s', status: 'active' });
+  const account = await a.engine.create('account', { client_id: client, name: 'Dispensary' });
+  const contact = await a.engine.create('contact', { client_id: client, account_id: account, name: 'Mike' });
+  const rel = await a.engine.create('relationship', { account_id: account, business_id: W, kind: 'wholesale', status: 'active' });
+  await a.engine.create('service', { relationship_id: rel, name: 'Supply', status: 'active' });
+  await a.engine.create('activity', { client_id: client, type: 'note', body: 'Hello', at: nowIso() });
+  await a.engine.syncNow();
+  await b.engine.syncNow();
+  assert.deepEqual(new Set(b.engine.ancestorsOf('service')), new Set(['relationship', 'account', 'business', 'client']));
+  assert.deepEqual(b.engine.ancestorsOf('client'), []);
+  const counts = (e) => e.liveCounts(['client', 'account', 'contact', 'relationship', 'service', 'activity']);
+  assert.deepEqual(await counts(b.engine), { client: 1, account: 1, contact: 1, relationship: 1, service: 1, activity: 1 });
+
+  // A deletes the client (only the client: nothing cascades). On B everything under it goes from view.
+  await a.engine.remove('client', client);
+  await a.engine.syncNow();
+  await b.engine.syncNow();
+  assert.deepEqual(await counts(b.engine), { client: 0, account: 0, contact: 0, relationship: 0, service: 0, activity: 0 });
+  assert.equal((await b.engine.list('service')).length, 0, 'two levels down, hidden too');
+  assert.equal(await b.engine.get('contact', contact), null);
+  assert.equal((await b.engine.list('contact', { orphans: true })).length, 1, 'still held on the device');
+  assert.equal((await b.engine.get('contact', contact, { orphans: true })).name, 'Mike');
+  assert.equal((await b.engine.list('business')).length, 6, 'not affected');
+  await assert.rejects(b.engine.update('contact', contact, { role: 'Owner' }), (err) => err.code === 'not_found', 'hidden: not editable');
+});
+
+test('waiting changes keep when they started and say what they wait for; discarding a refused client moves its waiting contact to Needs attention', async (t) => {
+  const server = await startServer(t, undefined, { crm: true });
+  let now = Date.parse('2026-10-07T15:00:00.000Z');
+  const phone = await makeDevice(t, server, 'owner', { engine: { wallClock: () => now } });
+  const e = phone.engine;
+  const client = await e.create('client', { name: 'Gone', status: 'active' });
+  await e.syncNow();
+  // The other person deletes the client; this phone pulls that, then (from a stale screen) adds to it.
+  const mac = await makeDevice(t, server, 'partner');
+  await mac.engine.remove('client', client);
+  await mac.engine.syncNow();
+  await e.syncNow();
+  // A contact for the deleted client (refused: deleted), and a consent for that contact (waits for it).
+  phone.online = false;
+  const contact = await e.create('contact', { client_id: client, name: 'Mike', email: 'mike@x.ca' });
+  await e.create('consent', { contact_id: contact, business_id: W, withdrawn: false, date: '2026-10-07', kind: 'express' });
+  phone.online = true;
+  await e.syncNow();
+  const [refused] = await e.attentionList();
+  assert.deepEqual([refused.step.entity, refused.code], ['contact', 'deleted']);
+  let [waiting] = await e.waitingList();
+  assert.equal(waiting.step.entity, 'consent');
+  assert.deepEqual(waiting.parked.missing, { field: 'contact_id', entity: 'contact', id: contact }, 'says what it waits for');
+  const since = waiting.parked.at;
+
+  // Retried after later syncs: it keeps when it started waiting.
+  now += 60 * 60 * 1000;
+  await e.syncNow();
+  [waiting] = await e.waitingList();
+  assert.equal(waiting.parked.at, since, 'first seen kept');
+  assert.notEqual(waiting.parked.triedAt, since, 'last try moves');
+
+  // The refused contact is discarded: the consent can never be sent, so it moves to Needs attention.
+  await e.discardAttention(refused.n);
+  assert.deepEqual(await e.waitingList(), []);
+  const [moved] = await e.attentionList();
+  assert.deepEqual([moved.step.entity, moved.code], ['consent', 'parent_discarded']);
+  assert.match(moved.reason, /contact_id: the contact it points to was discarded/);
+  assert.equal(e.status().waiting, 0);
+  await e.discardAttention(moved.n);
+  assert.equal(e.status().attention, 0);
+});
+
+test('discarding a waiting create moves what waits for it to Needs attention', async (t) => {
+  const server = await startServer(t, undefined, { crm: true });
+  const phone = await makeDevice(t, server, 'owner');
+  const e = phone.engine;
+  // An account for a client the server has never seen (e.g. lost in a restore): it waits.
+  const ghost = '01a1163c-1a00-7273-aed1-000000000001';
+  const account = await e.create('account', { client_id: ghost, name: 'Shop' });
+  assert.equal(await e.get('account', account), null, 'hidden: what it belongs to isn’t here');
+  await e.create('relationship', { account_id: account, business_id: W, kind: 'wholesale', status: 'active' });
+  await e.syncNow();
+  const waiting = await e.waitingList();
+  assert.deepEqual(waiting.map((w) => [w.step.entity, w.step.op, w.parked.missing.entity]), [
+    ['account', 'create', 'client'], ['relationship', 'create', 'account'],
+  ]);
+  await e.discardWaiting(waiting[0].n);
+  assert.deepEqual(await e.waitingList(), []);
+  const [moved] = await e.attentionList();
+  assert.deepEqual([moved.step.entity, moved.code, moved.missing.entity], ['relationship', 'parent_discarded', 'account']);
+});

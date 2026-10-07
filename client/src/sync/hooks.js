@@ -27,7 +27,7 @@ export function useSyncStatus() {
 
 /**
  * Run `load(engine)` now and again after local data changes. `entities` limits that to changes of
- * those record types (data events name them); null = any change. When the engine stops (signed
+ * those record types (data events name them; a list, or a function returning one); null = any change. When the engine stops (signed
  * out, data deleted from another tab) the data is dropped at once.
  * @returns {{ data: any, loading: boolean, error: Error|null }}
  */
@@ -67,7 +67,7 @@ export function useSyncData(load, deps = [], { entities = null } = {}) {
         if (e.status.phase === 'stopped' && alive) drop();
         return;
       }
-      const want = watched.current;
+      const want = typeof watched.current === 'function' ? watched.current() : watched.current;
       if (!e.entities || !want || e.entities.some((x) => want.includes(x))) run();
     });
     return () => {
@@ -80,16 +80,32 @@ export function useSyncData(load, deps = [], { entities = null } = {}) {
 }
 
 /**
- * Records of one entity, live. `where`/`sort` as in engine.list; when they depend on state,
- * list that state in `deps` so the list is re-read when it changes.
+ * The record types whose changes can change what a list of `entity` shows: itself and every type
+ * it belongs to (a contact disappears when its client is deleted). A function, so it follows the
+ * engine's definitions once they arrive.
  */
-export function useRecords(entity, { where, sort } = {}, deps = []) {
-  const { data, loading, error } = useSyncData((engine) => engine.list(entity, { where, sort }), [entity, ...deps], { entities: [entity] });
+function watchedFor(engine, entity) {
+  return () => [entity, ...(engine?.ancestorsOf(entity) ?? [])];
+}
+
+/**
+ * Records of one entity, live. `where`/`sort`/`orphans` as in engine.list (records under a deleted
+ * parent are left out unless `orphans`); when where/sort depend on state, list that state in
+ * `deps` so the list is re-read when it changes.
+ */
+export function useRecords(entity, { where, sort, orphans = false } = {}, deps = []) {
+  const engine = useSyncEngine();
+  const { data, loading, error } = useSyncData(
+    (e) => e.list(entity, { where, sort, orphans }),
+    [entity, orphans, ...deps],
+    { entities: watchedFor(engine, entity) },
+  );
   return { records: data ?? [], loading, error };
 }
 
-/** One record, live (null when this device doesn't have it). */
+/** One record, live (null when this device doesn't have it, or something it belongs to is gone). */
 export function useRecord(entity, id) {
-  const { data, loading, error } = useSyncData((engine) => (id ? engine.get(entity, id) : null), [entity, id], { entities: [entity] });
+  const engine = useSyncEngine();
+  const { data, loading, error } = useSyncData((e) => (id ? e.get(entity, id) : null), [entity, id], { entities: watchedFor(engine, entity) });
   return { record: data ?? null, loading, error };
 }

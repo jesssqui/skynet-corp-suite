@@ -44,6 +44,19 @@ test('Clients page and plain CRM forms: owners from each side, ref pickers, clea
   assert.deepEqual([saved.email, saved.phone], ['mike@leftys.ca', '5195550100']);
   assert.equal(db.prepare('SELECT tags FROM crm_clients').get().tags, 'vip, referral');
 
+  // The client is deleted elsewhere (nothing cascades): its contact is hidden here too, and can be shown.
+  const clientId = db.prepare('SELECT id FROM crm_clients').get().id;
+  assert.equal(server.ctx.services.sync.applyLocal({ actor: 'partner', entity: 'client', op: 'delete', recordId: clientId }).status, 'applied');
+  await page.goto(`${base}/sync/data/contact`);
+  await page.getByTestId('hidden-records').filter({ hasText: '1 hidden' }).waitFor(WAIT);
+  assert.equal(await page.locator('[data-record-id]').count(), 0);
+  await page.getByRole('button', { name: 'Show them' }).click();
+  await page.locator('[data-record-id]').first().waitFor(WAIT);
+  await page.goto(`${base}/crm`);
+  await page.getByText('Great White North Design').waitFor(WAIT);
+  const contactRow = page.locator('a[href="/sync/data/contact"]');
+  await contactRow.filter({ hasText: /contact\s*0/ }).waitFor(WAIT);
+
   // The partner's Mac: the same businesses, said from their side.
   const mac = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const p2 = await mac.newPage();
