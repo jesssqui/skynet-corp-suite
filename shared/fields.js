@@ -4,9 +4,16 @@
 // devices (the offline store checks a change before it goes into the outbox), so
 // a change the phone accepted while offline is one the server will accept too.
 // A field definition is what GET /api/sync/info describes:
-//   { name, type, required?, max? (text), values? (enum) }
+//   { name, type, required?, max? (text), values? (enum), format? (text), ref? (id) }
+// `format` (email, phone, postal, tags — ./normalize.js) means the value is stored in one clean
+// form: devices normalise before making the step (normalizeFieldValue), the server refuses a
+// value that isn't normalised. `ref` names the entity an id points to (the server checks it
+// exists; see the sync module); it needs no check here.
 
 import { isId } from './ids.js';
+import { FORMATS } from './normalize.js';
+
+export { FORMATS };
 
 export const DEFAULT_TEXT_MAX = 10_000;
 
@@ -39,5 +46,22 @@ export function checkFieldValue(field, value) {
   if (value === undefined) return `${field.name} has no value`;
   const check = FIELD_TYPES[field.type];
   if (!check) return `${field.name}: unknown type ${field.type}`;
-  return check(value, field) ? null : `${field.name}: not a valid ${field.type}`;
+  if (!check(value, field)) return `${field.name}: not a valid ${field.type}`;
+  if (field.format) {
+    const fmt = FORMATS[field.format];
+    if (!fmt) return `${field.name}: unknown format ${field.format}`;
+    if (fmt.normalize(value) !== value) return `${field.name}: not stored as a clean ${fmt.label} (${fmt.stored})`;
+    if (!fmt.valid(value)) return `${field.name}: not a valid ${fmt.label}`;
+  }
+  return null;
+}
+
+/**
+ * The stored form of a value a person typed, for a field with a `format` (others: unchanged).
+ * "" or spaces become null. Devices call this before checking a change; so does applyLocal.
+ */
+export function normalizeFieldValue(field, value) {
+  if (!field?.format || typeof value !== 'string') return value;
+  const fmt = FORMATS[field.format];
+  return fmt ? fmt.normalize(value) : value;
 }
