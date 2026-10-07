@@ -85,7 +85,7 @@ function DeviceRow({ device, current, onChanged, onSignedOutSelf }) {
           <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
             {signedOut
               ? `Signed out ${ago(device.signedOutAt)}${device.signedOutBy ? ` by ${device.signedOutBy.displayName}` : ''}`
-              : `Last used ${ago(device.lastSeenAt)}`}
+              : `Last used ${ago(device.lastSeenAt)}${device.lastIp ? ` · ${device.lastIp}` : ''}`}
             {!signedOut && !device.signedIn ? ' · session ended' : ''}
           </span>
         </div>

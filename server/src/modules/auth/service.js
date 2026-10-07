@@ -2,6 +2,7 @@
 // "Sign-in (auth module)", explains the design; this file is the only code that
 // reads or writes auth_* tables (with accounts.js, which the CLI shares).
 import { newId, isId } from '@suite/shared/ids';
+import { nowIso } from '@suite/shared/time';
 import { HttpError } from '../../lib/httpError.js';
 import { createAccounts, normalizeUsername } from './accounts.js';
 import {
@@ -55,7 +56,7 @@ function readCookie(req, name) {
 export function createAuthService({ db, config, log, services, now = Date.now }) {
   const cfg = config.auth;
   const accounts = createAccounts(db, { scryptN: cfg.scryptN, now });
-  const iso = (ms = now()) => new Date(ms).toISOString();
+  const iso = (ms = now()) => nowIso(new Date(ms));
   const allowedOrigins = new Set(cfg.allowedOrigins.map((o) => o.toLowerCase()));
   // Compared against when the username doesn't exist, so a wrong username takes as long as a wrong password.
   const dummyHash = hashPassword(newToken(), cfg.scryptN);

@@ -1,6 +1,7 @@
 // Accounts and their factors: used by the auth service and by the users CLI
 // (server/scripts/users.js), which is the only way to create an account.
 import { newId } from '@suite/shared/ids';
+import { nowIso } from '@suite/shared/time';
 import { ACTORS } from '@suite/shared/actors';
 import {
   hashPassword, passwordProblem, newRecoveryCode, normalizeRecoveryCode, hashRecoveryCode, RECOVERY_CODE_COUNT,
@@ -14,7 +15,7 @@ export const normalizeUsername = (u) => (typeof u === 'string' ? u.trim().toLowe
  * @param {{ scryptN: number, now?: () => number }} opts
  */
 export function createAccounts(db, { scryptN, now = Date.now }) {
-  const iso = () => new Date(now()).toISOString();
+  const iso = () => nowIso(new Date(now()));
 
   const byId = db.prepare('SELECT * FROM auth_users WHERE id = ?');
   const byUsername = db.prepare('SELECT * FROM auth_users WHERE username = ?');
