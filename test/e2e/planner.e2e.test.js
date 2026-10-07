@@ -182,6 +182,48 @@ async function nextStepFromCall(page, server, { today, ids }, label) {
   assert.equal(await page.getByTestId('no-next-step').count(), 0, 'Today no longer lists it');
 }
 
+/**
+ * 11. The partner's side: their Today has their own tasks and the shared list (never the owner's
+ * own), and none of the owner's top picks; their star on a shared task is theirs alone.
+ */
+async function partnerSide(browser, server, { today, ids }, ownerPage) {
+  const ctx = await browser.newContext(iphone());
+  const errors = await watch(ctx);
+  const p = await ctx.newPage();
+  await signIn(p, server.base, 'sam', server.users.partner.totpSecret);
+  await barSays(p, 'All changes saved');
+  await p.getByTestId('overdue').waitFor(WAIT);
+  await titlesBecome(p.getByTestId('today-tasks'), ['List the Zelda lot', 'Water the office plants', 'Photograph the new arrivals']);
+  assert.equal(await p.getByTestId('today-tasks').locator('[data-owner="owner"]').count(), 0, 'the owner’s own tasks are the owner’s');
+  await p.getByTestId('today-tasks').locator(`[data-task-id="${ids.shared}"]`).getByText('Shared', { exact: true }).waitFor(WAIT);
+  await p.getByTestId('today-tasks').locator(`[data-task-id="${ids.partnerOverdue}"]`).getByText('You', { exact: true }).waitFor(WAIT);
+  assert.equal(await p.getByTestId('today-top').innerText(), 'Top 3: 0 of 3 picked', 'the owner’s three picks are not the partner’s');
+  assert.equal(await p.getByTestId('picked').count(), 0);
+  await shot(p, 'c4a-today-partner-phone', { fullPage: false });
+
+  // The partner picks the shared task: one of their three; the owner's picks are untouched.
+  await p.getByRole('button', { name: 'Plan my day' }).click();
+  const plan = p.getByTestId('plan-sheet');
+  await plan.getByTestId('top-count').filter({ hasText: 'Top 3: 0 of 3 picked' }).waitFor(WAIT);
+  assert.equal(await plan.locator(`[data-plan-task="${ids.timed}"]`).count(), 0, 'not the owner’s tasks');
+  await plan.locator(`[data-plan-task="${ids.shared}"]`).getByRole('button', { name: /^Pick for today’s top 3/ }).click();
+  await plan.getByTestId('top-count').filter({ hasText: 'Top 3: 1 of 3 picked' }).waitFor(WAIT);
+  await plan.getByRole('button', { name: 'Done', exact: true }).click();
+  await barSays(p, 'All changes saved');
+  const shared = server.db.prepare('SELECT * FROM planner_tasks WHERE id = ?').get(ids.shared);
+  assert.deepEqual([shared.top_on_partner, shared.top_on_owner], [today, null]);
+  // The owner still has exactly their own three, and the shared task isn't starred for them.
+  await ownerPage.reload();
+  await barSays(ownerPage, 'All changes saved');
+  await ownerPage.getByTestId('today-top').filter({ hasText: 'Top 3: 3 of 3 picked' }).waitFor(WAIT);
+  await ownerPage.getByRole('button', { name: 'Plan my day' }).click();
+  const ownerPlan = ownerPage.getByTestId('plan-sheet');
+  assert.equal(await ownerPlan.locator(`[data-plan-task="${ids.shared}"] .planner-star`).getAttribute('aria-pressed'), 'false');
+  await ownerPlan.getByRole('button', { name: 'Done', exact: true }).click();
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
 test('iPhone: Today’s order, capture offline → task in two taps, Plan my day, a call’s next step', async (t) => {
   const server = await startServer(t);
   const data = seed(server.ctx);
@@ -248,6 +290,7 @@ test('Mac: Today’s order, capture offline → task in two taps, Plan my day, a
   await planDay(page, server, data, { screenshot: 'c4a-plan-mac' });
   await nextStepFromCall(page, server, data, 'mac');
   await shot(page, 'c4a-today-mac-after');
+  await partnerSide(browser, server, data, page);
 
   // The Tasks page: whose / due filters; a handoff is one field.
   await page.getByRole('link', { name: 'Tasks' }).first().click();
@@ -276,4 +319,31 @@ test('Mac: Today’s order, capture offline → task in two taps, Plan my day, a
 
   assert.deepEqual(errors, []);
   assert.deepEqual(await page.evaluate(() => window.__cspViolations), []);
+});
+
+test('Today pages long lists: 50 tasks and 5 relationships without a next step at first, more on request', async (t) => {
+  const server = await startServer(t);
+  const sync = server.ctx.services.sync;
+  const today = localDate();
+  const make = (entity, fields) => sync.applyLocal({ actor: 'owner', entity, op: 'create', fields }).recordId;
+  for (let i = 0; i < 120; i += 1) make('task', { title: `Overdue chore ${String(i).padStart(3, '0')}`, owner: 'owner', business_id: PERSONAL, due_date: addDays(today, -1) });
+  const client = make('client', { name: 'Many Shops Ltd', status: 'active' });
+  for (let i = 0; i < 60; i += 1) {
+    const account = make('account', { client_id: client, name: `Shop ${i}` });
+    make('relationship', { account_id: account, business_id: W, kind: 'wholesale', status: 'active' });
+  }
+  const browser = await launch(t);
+  const mac = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+  const page = await mac.newPage();
+  await signIn(page, server.base, 'jessy', server.users.owner.totpSecret);
+  const overdue = page.getByTestId('overdue');
+  await overdue.waitFor(WAIT);
+  assert.equal(await overdue.locator('[data-task-id]').count(), 50);
+  await page.getByTestId('overdue-count').filter({ hasText: '120' }).waitFor(WAIT);
+  await page.getByTestId('overdue-more').click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="overdue"] [data-task-id]').length === 100, null, WAIT);
+  const flags = page.getByTestId('no-next-step');
+  assert.equal(await flags.locator('[data-relationship-id]').count(), 5);
+  await page.getByTestId('no-next-step-more').click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="no-next-step"] [data-relationship-id]').length === 55, null, WAIT);
 });
