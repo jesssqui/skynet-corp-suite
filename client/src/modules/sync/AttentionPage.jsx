@@ -30,8 +30,8 @@ function when(iso) {
   return iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
 }
 
-function StepFields({ step, definition }) {
-  const fields = Object.entries(step.fields ?? {});
+function StepFields({ step, definition, fields: shown }) {
+  const fields = Object.entries(shown ?? step.fields ?? {});
   if (!fields.length) return null;
   return <KeyValue rows={fields.map(([name, value]) => [fieldLabel(name), formatValue(definition?.fields?.[name], value)])} />;
 }
@@ -40,7 +40,8 @@ function AttentionItem({ entry, engine }) {
   const { step } = entry;
   const definition = engine.definition(step.entity);
   const [editing, setEditing] = useState(false);
-  const [values, setValues] = useState(step.fields ?? {});
+  // Start from what the person last saw: the refused values with their later waiting edits on top.
+  const [values, setValues] = useState(entry.latest ?? step.fields ?? {});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const run = async (fn) => {
@@ -74,7 +75,14 @@ function AttentionItem({ entry, engine }) {
         {editing && editable ? (
           <FieldsForm definition={editable} values={values} onChange={setValues} idPrefix={`fix-${entry.n}`} />
         ) : (
-          <StepFields step={step} definition={definition} />
+          <>
+            <StepFields step={step} definition={definition} fields={entry.latest} />
+            {entry.laterChanges ? (
+              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+                Includes {entry.laterChanges} later change{entry.laterChanges === 1 ? '' : 's'} made on this device.
+              </span>
+            ) : null}
+          </>
         )}
         {error ? <Notice tone="danger">{error}</Notice> : null}
         <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>

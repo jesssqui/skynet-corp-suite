@@ -21,6 +21,11 @@ export function fieldLabel(name) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+const chipStyle = {
+  background: 'var(--warn-soft)', display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)', minHeight: 32,
+  padding: '0 var(--space-3)', borderRadius: 999, fontSize: 'var(--text-sm)', fontWeight: 600, textDecoration: 'none',
+};
+
 const barTones = {
   quiet: { background: 'transparent', color: 'var(--text-muted)', border: '1px solid transparent' },
   offline: { background: 'var(--surface-2)', color: 'var(--text)', border: '1px solid var(--border)' },
@@ -59,7 +64,7 @@ export function SyncBar() {
   const engine = useSyncEngine();
   const status = useSyncStatus();
   const d = describeStatus(status);
-  if (!d && !status?.attention) return null;
+  if (!d && !status?.attention && !status?.clockWarning) return null;
   const tone = barTones[d?.tone ?? 'quiet'];
   return (
     <div
@@ -97,19 +102,23 @@ export function SyncBar() {
           ) : null}
         </span>
       ) : <span />}
-      {status?.attention ? (
-        <Link
-          to="/sync/attention"
-          style={{
-            ...barTones.warn, display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)', minHeight: 32,
-            padding: '0 var(--space-3)', borderRadius: 999, fontSize: 'var(--text-sm)', fontWeight: 600,
-            color: 'var(--warn)', textDecoration: 'none',
-          }}
-        >
-          <Icon name="alert" size={16} />
-          {plural(status.attention, 'needs attention', 'need attention')}
-          <Icon name="chevron" size={14} />
-        </Link>
+      {status?.clockWarning || status?.attention ? (
+        <span style={{ display: 'inline-flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+          {status.clockWarning ? (
+            <Link to="/sync" title={status.clockWarning} style={{ ...chipStyle, color: 'var(--warn)' }} data-testid="clock-warning">
+              <Icon name="alert" size={16} />
+              This device’s clock is off
+              <Icon name="chevron" size={14} />
+            </Link>
+          ) : null}
+          {status.attention ? (
+            <Link to="/sync/attention" style={{ ...chipStyle, color: 'var(--warn)' }}>
+              <Icon name="alert" size={16} />
+              {plural(status.attention, 'needs attention', 'need attention')}
+              <Icon name="chevron" size={14} />
+            </Link>
+          ) : null}
+        </span>
       ) : null}
     </div>
   );
@@ -124,16 +133,20 @@ function who(side, me) {
 
 /**
  * A record's open clashes (record._sync.clashes) with a choice for each. Settling needs a
- * connection (the server decides; the record is pulled again after).
+ * connection (the server decides; the record is pulled again after). Renders (and subscribes to
+ * anything) only for a record that has clashes, so long lists can show one per row.
  */
 export function ClashPanel({ record, definition }) {
+  const clashes = record?._sync?.clashes ?? [];
+  return clashes.length ? <Clashes clashes={clashes} definition={definition} /> : null;
+}
+
+function Clashes({ clashes, definition }) {
   const engine = useSyncEngine();
   const status = useSyncStatus();
   const { session } = useAuth();
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
-  const clashes = record?._sync?.clashes ?? [];
-  if (!clashes.length) return null;
   const offline = status?.phase === 'offline';
 
   const settle = async (clash, resolution) => {
@@ -207,23 +220,31 @@ function recordLabel(def, rec) {
   return text ? rec[text.name] : rec.id.slice(-8);
 }
 
-/** Every record on this device, for an `id` field (which entity it points to isn't described). */
-function useIdOptions(enabled) {
+/**
+ * A picker for an `id` field: every record on this device (which entity the field points to isn't
+ * described). Only rendered in forms, so a long list's rows never load or subscribe to this.
+ */
+function IdSelect({ field, id, value, onChange }) {
   const { data } = useSyncData(async (engine) => {
-    if (!enabled) return [];
     const out = [];
     for (const def of engine.entities()) {
       for (const rec of await engine.list(def.entity)) out.push({ value: rec.id, label: `${def.entity} · ${recordLabel(def, rec)}` });
     }
     return out;
-  }, [enabled]);
-  return data ?? [];
+  });
+  const opts = data ?? [];
+  return (
+    <select id={id} value={value ?? ''} onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)} style={inputStyle}>
+      <option value="">{field.required ? 'Choose…' : '—'}</option>
+      {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      {value && !opts.some((o) => o.value === value) ? <option value={value}>{value}</option> : null}
+    </select>
+  );
 }
 
 /** One input for a field definition ({ name, type, required, max, values }). value/onChange use the field's own type. */
 export function FieldInput({ field, value, onChange, idPrefix = 'f' }) {
   const id = `${idPrefix}-${field.name}`;
-  const options = useIdOptions(field.type === 'id');
   const label = `${fieldLabel(field.name)}${field.required ? '' : ' (optional)'}`;
   let input;
   if (field.type === 'boolean') {
@@ -234,13 +255,13 @@ export function FieldInput({ field, value, onChange, idPrefix = 'f' }) {
       </label>
     );
   }
-  if (field.type === 'enum' || field.type === 'id') {
-    const opts = field.type === 'enum' ? field.values.map((v) => ({ value: v, label: v })) : options;
+  if (field.type === 'id') {
+    input = <IdSelect field={field} id={id} value={value} onChange={onChange} />;
+  } else if (field.type === 'enum') {
     input = (
       <select id={id} value={value ?? ''} onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)} style={inputStyle}>
         <option value="">{field.required ? 'Choose…' : '—'}</option>
-        {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        {value && !opts.some((o) => o.value === value) ? <option value={value}>{value}</option> : null}
+        {field.values.map((v) => <option key={v} value={v}>{v}</option>)}
       </select>
     );
   } else if (field.type === 'integer' || field.type === 'number') {

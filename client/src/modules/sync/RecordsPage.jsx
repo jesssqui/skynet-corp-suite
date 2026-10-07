@@ -55,17 +55,21 @@ function AddForm({ def, engine, onDone }) {
 }
 
 /** id -> a readable label for every record on this device (for `id` fields). */
-function useLabels() {
+function useLabels(needed) {
   const { data } = useSyncData(async (engine) => {
+    if (!needed) return null;
     const labels = new Map();
     for (const d of engine.entities()) {
       const title = titleField(d);
       for (const rec of await engine.list(d.entity)) labels.set(rec.id, `${d.entity} · ${title ? formatValue(title, rec[title.name]) : rec.id}`);
     }
     return labels;
-  });
-  return data ?? new Map();
+  }, [needed], { entities: needed ? null : [] });
+  return data ?? EMPTY;
 }
+
+const EMPTY = new Map();
+const PAGE = 50; // rows at a time: a phone shouldn't build thousands of rows to show a dozen
 
 function RecordRow({ def, engine, record, first, labels }) {
   const [editing, setEditing] = useState(false);
@@ -164,8 +168,10 @@ export default function RecordsPage() {
   const engine = useSyncEngine();
   const def = engine?.definition(entity) ?? null;
   const { records, loading } = useRecords(entity);
-  const labels = useLabels();
+  const labels = useLabels(Boolean(def && Object.values(def.fields).some((f) => f.type === 'id')));
   const [adding, setAdding] = useState(false);
+  const [shown, setShown] = useState(PAGE);
+  useEffect(() => setShown(PAGE), [entity]);
 
   if (engine && !def) {
     return (
@@ -189,9 +195,21 @@ export default function RecordsPage() {
           {!def || loading ? (
             <span style={{ color: 'var(--text-muted)' }}>Loading…</span>
           ) : records.length ? (
-            <ul style={{ listStyle: 'none', margin: 'calc(-1 * var(--space-3)) 0', padding: 0 }}>
-              {records.map((r, i) => <RecordRow key={r.id} def={def} engine={engine} record={r} first={i === 0} labels={labels} />)}
-            </ul>
+            <>
+              <ul style={{ listStyle: 'none', margin: 'calc(-1 * var(--space-3)) 0', padding: 0 }}>
+                {records.slice(0, shown).map((r, i) => (
+                  <RecordRow key={r.id} def={def} engine={engine} record={r} first={i === 0} labels={labels} />
+                ))}
+              </ul>
+              {records.length > shown ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap', marginTop: 'var(--space-4)' }}>
+                  <Button onClick={() => setShown((n) => n + PAGE)}>Show {Math.min(PAGE, records.length - shown)} more</Button>
+                  <span style={{ color: 'var(--text-muted)', fontSize: 'var(--text-sm)' }} data-testid="records-shown">
+                    {shown} of {records.length}
+                  </span>
+                </div>
+              ) : null}
+            </>
           ) : (
             <EmptyState title={`No ${entity} records on this device`} />
           )}
