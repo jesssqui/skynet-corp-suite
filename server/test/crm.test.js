@@ -434,6 +434,13 @@ test('consent per business is append-only; the latest counts, a same-day withdra
   c = await consentOf();
   assert.deepEqual([c[CONSULTING].given, c[CONSULTING].expiresOn], [true, addMonths(recent, 6)]);
 
+  // Express first, a purchase later: still given, and it never lapses (the express row decides).
+  const SPS = BUSINESS_IDS.save_point;
+  const yes = await a.create('consent', { contact_id: contact, business_id: SPS, withdrawn: false, date: addMonths(today, -30), kind: 'express' });
+  await a.create('consent', { contact_id: contact, business_id: SPS, withdrawn: false, date: addMonths(today, -26), kind: 'implied_purchase' });
+  c = await consentOf();
+  assert.deepEqual([c[SPS].given, c[SPS].kind, c[SPS].id, c[SPS].expiresOn], [true, 'express', yes, null]);
+
   const r = await a.one(a.step('create', 'consent', newId(), { contact_id: contact, business_id: W, date: '2026-07-01' }));
   assert.deepEqual([r.status, r.code], ['rejected', 'invalid_value'], 'withdrawn is required: say yes or no');
 });

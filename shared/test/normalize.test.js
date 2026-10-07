@@ -27,6 +27,11 @@ test('phones: North America as 10 digits, elsewhere + and the country code, noth
   // Outside North America: "+", "00" or "011" in front, kept with the country code.
   for (const typed of ['+43 1 2345678', '0043 1 2345678', '011 43 1 2345678']) assert.equal(normalizePhone(typed), '+4312345678', typed);
   assert.equal(normalizePhone('+86 138 0013 8000'), '+8613800138000');
+  // A "(0)" trunk prefix after the country code isn't part of the number.
+  for (const typed of ['+44 (0)20 7946 0958', '+44 20 7946 0958', '0044 (0)20 7946 0958', '011 44 (0) 20 7946 0958']) {
+    assert.equal(normalizePhone(typed), '+442079460958', typed);
+  }
+  assert.equal(normalizePhone('(0)20 7946 0958'), '02079460958', 'without a country code it isn\'t guessed (refused)');
   // Two different numbers never share a spelling.
   assert.equal(normalizePhone('(431) 234-5678'), '4312345678', 'North American');
   assert.notEqual(normalizePhone('(431) 234-5678'), normalizePhone('+43 1 2345678'));
@@ -152,5 +157,33 @@ test('consent: implied consent lapses (2 years after a purchase, 6 months after 
   const handSet = [row({ kind: 'implied_inquiry', date: '2026-01-01', expires_on: '2030-01-01' })];
   assert.equal(hasConsent(handSet, biz, '2029-12-31'), true);
   assert.equal(hasConsent([row({ kind: 'express', date: '2020-01-01' })], biz, '2030-01-01'), true, 'express never lapses');
-  assert.equal(hasConsent([row({ kind: null, date: '2020-01-01' })], biz, '2030-01-01'), true, 'no kind counts as express');
+  // No kind is implied (the shorter lapse), never express forever.
+  assert.equal(consentExpiresOn({ kind: null, date: '2026-01-01' }), '2026-07-01');
+  assert.equal(hasConsent([row({ kind: null, date: '2026-01-01' })], biz, '2026-06-30'), true);
+  assert.equal(hasConsent([row({ kind: null, date: '2026-01-01' })], biz, '2026-07-01'), false);
+});
+
+test('consent: after the last withdrawal, any express row counts, or the latest-lapsing implied one', () => {
+  const biz = newId();
+  const row = (fields) => ({ id: newId(), business_id: biz, withdrawn: false, ...fields });
+  // Express, then a purchase later: the purchase doesn't make the express consent lapse.
+  const express = row({ kind: 'express', date: '2026-01-01' });
+  const purchase = row({ kind: 'implied_purchase', date: '2026-02-01' });
+  let st = consentStatus([express, purchase], biz, '2030-01-01');
+  assert.deepEqual([st.given, st.expiresOn, st.row.id], [true, null, express.id]);
+  // A purchase, then an inquiry: the inquiry doesn't cut the purchase's 2 years short.
+  const buy = row({ kind: 'implied_purchase', date: '2026-01-10' });
+  const ask = row({ kind: 'implied_inquiry', date: '2026-03-01' });
+  st = consentStatus([buy, ask], biz, '2027-06-01');
+  assert.deepEqual([st.given, st.expiresOn, st.row.id], [true, '2028-01-10', buy.id]);
+  assert.equal(hasConsent([buy, ask], biz, '2028-01-10'), false, 'lapses with the latest-lapsing one');
+  // A withdrawal resets everything before it (an express consent included); a give the same day doesn't count.
+  const out = row({ withdrawn: true, date: '2026-04-01' });
+  const sameDay = row({ kind: 'express', date: '2026-04-01' });
+  st = consentStatus([express, buy, out, sameDay], biz, '2026-05-01');
+  assert.deepEqual([st.given, st.withdrawn, st.row.id], [false, true, out.id]);
+  const after = row({ kind: 'implied_inquiry', date: '2026-04-02' });
+  st = consentStatus([express, buy, out, after], biz, '2026-05-01');
+  assert.deepEqual([st.given, st.withdrawn, st.expiresOn, st.row.id], [true, false, '2026-10-02', after.id]);
+  assert.equal(hasConsent([express, buy, out, after], biz, '2026-10-02'), false, 'only what came after the withdrawal counts');
 });

@@ -328,7 +328,13 @@ gets 401 `device_signed_out`):
    A `not_found` rejection says what is missing: `missing: { field, entity, id }` (`field` null = the record itself).
    Also on registerEntity: `check({ op, recordId, fields, current })` — the module's own rule, run inside the step's
    transaction after the field and reference checks (reads only); return `{ code, reason }` to refuse the step
-   (devices show it in Needs attention). The CRM uses it for "one live link per outside record".
+   (devices show it in Needs attention). The CRM uses it for "one live link per outside record". Two limits: it sees
+   the **step's** fields (for an update: only what that step changes, plus `current`, the row before it) — not what
+   the update ends up writing (a field that loses a clash isn't written), so a rule over the final row must be
+   written for that; and its answer depends on **arrival order** — the same step can be refused where it first
+   applied, e.g. re-sent after a restore when the other device's conflicting change got in first: it then lands in
+   Needs attention (fix or discard), which is safe but needs a person. Use it for rules where refusing is right in
+   any order, never for something that must always apply.
    **Column types must match field types** or registration fails: `text`/`date`/`datetime`/`id`/`enum` → `TEXT`,
    `integer`/`boolean` → `INTEGER`, `number` → `REAL` (`id`, `deleted_at`, `created_*`/`updated_*` TEXT, `flagged`
    INTEGER). A boolean in a TEXT column would come back as '1.0'; "0123" in an INTEGER column as 123.
@@ -543,7 +549,8 @@ client `client/src/modules/crm/`; tests `server/test/crm.test.js`, `client/test/
 - `contact`: client_id*⇧, account_id→ (optional: which of their businesses), name*, role, email (format email),
   phone (format phone), preferred_channel (`email|call|text|social|in_person`), notes.
 - `consent` (append-only): contact_id*⇧, business_id*⇧, withdrawn* (boolean), date* (given / withdrawn), kind
-  (`express|implied_purchase|implied_inquiry`, CASL; none = express), expires_on (date it lapses), source (how it was given).
+  (`express|implied_purchase|implied_inquiry`, CASL; none = implied, lapses like an inquiry), expires_on (date it
+  lapses), source (how it was given).
 - `relationship`: account_id*⇧, business_id*⇧, kind* (`wholesale|website|social|consulting`), status* (`active|paused|ended`),
   start_date, notes.
 - `service`: relationship_id*⇧, name*, status* (`active|paused|done|cancelled`), stage (free text until Projects),
@@ -584,15 +591,18 @@ Value lists live in `@suite/shared/crm` (use them for labels/pickers). New field
   North American `[2-9]XX[2-9]XXXXXX` (10 digits, no +1; typed with or without +1/1) or `+<country code><number>`
   (7–15 digits, country code not 1; typed with +, 00 or 011). Nothing is guessed: a 7-digit local number is refused
   (it exists in every area code — D2 would link strangers), and so is a foreign number without its country code
-  ("138 0013 8000"), so "(431) 234-5678" and "+43 1 2345678" stay different. D2 matches phones with `=` on this form.
-- **Consent** is append-only; withdrawing adds a row with `withdrawn: true`. The one that counts per (contact,
-  business) is the latest by `date`; on the same day a **withdrawal wins** (a same-day sign-up recorded later doesn't
-  undo an unsubscribe); then the later `id`. CASL implied consent **lapses**: `implied_purchase` 2 years after `date`,
-  `implied_inquiry` 6 months after (`consentExpiresOn({ kind, date })`; writers store it in `expires_on`, editable
-  for other implied grounds; readers fall back to it when a row has none, so implied consent always lapses; it counts
-  on the days before `expires_on`). `consentStatus(rows, businessId, today)` → `{ given, withdrawn, expired,
-  expiresOn, row }` and `hasConsent()` in `@suite/shared/crm` — used by the read API (server's local date); use the
-  same on devices with the device's local date. No consent row = no consent.
+  ("138 0013 8000"), so "(431) 234-5678" and "+43 1 2345678" stay different. After a country code a "(0)" trunk
+  prefix is dropped ("+44 (0)20 …" = "+44 20 …"). D2 matches phones with `=` on this form.
+- **Consent** is append-only; withdrawing adds a row with `withdrawn: true`. **Only what was given after the last
+  withdrawal counts** (a give dated the same day as a withdrawal doesn't: the unsubscribe wins). Of those rows: any
+  `express` one → given, never lapses (a later implied row doesn't end it); otherwise given until the
+  **latest-lapsing** implied one lapses (a later inquiry doesn't cut a purchase's 2 years short). CASL implied consent
+  **lapses**: `implied_purchase` 2 years after `date`, `implied_inquiry` — and a row with **no kind** — 6 months after
+  (`consentExpiresOn({ kind, date })`; writers store it in `expires_on`, editable for other implied grounds; readers
+  fall back to it when a row has none; it counts on the days before `expires_on`). `consentStatus(rows, businessId,
+  today)` → `{ given, withdrawn, expired, expiresOn, row }` (row = the one that decides) and `hasConsent()` in
+  `@suite/shared/crm` — used by the read API (server's local date); use the same on devices with the device's local
+  date. `latestConsents()` is only "the most recent row" (for display). No consent row = no consent.
 - **Age-restricted**: `account.age_restricted` (not contact): purchases are made by a business (the Order Manager
   customer links to an account; order activities carry account_id), and one flag per buyer doesn't drift as people
   change roles. Set by hand now, by the wholesale connection later (D). Rule for any marketing list (D packages): an

@@ -26,10 +26,12 @@ export const CONTACT_CHANNELS = Object.freeze(['email', 'call', 'text', 'social'
  * CASL: express (they said yes: never lapses until withdrawn) or implied by an existing business
  * relationship, which lapses — 2 years after their last purchase, 6 months after an inquiry.
  * (Other implied grounds — a published or handed-over address — use implied_inquiry or set
- * expires_on by hand.) A given row with no kind counts as express.
+ * expires_on by hand.) A given row with no kind counts as implied (CONSENT_DEFAULT_KIND, the
+ * shorter lapse): only an explicit 'express' never lapses.
  */
 export const CONSENT_KINDS = Object.freeze(['express', 'implied_purchase', 'implied_inquiry']);
 const CONSENT_LAPSE_MONTHS = Object.freeze({ implied_purchase: 24, implied_inquiry: 6 });
+export const CONSENT_DEFAULT_KIND = 'implied_inquiry';
 /** How a link was made: a strong match linked on its own, or one of you approved it. */
 export const LINK_MATCHED_BY = Object.freeze(['auto', 'approved']);
 /** Apps whose records link to accounts and contacts (D2 matching). 'wom' = the Wholesale Order Manager. */
@@ -65,26 +67,30 @@ export function addMonths(date, months) {
 
 /**
  * The day an implied consent lapses (it counts on the days before it), from its kind and date:
- * implied_purchase: date + 2 years, implied_inquiry: date + 6 months; express or withdrawn: null.
- * Writers store it in `expires_on` (screens prefill it, editable); readers fall back to this
- * when a row has none, so an implied consent always lapses.
+ * implied_purchase: date + 2 years, implied_inquiry (and no kind): date + 6 months; express or
+ * withdrawn: null. Writers store it in `expires_on` (screens prefill it, editable); readers fall
+ * back to this when a row has none, so an implied consent always lapses.
  */
 export function consentExpiresOn({ kind, date, withdrawn = false }) {
-  const months = CONSENT_LAPSE_MONTHS[kind];
+  const months = CONSENT_LAPSE_MONTHS[kind ?? CONSENT_DEFAULT_KIND];
   return withdrawn || !months || !date ? null : addMonths(date, months);
 }
 
+// Order of consent rows: by date; on the same day a withdrawal comes last (it wins); then by id
+// (a UUIDv7: recorded later).
+function later(r, cur) {
+  if (r.date !== cur.date) return r.date > cur.date;
+  if (Boolean(r.withdrawn) !== Boolean(cur.withdrawn)) return Boolean(r.withdrawn);
+  return r.id > cur.id;
+}
+
 /**
- * Consent is append-only: giving or withdrawing it adds a row. The one that counts for a contact
- * and one of our businesses is the latest by `date`; on the same day a withdrawal wins (an
- * unsubscribe is never undone by a same-day sign-up entered later); then the later `id` (a
- * UUIDv7: recorded later). Rows: consent records ({ id, business_id, withdrawn, date, … }).
- * @returns {Map<string, object>} business id -> the consent row that counts
+ * The most recent consent row per business (for showing "last recorded"). Whether consent is
+ * given is consentStatus(): an older express consent can still count after a later implied one.
+ * @returns {Map<string, object>} business id -> its most recent row
  */
 export function latestConsents(rows) {
   const out = new Map();
-  const later = (r, cur) => r.date !== cur.date ? r.date > cur.date
-    : Boolean(r.withdrawn) !== Boolean(cur.withdrawn) ? Boolean(r.withdrawn) : r.id > cur.id;
   for (const r of rows ?? []) {
     const cur = out.get(r.business_id);
     if (!cur || later(r, cur)) out.set(r.business_id, r);
@@ -93,17 +99,39 @@ export function latestConsents(rows) {
 }
 
 /**
- * Where a contact stands with one of our businesses on `today` ("YYYY-MM-DD", the device's local date):
- * { given, withdrawn, expired, expiresOn, row } — given = may be emailed: a latest row that isn't
- * withdrawn and hasn't lapsed. No row: nothing given.
+ * Where a contact stands with one of our businesses on `today` ("YYYY-MM-DD", the device's local
+ * date). Consent is append-only; only what was given after the last withdrawal counts (a give on
+ * the same day as a withdrawal doesn't: the unsubscribe wins). Of those rows: any express one →
+ * given (never lapses); otherwise given while the latest-lapsing implied one hasn't lapsed — so a
+ * later inquiry never cuts short an earlier purchase's 2 years, and a later implied row never
+ * ends an express consent.
+ * @returns {{ given, withdrawn, expired, expiresOn, row }} row = the row that decides it (the
+ *   express one, the latest-lapsing implied one, or the last withdrawal); expiresOn = when that
+ *   implied consent lapses (null for express).
  */
 export function consentStatus(rows, businessId, today = localDate()) {
-  const row = latestConsents(rows).get(businessId) ?? null;
-  if (!row) return { given: false, withdrawn: false, expired: false, expiresOn: null, row: null };
-  const withdrawn = Boolean(row.withdrawn);
-  const expiresOn = withdrawn ? null : (row.expires_on ?? consentExpiresOn(row));
-  const expired = Boolean(expiresOn && today >= expiresOn);
-  return { given: !withdrawn && !expired, withdrawn, expired, expiresOn, row };
+  const mine = (rows ?? []).filter((r) => r.business_id === businessId);
+  if (!mine.length) return { given: false, withdrawn: false, expired: false, expiresOn: null, row: null };
+  let lastWithdrawal = null;
+  for (const r of mine) if (r.withdrawn && (!lastWithdrawal || later(r, lastWithdrawal))) lastWithdrawal = r;
+  const gives = mine.filter((r) => !r.withdrawn && (!lastWithdrawal || r.date > lastWithdrawal.date));
+  if (!gives.length) return { given: false, withdrawn: Boolean(lastWithdrawal), expired: false, expiresOn: null, row: lastWithdrawal };
+  const express = gives.filter((r) => r.kind === 'express');
+  if (express.length) {
+    const row = express.reduce((a, b) => (later(b, a) ? b : a));
+    return { given: true, withdrawn: false, expired: false, expiresOn: null, row };
+  }
+  let row = null;
+  let expiresOn = null;
+  for (const r of gives) {
+    const until = r.expires_on ?? consentExpiresOn(r);
+    if (until && (!expiresOn || until > expiresOn || (until === expiresOn && later(r, row)))) {
+      expiresOn = until;
+      row = r;
+    }
+  }
+  const expired = !expiresOn || today >= expiresOn;
+  return { given: !expired, withdrawn: false, expired, expiresOn, row: row ?? gives[0] };
 }
 
 /** May this business email this contact today? */

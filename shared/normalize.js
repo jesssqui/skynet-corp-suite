@@ -44,7 +44,8 @@ const INTERNATIONAL_RE = /^\+[2-9]\d{6,14}$/; // E.164: country code (not 1) + n
  *    "00" or "011" in front. Without one it is refused rather than guessed: "(431) 234-5678"
  *    (North American) and "+43 1 2345678" (Vienna) must not both become "4312345678", nor a
  *    Chinese mobile "138 0013 8000" turn into the North American "380 013 8000".
- * An extension at the end ("x22", "ext. 22") is dropped: keep it in the contact's notes.
+ * An extension at the end ("x22", "ext. 22") is dropped: keep it in the contact's notes. After a
+ * country code, a "(0)" trunk prefix is dropped too: "+44 (0)20 7946 0958" = "+44 20 7946 0958".
  * Returns what was typed in that shape; isPhone() says whether it is a valid one.
  */
 export function normalizePhone(input) {
@@ -57,7 +58,12 @@ export function normalizePhone(input) {
     digits = digits.replace(/^(00|011)/, ''); // dialled with an international prefix
     international = true;
   }
-  if (international) return digits.startsWith('1') ? digits.slice(1) : `+${digits}`;
+  if (international) {
+    // The national trunk "0" written in brackets ("+44 (0)20 …") is not dialled from abroad.
+    const all = typed.replace(/\(\s*0\s*\)/g, '').replace(/\D/g, '');
+    digits = typed.startsWith('+') ? all : all.replace(/^(00|011)/, '');
+    return digits.startsWith('1') ? digits.slice(1) : `+${digits}`;
+  }
   if (digits.length === 11 && digits.startsWith('1') && NANP_RE.test(digits.slice(1))) return digits.slice(1);
   return digits;
 }
