@@ -4,14 +4,15 @@
 import { IDBFactory } from 'fake-indexeddb';
 import { modules } from '../../server/src/modules/index.js';
 import syncdemo from '../../server/test/fixtures/syncdemo/index.js';
+import chk from './fixtures/chk/index.js';
 import { tmpDir, testConfig, startApp, ensureTestUsers, sessionFor } from '../../server/test/helpers.js';
 import { createSyncEngine, createLocalLocks } from '../src/sync/engine.js';
 
 export { tmpDir, testConfig };
 
-/** A suite server with syncdemo registered and both accounts made. */
+/** A suite server with the test-only syncdemo and chk modules registered and both accounts made. */
 export async function startServer(t, config) {
-  const env = await startApp(t, config ?? testConfig(tmpDir(t)), { modules: [...modules, syncdemo] });
+  const env = await startApp(t, config ?? testConfig(tmpDir(t)), { modules: [...modules, syncdemo, chk] });
   const users = await ensureTestUsers(env.ctx);
   return { ...env, config: config ?? env.ctx.config, users };
 }

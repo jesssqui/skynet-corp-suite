@@ -26,23 +26,33 @@ export function useSyncStatus() {
 }
 
 /**
- * Run `load(engine)` now and again after every local data change.
+ * Run `load(engine)` now and again after local data changes. `entities` limits that to changes of
+ * those record types (data events name them); null = any change. When the engine stops (signed
+ * out, data deleted from another tab) the data is dropped at once.
  * @returns {{ data: any, loading: boolean, error: Error|null }}
  */
-export function useSyncData(load, deps = []) {
+export function useSyncData(load, deps = [], { entities = null } = {}) {
   const engine = useSyncEngine();
   const loader = useRef(load);
   loader.current = load;
+  const watched = useRef(entities);
+  watched.current = entities;
   const [state, setState] = useState({ data: undefined, loading: true, error: null });
   useEffect(() => {
     if (!engine) return undefined;
     let alive = true;
     let pending = false;
+    const drop = () => setState({ data: undefined, loading: false, error: null });
     const run = () => {
       if (pending) return;
       pending = true;
       queueMicrotask(() => {
         pending = false;
+        if (!alive) return;
+        if (engine.isStopped() && engine.status().phase === 'stopped') {
+          drop();
+          return;
+        }
         Promise.resolve()
           .then(() => loader.current(engine))
           .then(
@@ -52,7 +62,14 @@ export function useSyncData(load, deps = []) {
       });
     };
     run();
-    const off = engine.subscribe((e) => e.type === 'data' && run());
+    const off = engine.subscribe((e) => {
+      if (e.type === 'status') {
+        if (e.status.phase === 'stopped' && alive) drop();
+        return;
+      }
+      const want = watched.current;
+      if (!e.entities || !want || e.entities.some((x) => want.includes(x))) run();
+    });
     return () => {
       alive = false;
       off();
@@ -67,12 +84,12 @@ export function useSyncData(load, deps = []) {
  * list that state in `deps` so the list is re-read when it changes.
  */
 export function useRecords(entity, { where, sort } = {}, deps = []) {
-  const { data, loading, error } = useSyncData((engine) => engine.list(entity, { where, sort }), [entity, ...deps]);
+  const { data, loading, error } = useSyncData((engine) => engine.list(entity, { where, sort }), [entity, ...deps], { entities: [entity] });
   return { records: data ?? [], loading, error };
 }
 
 /** One record, live (null when this device doesn't have it). */
 export function useRecord(entity, id) {
-  const { data, loading, error } = useSyncData((engine) => (id ? engine.get(entity, id) : null), [entity, id]);
+  const { data, loading, error } = useSyncData((engine) => (id ? engine.get(entity, id) : null), [entity, id], { entities: [entity] });
   return { record: data ?? null, loading, error };
 }

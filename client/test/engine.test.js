@@ -3,11 +3,11 @@
 // sign-out. IndexedDB is fake-indexeddb; everything else (HTTP, sign-in, SQLite) is real.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { IDBFactory } from 'fake-indexeddb';
+import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 import { newId } from '@suite/shared/ids';
 import { runBackup } from '../../server/src/backup/backup.js';
 import { restoreBackup } from '../../server/src/backup/restore.js';
-import { createSyncEngine, createLocalLocks, LIMITS, SyncError } from '../src/sync/engine.js';
+import { createSyncEngine, createLocalLocks, LIMITS, SyncError, storageError } from '../src/sync/engine.js';
 import { openLocalDb } from '../src/sync/localdb.js';
 import { transact } from '../src/sync/idb.js';
 import { startServer, makeDevice, settle, row, count, tmpDir, testConfig } from './helpers.js';
@@ -105,7 +105,7 @@ test('local checks: unknown fields, bad values, missing required fields and refu
   assert.equal(await code(e.create('item', { title: 'x', status: 'maybe' })), 'invalid_value');
   assert.equal(await code(e.create('item', { title: 'x', due: '2026-02-30' })), 'invalid_value');
   assert.equal(await code(e.create('item', { title: 'x'.repeat(201) })), 'invalid_value');
-  assert.equal(await code(e.create('thing', { title: 'x' })), 'unknown_entity');
+  assert.equal(await code(e.create('nothing', { title: 'x' })), 'unknown_entity');
   const noteId = await e.create('note', { item_id: newId(), body: 'b' });
   assert.equal(await code(e.update('note', noteId, { body: 'c' })), 'op_not_allowed', 'notes are append-only');
   assert.equal(await code(e.update('item', newId(), { qty: 1 })), 'not_found');
@@ -400,6 +400,53 @@ test('refused steps go to "needs attention": fix as a new step, retry unchanged,
   assert.equal(notes(server.db).length, 2);
 });
 
+test('fixing a refused create keeps the edits made to it afterwards (folded in, not dropped as stale)', async (t) => {
+  const server = await startServer(t);
+  const mac = await makeDevice(t, server, 'partner');
+  const phone = await makeDevice(t, server, 'owner');
+  await mac.engine.create('thing', { title: 'mac', code: 'X' });
+  await mac.engine.syncNow();
+
+  // Offline, the phone makes a thing whose code the server already has, then edits it twice.
+  phone.online = false;
+  const id = await phone.engine.create('thing', { title: 'phone', code: 'X' });
+  await phone.engine.update('thing', id, { n: 5 });
+  await phone.engine.update('thing', id, { title: 'phone edited' });
+  phone.online = true;
+  await phone.engine.syncNow();
+  assert.equal(phone.engine.status().attention, 1, 'the create is refused (UNIQUE)');
+  assert.equal(phone.engine.status().parked, 2, 'its edits wait for it');
+  const [refused] = await phone.engine.attentionList();
+  assert.equal(refused.code, 'constraint');
+  assert.deepEqual(refused.latest, { title: 'phone edited', code: 'X', n: 5 }, 'the Fix form starts from the latest values');
+  assert.equal(refused.laterChanges, 2);
+
+  // Fixed (only the code changes): one new create carrying the later edits; they leave the outbox.
+  const fixed = await phone.engine.fixAttention(refused.n, { code: 'Y' });
+  assert.deepEqual(fixed.fields, { title: 'phone edited', code: 'Y', n: 5 });
+  assert.equal(phone.engine.status().waiting, 1);
+  const shown = await phone.engine.get('thing', id);
+  assert.deepEqual([shown.title, shown.code, shown.n, shown._sync.pending], ['phone edited', 'Y', 5, true]);
+
+  await phone.engine.syncNow();
+  assert.deepEqual([phone.engine.status().waiting, phone.engine.status().attention], [0, 0]);
+  const saved = server.db.prepare('SELECT title, code, n FROM chk_things WHERE id = ?').get(id);
+  assert.deepEqual({ ...saved }, { title: 'phone edited', code: 'Y', n: 5 });
+  assert.equal(count(server.db, 'SELECT count(*) AS n FROM sync_steps WHERE record_id = ?', id), 1);
+
+  // An update fix also starts from (and keeps) later edits of its own fields.
+  phone.online = false;
+  await phone.engine.update('thing', id, { code: 'X' }); // refused: taken
+  await phone.engine.update('thing', id, { n: 6 });
+  phone.online = true;
+  await phone.engine.syncNow();
+  const [badUpdate] = await phone.engine.attentionList();
+  assert.deepEqual(badUpdate.latest, { code: 'X' });
+  await phone.engine.fixAttention(badUpdate.n, { code: 'Z' });
+  await phone.engine.syncNow();
+  assert.deepEqual({ ...server.db.prepare('SELECT code, n FROM chk_things WHERE id = ?').get(id) }, { code: 'Z', n: 6 });
+});
+
 test('restore: a new generation re-sends the kept steps first, parks edits whose record is missing, pulls from scratch', async (t) => {
   const dir = tmpDir(t);
   const config = testConfig(dir);
@@ -499,7 +546,7 @@ test('device_signed_out: syncing stops and clearLocalData deletes everything, un
   const globals = {
     indexedDB: phone.idbFactory,
     localStorage: { getItem: (k) => stored.get(k) ?? null, setItem: (k, v) => stored.set(k, v), removeItem: (k) => stored.delete(k) },
-    caches: { keys: async () => ['suite-shell-abc'], delete: async (k) => deleted.push(k) },
+    caches: { keys: async () => ['suite-shell-abc', 'suite-data-1'], delete: async (k) => deleted.push(k) },
   };
   const saved = Object.fromEntries(Object.keys(globals).map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
   for (const [k, v] of Object.entries(globals)) Object.defineProperty(globalThis, k, { value: v, configurable: true, writable: true });
@@ -521,7 +568,7 @@ test('device_signed_out: syncing stops and clearLocalData deletes everything, un
   assert.deepEqual([store.records.length, store.outbox.length, store.sent.length, store.attention.length], [0, 0, 0, 0]);
   assert.deepEqual(store.meta, { hlc: undefined, seen: undefined, pull: undefined, generation: undefined });
   assert.deepEqual([...stored.keys()], ['suite.theme'], 'device id and remembered session gone, theme kept');
-  assert.deepEqual(deleted, ['suite-shell-abc']);
+  assert.deepEqual(deleted, ['suite-data-1'], 'every cache but the public app shell');
 });
 
 test('session_expired: syncing stops but everything is kept, and after signing in again the outbox goes out', async (t) => {
@@ -558,4 +605,72 @@ test('a database left by another device id is dropped before use', async (t) => 
   assert.equal(partner.engine.status().waiting, 0);
   assert.deepEqual(await partner.engine.list('item'), []);
   assert.equal(items(server.db).length, 0);
+});
+
+test('a full disk is a SyncError (storage_full) and leaves nothing half-written', async (t) => {
+  const server = await startServer(t);
+  const phone = await makeDevice(t, server, 'owner');
+  const before = await storeContents(phone.idbFactory);
+  const put = IDBObjectStore.prototype.put;
+  IDBObjectStore.prototype.put = function quota(...args) {
+    if (this.name === 'outbox') throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    return put.apply(this, args);
+  };
+  try {
+    await assert.rejects(phone.engine.create('item', { title: 'no room' }), (err) => err instanceof SyncError && err.code === 'storage_full');
+  } finally {
+    IDBObjectStore.prototype.put = put;
+  }
+  const after = await storeContents(phone.idbFactory);
+  assert.equal(after.outbox.length, 0);
+  assert.equal(after.meta.hlc, before.meta.hlc, 'the clock was not moved either (one transaction)');
+  assert.equal(phone.engine.status().waiting, 0);
+  assert.equal(storageError(new DOMException('x', 'DataError')).code, 'storage_error');
+  const apiError = Object.assign(new Error('offline'), { status: 0 });
+  assert.equal(storageError(apiError), apiError, 'API errors pass through');
+});
+
+test('change events name the record types that changed, so pages re-read only what they show', async (t) => {
+  const server = await startServer(t);
+  const a = await makeDevice(t, server, 'owner');
+  const b = await makeDevice(t, server, 'partner');
+  const seen = [];
+  a.engine.subscribe((e) => e.type === 'data' && seen.push(e.entities));
+  const itemId = await a.engine.create('item', { title: 'x' });
+  assert.deepEqual(seen.at(-1), ['item']);
+  seen.length = 0;
+  await a.engine.syncNow();
+  assert.ok(seen.length && seen.every((x) => Array.isArray(x) && x.every((n) => n === 'item')), JSON.stringify(seen));
+  seen.length = 0;
+  await a.engine.syncNow();
+  assert.deepEqual(seen, [], 'a sync that brings nothing redraws nothing');
+  await b.engine.syncNow();
+  await b.engine.create('note', { item_id: itemId, body: 'n' });
+  await b.engine.syncNow();
+  await a.engine.syncNow();
+  assert.deepEqual(seen, [['note']]);
+  seen.length = 0;
+  await a.engine.refetchAll();
+  assert.ok(seen.includes(null), 'a pull from scratch can change anything');
+});
+
+test('the device clock being far off shows up in the status (and the sync bar)', async (t) => {
+  const server = await startServer(t);
+  const phone = await makeDevice(t, server, 'owner', { engine: { wallClock: () => Date.now() + 3_600_000 } });
+  await phone.engine.create('item', { title: 'from the future' });
+  await phone.engine.syncNow();
+  assert.match(phone.engine.status().clockWarning ?? '', /clock is off by 3600 s/);
+});
+
+test('a connection lost while a sync finishes ends as offline, not "saved"', async (t) => {
+  const server = await startServer(t);
+  const phone = await makeDevice(t, server, 'owner');
+  const get = phone.transport.get;
+  phone.transport.get = async (path) => {
+    const res = await get(path);
+    if (path.startsWith('/api/sync/pull')) phone.online = false; // the 'offline' event arrives mid-cycle
+    return res;
+  };
+  await phone.engine.syncNow();
+  assert.equal(phone.engine.status().phase, 'offline');
 });

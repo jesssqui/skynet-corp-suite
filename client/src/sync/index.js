@@ -9,8 +9,9 @@
 //   const { records } = useRecords('task', { where: { done: false }, sort: 'due' });
 //   const { record } = useRecord('client', clientId);      // record._sync: { pending, flagged, clashes }
 //
-// Every write lands in IndexedDB (the record + an outbox step, one transaction) and shows at
-// once, online or not; the engine sends it when it can. See CLAUDE.md "Offline sync (C2b)".
+// A write stores its change as a step in the IndexedDB outbox (one transaction); reads replay the
+// outbox over the pulled copy, so it shows at once, online or not, and the engine sends it when
+// it can. See CLAUDE.md "Offline sync (C2b)".
 import { api } from '../api/client.js';
 import { createSyncEngine, SyncError } from './engine.js';
 

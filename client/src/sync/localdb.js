@@ -77,3 +77,26 @@ export async function deleteLocalDb(factory = globalThis.indexedDB, { name = DB_
   }
   await deleteDatabase(factory, name);
 }
+
+/**
+ * How many changes this device holds that the server never accepted (outbox + needs attention),
+ * for warnings before they are deleted (signing in as someone else). 0 when there is no database.
+ */
+export async function countUnsent(factory = globalThis.indexedDB, { name = DB_NAME } = {}) {
+  if (!factory) return 0;
+  const { db, close } = await openLocalDb(factory, { name });
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(['outbox', 'attention'], 'readonly');
+      let n = 0;
+      for (const store of ['outbox', 'attention']) {
+        const req = tx.objectStore(store).count();
+        req.onsuccess = () => { n += req.result; };
+      }
+      tx.oncomplete = () => resolve(n);
+      tx.onerror = () => reject(tx.error);
+    });
+  } finally {
+    close();
+  }
+}

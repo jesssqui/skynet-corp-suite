@@ -36,11 +36,25 @@ export const LOCK_NAME = 'suite-sync';
 
 /** A change the engine refuses before it reaches the outbox, or a state it can't work in. */
 export class SyncError extends Error {
-  constructor(code, message) {
-    super(message);
+  constructor(code, message, cause) {
+    super(message, cause ? { cause } : undefined);
     this.name = 'SyncError';
     this.code = code;
   }
+}
+
+/**
+ * IndexedDB failures as SyncErrors, so callers handle one kind of error: storage_full (the
+ * browser's quota — on an iPhone, the phone is out of space), storage_error (anything else).
+ * SyncErrors and API errors (they carry `status`) pass through.
+ */
+export function storageError(err) {
+  if (err instanceof SyncError || err?.status !== undefined) return err;
+  const name = err?.name ?? '';
+  if (name === 'QuotaExceededError' || (name === 'UnknownError' && /quota|space|disk/i.test(err?.message ?? ''))) {
+    return new SyncError('storage_full', 'This device is out of storage space for the offline copy: free some space, then try again', err);
+  }
+  return new SyncError('storage_error', `The offline copy couldn’t be read or written (${name || 'error'}: ${err?.message ?? err})`, err);
 }
 
 /** One-at-a-time lock for when the browser has no Web Locks (one tab, or tests). */
@@ -154,10 +168,12 @@ export function createSyncEngine({
   };
 
   // ---- events -------------------------------------------------------------
-  function emit(type) {
+  // Listeners get { type: 'data' | 'status', status, entities }. For 'data', `entities` names the
+  // record types whose view may have changed (null = any: a reset, a pull from scratch, start).
+  function emit(type, entities = null) {
     for (const fn of [...listeners]) {
       try {
-        fn({ type, status });
+        fn({ type, status, entities });
       } catch {
         /* a listener's problem is not the engine's */
       }
@@ -172,23 +188,24 @@ export function createSyncEngine({
     if (stopped || msg?.deviceId !== deviceId) return;
     if (msg.type === 'data') {
       refreshCounts().catch(() => {});
-      emit('data');
+      emit('data', msg.entities ?? null);
     } else if (msg.type === 'synced' && (status.phase === 'error' || status.phase === 'offline') && isOnline()) {
       syncNow('other-tab');
     }
   }
-  function broadcast(type) {
+  function broadcast(type, entities = null) {
     try {
-      channel?.postMessage({ type, deviceId });
+      channel?.postMessage({ type, deviceId, entities });
     } catch {
       /* channel closed */
     }
   }
-  /** Local data changed (here): tell this tab's listeners and the other tabs. */
-  async function dataChanged() {
+  /** Local data changed (here): tell this tab's listeners and the other tabs. entities: null = any. */
+  async function dataChanged(entities = null) {
+    const list = entities ? [...new Set(entities)] : null;
     await refreshCounts();
-    emit('data');
-    broadcast('data');
+    emit('data', list);
+    broadcast('data', list);
   }
 
   // ---- database -------------------------------------------------------------
@@ -200,7 +217,10 @@ export function createSyncEngine({
   async function opened() {
     if (!conn && !stopped && starting) await starting.catch(() => {});
   }
-  const tx = (stores, mode, fn) => transact(db(), stores, mode, fn);
+  const tx = (stores, mode, fn) => transact(db(), stores, mode, fn).catch((err) => {
+    if (stopped) throw new SyncError('stopped', 'The offline copy is closed (signed out?)', err);
+    throw storageError(err);
+  });
 
   function onDbClosed() {
     // Deleted or closed under us (clearLocalData, another tab, the browser): stop for good.
@@ -265,7 +285,9 @@ export function createSyncEngine({
       channel?.addEventListener('message', onChannel);
       await refreshCounts();
       setStatus({
-        phase: 'idle', ready: definitions.size > 0 || Boolean(meta.info), generation: meta.generation, lastSyncAt: meta.lastSyncAt,
+        // Never synced: nothing to say yet ("All changes saved" would be premature); the first cycle follows.
+        phase: meta.lastSyncAt ? 'idle' : 'starting',
+        ready: definitions.size > 0 || Boolean(meta.info), generation: meta.generation, lastSyncAt: meta.lastSyncAt,
       });
       emit('data');
     })();
@@ -403,7 +425,7 @@ export function createSyncEngine({
 
   async function addStep(change) {
     const step = await tx(['meta', 'outbox'], 'readwrite', (t) => queueStep(t, change));
-    await dataChanged();
+    await dataChanged([change.entity]);
     if (autoSync) syncSoon();
     return step;
   }
@@ -509,7 +531,8 @@ export function createSyncEngine({
       const lastSyncAt = new Date(wallClock()).toISOString();
       await tx('meta', 'readwrite', (t) => t.put('meta', lastSyncAt, 'lastSyncAt'));
       await refreshCounts();
-      setStatus({ phase: 'idle', lastSyncAt, lastError: null, nextRetryAt: null });
+      // (The connection may have dropped as the cycle finished: the 'offline' event came while syncing.)
+      setStatus({ phase: isOnline() ? 'idle' : 'offline', lastSyncAt, lastError: null, nextRetryAt: null });
       broadcast('synced');
       return true;
     } catch (err) {
@@ -655,7 +678,7 @@ export function createSyncEngine({
       return { accepted, reset: Boolean(generation) && generation !== body.generation };
     });
     if (body.clockWarning !== status.clockWarning) setStatus({ clockWarning: body.clockWarning ?? null });
-    await dataChanged();
+    await dataChanged(batch.map((e) => e.step.entity));
     return outcome;
   }
 
@@ -710,8 +733,7 @@ export function createSyncEngine({
     });
     // Redraw when the copy changed: a page with changes, or a finished pull from scratch (the swap).
     // Most periodic pulls bring nothing and redraw nothing.
-    const changed = full ? !body.hasMore : body.changes.length > 0;
-    if (changed) await dataChanged();
+    if (full ? !body.hasMore : body.changes.length > 0) await dataChanged(full ? null : body.changes.map((c) => c.entity));
   }
 
   async function pruneSent() {
@@ -731,9 +753,37 @@ export function createSyncEngine({
   }
 
   // ---- needs attention / waiting ---------------------------------------------------
-  /** Steps the server refused (other than not_found), oldest first. */
+  /**
+   * A refused step's fields with the record's later waiting edits (outbox, newer stamps) laid over
+   * them: what the person last saw. For a create every later field counts; for an update only its own.
+   */
+  function latestFields(entry, outbox) {
+    const { entity, recordId, op, hlc } = entry.step;
+    const later = outbox
+      .filter((e) => e.step.entity === entity && e.step.recordId === recordId && e.step.op === 'update' && e.step.hlc > hlc)
+      .sort((a, b) => (a.step.hlc < b.step.hlc ? -1 : 1));
+    const fields = { ...(entry.step.fields ?? {}) };
+    for (const e of later) {
+      for (const [name, value] of Object.entries(e.step.fields ?? {})) {
+        if (op === 'create' || Object.hasOwn(fields, name)) fields[name] = value;
+      }
+    }
+    return { fields, later };
+  }
+
+  /**
+   * Steps the server refused (other than not_found), oldest first. Each has `latest`: its fields with
+   * the record's later waiting edits applied (what a Fix form should start from).
+   */
   async function attentionList() {
-    return (await tx('attention', 'readonly', (t) => t.getAll('attention'))).sort((a, b) => a.n - b.n);
+    const { attention, outbox } = await tx(['attention', 'outbox'], 'readonly', async (t) => ({
+      attention: await t.getAll('attention'),
+      outbox: await t.getAll('outbox'),
+    }));
+    return attention.sort((a, b) => a.n - b.n).map((entry) => {
+      const { fields, later } = latestFields(entry, outbox);
+      return { ...entry, latest: fields, laterChanges: later.length };
+    });
   }
 
   /** Steps parked because their record isn't on the server (yet). */
@@ -743,9 +793,11 @@ export function createSyncEngine({
 
   /** Let a refused change go. Discarding a refused create also drops later changes to that record. */
   async function discardAttention(n) {
+    let entity = null;
     const dropped = await tx(['attention', 'outbox'], 'readwrite', async (t) => {
       const entry = await t.get('attention', n);
       if (!entry) return 0;
+      entity = entry.step.entity;
       await t.delete('attention', n);
       let count = 1;
       if (entry.step.op === 'create') {
@@ -761,48 +813,59 @@ export function createSyncEngine({
       }
       return count;
     });
-    await dataChanged();
+    await dataChanged(entity ? [entity] : []);
     return dropped;
   }
 
   /** Send a refused change again unchanged (same key: the server never recorded it). */
   async function retryAttention(n) {
-    await tx(['attention', 'outbox', 'meta'], 'readwrite', async (t) => {
+    const entity = await tx(['attention', 'outbox', 'meta'], 'readwrite', async (t) => {
       const entry = await t.get('attention', n);
-      if (!entry) return;
+      if (!entry) return null;
       const m = (await t.get('meta', 'nextN')) ?? 1;
       await t.put('meta', m + 1, 'nextN');
       await t.delete('attention', n);
       await t.put('outbox', { k: [1, m], n: m, step: entry.step, createdAt: new Date(wallClock()).toISOString() });
+      return entry.step.entity;
     });
-    await dataChanged();
+    await dataChanged(entity ? [entity] : []);
     if (autoSync) syncSoon(0);
   }
 
-  /** Fix a refused create/update: a NEW step (new key and stamp) with the corrected fields. */
+  /**
+   * Fix a refused create/update: a NEW step (new key and stamp) with `fields` laid over the latest
+   * values (see attentionList; fields not given keep them). A refused create's later edits were
+   * waiting for it (parked) and would now be older than the fix — the server would drop them as
+   * stale — so they are folded into the fixed create and taken out of the outbox, in one transaction.
+   */
   async function fixAttention(n, fields) {
-    const entry = (await tx('attention', 'readonly', (t) => t.get('attention', n)));
-    if (!entry) throw new SyncError('not_found', 'Already sorted out');
-    const { entity, recordId, op } = entry.step;
-    if (op === 'delete') throw new SyncError('invalid_step', 'A delete has nothing to fix: try it again or discard it');
-    const def = definition(entity, op);
-    const clean = checkFields(def, fields ?? {}, { create: op === 'create' });
-    if (op === 'update' && !Object.keys(clean).length) throw new SyncError('invalid_step', 'Change at least one field');
+    await opened();
     const step = await tx(['attention', 'outbox', 'meta'], 'readwrite', async (t) => {
+      const entry = await t.get('attention', n);
+      if (!entry) throw new SyncError('not_found', 'Already sorted out');
+      const { entity, recordId, op } = entry.step;
+      if (op === 'delete') throw new SyncError('invalid_step', 'A delete has nothing to fix: try it again or discard it');
+      const def = definition(entity, op);
+      const { fields: latest, later } = latestFields(entry, await t.getAll('outbox'));
+      const clean = checkFields(def, { ...latest, ...(fields ?? {}) }, { create: op === 'create' });
+      if (op === 'update' && !Object.keys(clean).length) throw new SyncError('invalid_step', 'Change at least one field');
       await t.delete('attention', n);
+      if (op === 'create') for (const e of later) await t.delete('outbox', e.k);
       return queueStep(t, { entity, recordId, op, fields: clean });
     });
-    await dataChanged();
+    await dataChanged([step.entity]);
     if (autoSync) syncSoon(0);
     return step;
   }
 
   /** Drop a change that is waiting for its record. */
   async function discardWaiting(n) {
-    await tx('outbox', 'readwrite', async (t) => {
-      for (const e of await t.getAll('outbox')) if (e.n === n && e.parked) await t.delete('outbox', e.k);
+    const entities = await tx('outbox', 'readwrite', async (t) => {
+      const gone = (await t.getAll('outbox')).filter((e) => e.n === n && e.parked);
+      for (const e of gone) await t.delete('outbox', e.k);
+      return gone.map((e) => e.step.entity);
     });
-    await dataChanged();
+    await dataChanged(entities);
   }
 
   // ---- clashes (need a connection) ---------------------------------------------------
