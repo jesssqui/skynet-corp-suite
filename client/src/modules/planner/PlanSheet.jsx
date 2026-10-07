@@ -1,18 +1,62 @@
-// "Plan my day" (the morning plan): what's overdue, due today and my undated tasks; pick up to
-// three as today's top, move what won't fit to a named day, and see the day's total estimate
-// against a plain day length (the real overbooking warning is C4b). Each tap is saved at once
-// through the offline store (a small change of one or two fields), so nothing is lost if the
-// sheet is closed; moved tasks stay listed with an Undo.
+// "Plan my day" (the morning plan): what's overdue, due today and my undated tasks for this week's
+// goals and this month's priorities; pick up to three as today's top, move what won't fit to a
+// named day. The day's load is measured against the person's day length (their workday record,
+// changed here) and an overbooked day lists what to push, each with a one-tap move (C4b). Tasks
+// with no day and no goal aren't proposed: they are counted, with a link to sort them. Each tap
+// is saved at once through the offline store (one or two fields), so nothing is lost if the sheet
+// is closed; moved tasks stay listed with an Undo.
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Sheet, Button, Icon, Notice, TextField } from '../../ui/index.js';
-import { store } from '../../sync/index.js';
-import { useAction } from '../crm/parts.jsx';
+import { WORKDAY_IDS } from '@suite/shared/planner';
+import { Sheet, Button, Icon, Notice, TextField, SelectField } from '../../ui/index.js';
+import { store, useRecord } from '../../sync/index.js';
+import { RecordSync, TextButton, useAction } from '../crm/parts.jsx';
 import {
-  proposePlan, planLoad, topChange, moveChange, isTop, countTop, addDays, shortDay, dueLabel,
+  proposePlan, topChange, moveChange, isTop, countTop, addDays, shortDay, dueLabel,
   formatMinutes, TOP_LIMIT,
 } from './logic.js';
+import { dayMinutesFor } from './plan.js';
 import { OwnerBadge } from './parts.jsx';
+import { DayLoadPanel } from './planParts.jsx';
+
+/** Day lengths to choose from: 2 h to 14 h in half hours, plus the current one. */
+function dayLengthOptions(current) {
+  const values = new Set([current]);
+  for (let m = 120; m <= 14 * 60; m += 30) values.add(m);
+  return [...values].sort((a, b) => a - b).map((m) => ({ value: String(m), label: formatMinutes(m) }));
+}
+
+/** "Your day: 8 h · Change" — each person's own day length, synced (their workday record). */
+function DayLength({ me, minutes }) {
+  const [editing, setEditing] = useState(false);
+  const { busy, error, run } = useAction();
+  // Its flag and clashes (e.g. both devices changed it, or edits re-sent after a restore), to settle here.
+  const record = useRecord('workday', WORKDAY_IDS[me] ?? null).record;
+  return (
+    <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'end', flexWrap: 'wrap' }} data-testid="day-length">
+      {record ? <div style={{ flexBasis: '100%' }}><RecordSync record={record} what="day length" /></div> : null}
+      {editing ? (
+        <SelectField
+          id="day-length"
+          label="Your day length"
+          value={String(minutes)}
+          disabled={busy}
+          onChange={async (v) => {
+            if (await run(() => store.update('workday', WORKDAY_IDS[me], { day_minutes: Number(v) }))) setEditing(false);
+          }}
+          options={dayLengthOptions(minutes)}
+          style={{ flex: '1 1 160px' }}
+        />
+      ) : (
+        <span style={{ color: 'var(--text-muted)', fontSize: 'var(--text-sm)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          Your day: {formatMinutes(minutes)}
+          <TextButton onClick={() => setEditing(true)} aria-label="Change your day length">Change</TextButton>
+        </span>
+      )}
+      {error ? <Notice tone="danger">{error}</Notice> : null}
+    </div>
+  );
+}
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
 
@@ -60,6 +104,7 @@ function PlanRow({ task, me, today, topCount, moved, moving, onTop, onMove, onUn
       </div>
       {moving ? (
         <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'end' }} data-testid="move-chooser">
+          {task.due_date !== today ? <Button onClick={() => onMove(task, today)}>Today</Button> : null}
           <Button variant="primary" onClick={() => onMove(task, addDays(today, 1))}>Tomorrow</Button>
           <TextField id={`move-${task.id}`} label="Another day" type="date" min={addDays(today, 1)} value={day} onChange={(e) => setDay(e.target.value)} style={{ flex: '1 1 150px' }} />
           <Button disabled={!day || day <= today} onClick={() => onMove(task, day)}>Move there</Button>
@@ -71,12 +116,12 @@ function PlanRow({ task, me, today, topCount, moved, moving, onTop, onMove, onUn
 
 export default function PlanSheet({ data, me, today, inboxCount, onClose }) {
   // The proposal is taken once, when the sheet opens: rows stay put while tasks are moved.
-  const [proposal] = useState(() => proposePlan({ tasks: data.tasks, me, today }));
+  const [proposal] = useState(() => proposePlan({ tasks: data.tasks, me, today, goalsById: data.goalsById }));
   const [moved, setMoved] = useState(() => new Map()); // id -> { day, label, undo }
   const [moving, setMoving] = useState(null);
   const { error, run } = useAction();
   const tasksById = useMemo(() => new Map(data.tasks.map((t) => [t.id, t])), [data.tasks]);
-  const load = useMemo(() => planLoad({ tasks: data.tasks, me, today }), [data.tasks, me, today]);
+  const dayMinutes = dayMinutesFor(data.workdays, me);
   const topCount = useMemo(() => countTop(data.tasks, me, today), [data.tasks, me, today]);
 
   // Changes are worked out from the latest record (store.get), not this render's copy: a star
@@ -86,7 +131,8 @@ export default function PlanSheet({ data, me, today, inboxCount, onClose }) {
   const onMove = (task, day) => run(async () => {
     const { change, undo } = moveChange(await latest(task), day, today, me);
     await store.update('task', task.id, change);
-    setMoved((m) => new Map(m).set(task.id, { day, label: day === addDays(today, 1) ? `tomorrow (${shortDay(day)})` : shortDay(day), undo }));
+    const label = day === today ? 'today' : day === addDays(today, 1) ? `tomorrow (${shortDay(day)})` : shortDay(day);
+    setMoved((m) => new Map(m).set(task.id, { day, label, undo }));
     setMoving(null);
   });
   const onUndo = (task) => run(async () => {
@@ -101,9 +147,8 @@ export default function PlanSheet({ data, me, today, inboxCount, onClose }) {
   const sections = [
     ['Overdue', proposal.overdue],
     ['Due today', proposal.dueToday],
-    ['No date yet', proposal.undated],
+    ['For this week’s goals and this month’s priorities', proposal.forGoals],
   ].map(([label, ids]) => [label, ids.map((id) => tasksById.get(id)).filter(Boolean)]).filter(([, rows]) => rows.length);
-  const pct = Math.min(100, Math.round((load.minutes / load.dayMinutes) * 100));
 
   return (
     <Sheet
@@ -113,17 +158,11 @@ export default function PlanSheet({ data, me, today, inboxCount, onClose }) {
       footer={<Button variant="primary" onClick={onClose}>Done</Button>}
     >
       <div style={{ display: 'grid', gap: 'var(--space-2)' }} data-testid="plan-load">
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-          <strong>Planned today: {formatMinutes(load.minutes)} of {formatMinutes(load.dayMinutes)}</strong>
+        <DayLoadPanel tasks={data.tasks} me={me} today={today} dayMinutes={dayMinutes} goalsById={data.goalsById} always testId="plan-day" />
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
+          <DayLength me={me} minutes={dayMinutes} />
           <span style={muted} data-testid="top-count">Top 3: {topCount} of {TOP_LIMIT} picked</span>
         </div>
-        <div className={`planner-meter${load.over ? ' over' : ''}`} role="meter" aria-label="Planned today" aria-valuemin={0} aria-valuemax={load.dayMinutes} aria-valuenow={load.minutes}>
-          <span style={{ width: `${pct}%` }} />
-        </div>
-        <span style={muted}>
-          {load.count} {load.count === 1 ? 'task' : 'tasks'} on today{load.unestimated ? `, ${load.unestimated} without an estimate` : ''}.
-          {load.over ? ' That’s more than a day: move what won’t fit.' : ''}
-        </span>
       </div>
       {error ? <Notice tone="danger">{error}</Notice> : null}
       {sections.length ? sections.map(([label, rows]) => (
@@ -147,7 +186,12 @@ export default function PlanSheet({ data, me, today, inboxCount, onClose }) {
             ))}
           </ul>
         </section>
-      )) : <p style={{ ...muted, margin: 0 }}>Nothing overdue, due today or waiting for a date. Capture something, or add a task.</p>}
+      )) : <p style={{ ...muted, margin: 0 }}>Nothing overdue, due today or waiting on this week’s goals. Capture something, or add a task.</p>}
+      {proposal.toSort ? (
+        <Link to="/plan/week?sort=1" className="planner-link-row" data-testid="plan-to-sort">
+          <Icon name="flag" size={18} /> {proposal.toSort} with no day or goal to sort <Icon name="chevron" size={16} />
+        </Link>
+      ) : null}
       {inboxCount ? (
         <Link to="/inbox" className="planner-link-row">
           <Icon name="inbox" size={18} /> {inboxCount} in the inbox to sort first <Icon name="chevron" size={16} />

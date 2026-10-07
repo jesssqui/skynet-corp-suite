@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BUSINESS_IDS } from '@suite/shared/crm';
 import { localDate } from '@suite/shared/time';
+import { weekStart } from '@suite/shared/planner';
 import { WAIT, startServer, launch, watch, signIn, barSays, iphone, until, shot, airplane } from './helpers.js';
 
 const W = BUSINESS_IDS.wholesale;
@@ -27,15 +28,19 @@ function seed(ctx) {
     return r.recordId;
   };
   const task = (actor, fields) => make(actor, 'task', { business_id: PERSONAL, ...fields });
+  const monday = weekStart(today);
+  const goal = (business_id, title) => make('owner', 'goal', { kind: 'week', period: monday, business_id, title, owner: 'owner' });
+  const goals = { agency: goal(BUSINESS_IDS.agency, 'Ship the Q4 plans'), wholesale: goal(W, 'Refresh the price list'), personal: goal(PERSONAL, 'Paperwork') };
   const ids = {
     overdue: task('owner', { title: 'Renew the business licence', owner: 'owner', due_date: addDays(today, -3), estimate_minutes: 30 }),
     shared: task('partner', { title: 'Water the office plants', owner: 'shared', due_date: today, estimate_minutes: 10 }),
     timed: task('owner', { title: 'Call the bank', owner: 'owner', business_id: W, due_date: today, due_time: '10:30', estimate_minutes: 20 }),
     partnerOverdue: task('partner', { title: 'List the Zelda lot', owner: 'partner', business_id: BUSINESS_IDS.save_point, due_date: addDays(today, -2) }),
     partnerToday: task('partner', { title: 'Photograph the new arrivals', owner: 'partner', due_date: today }),
-    draft: task('owner', { title: 'Draft the Q4 social plan', owner: 'owner', business_id: BUSINESS_IDS.agency, estimate_minutes: 120 }),
-    prices: task('owner', { title: 'Update the price sheet', owner: 'owner', business_id: W, estimate_minutes: 60 }),
-    receipts: task('owner', { title: 'Sort the receipts', owner: 'owner', estimate_minutes: 45 }),
+    // C4b: undated tasks are proposed by the morning plan when they belong to this week's goals.
+    draft: task('owner', { title: 'Draft the Q4 social plan', owner: 'owner', business_id: BUSINESS_IDS.agency, estimate_minutes: 120, goal_id: goals.agency }),
+    prices: task('owner', { title: 'Update the price sheet', owner: 'owner', business_id: W, estimate_minutes: 60, goal_id: goals.wholesale }),
+    receipts: task('owner', { title: 'Sort the receipts', owner: 'owner', estimate_minutes: 45, goal_id: goals.personal }),
     later: task('owner', { title: 'Book the trade show booth', owner: 'owner', due_date: addDays(today, 5) }),
   };
   ids.client = make('owner', 'client', { name: 'Northwind Holdings', status: 'active' });
@@ -125,16 +130,16 @@ async function planDay(page, server, { today, ids }, { screenshot }) {
   for (const id of [ids.overdue, ids.shared, ids.timed, ids.draft, ids.prices, ids.receipts]) await row(id).waitFor(WAIT);
   assert.equal(await row(ids.partnerOverdue).count(), 0, 'not the partner’s');
   assert.equal(await row(ids.later).count(), 0, 'not what is due later');
-  await plan.getByTestId('plan-load').getByText('Planned today: 1 h of 8 h').waitFor(WAIT);
+  await plan.getByTestId('plan-load').getByText('Today: 1 h of 8 h').waitFor(WAIT);
   for (const id of [ids.timed, ids.draft, ids.prices]) await row(id).getByRole('button', { name: /^Pick for today’s top 3/ }).click();
   await plan.getByTestId('top-count').filter({ hasText: 'Top 3: 3 of 3 picked' }).waitFor(WAIT);
   assert.equal(await row(ids.receipts).getByRole('button', { name: /^Pick for today’s top 3/ }).isDisabled(), true, 'three at most');
   // The undated picks are on today now: 30 + 10 + 20 + 120 + 60 minutes.
-  await plan.getByTestId('plan-load').getByText('Planned today: 4 h of 8 h').waitFor(WAIT);
+  await plan.getByTestId('plan-load').getByText('Today: 4 h of 8 h').waitFor(WAIT);
   await row(ids.overdue).getByRole('button', { name: /^Move to another day/ }).click();
   await row(ids.overdue).getByRole('button', { name: 'Tomorrow' }).click();
   await row(ids.overdue).getByText(/Moved to tomorrow/).waitFor(WAIT);
-  await plan.getByTestId('plan-load').getByText('Planned today: 3 h 30 min of 8 h').waitFor(WAIT);
+  await plan.getByTestId('plan-load').getByText('Today: 3 h 30 min of 8 h').waitFor(WAIT);
   if (screenshot) await shot(page, screenshot, { fullPage: false });
   await plan.getByRole('button', { name: 'Done', exact: true }).click();
   await plan.waitFor({ state: 'detached', ...WAIT });

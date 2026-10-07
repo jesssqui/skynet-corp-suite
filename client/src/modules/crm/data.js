@@ -24,6 +24,9 @@ const BELONGS_TO = {
   // are plain refs (a task outlives a deleted client).
   task: ['business'],
   inbox_item: [],
+  // C4b: a goal belongs to one of our businesses; a workday to nothing.
+  goal: ['business'],
+  workday: [],
 };
 
 const caches = new WeakMap(); // engine -> { entries: Map<entity, Promise<Entry>>, off }
@@ -116,7 +119,7 @@ const LIST_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship
 const PAGE_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'service', 'consent', 'activity', 'link', 'task'];
 
 /** Last activity per client: Map<client_id, at>. */
-function lastActivityByClient(activities) {
+export function lastActivityByClient(activities) {
   const m = new Map();
   for (const t of activities) {
     const cur = m.get(t.client_id);
@@ -137,10 +140,15 @@ export function useClientListData() {
       accounts: accounts.records,
       contacts: contacts.records,
       relationships: relationships.records,
-      lastActivity: activities.derive('lastByClient', lastActivityByClient),
+      lastActivity: lastActivityOf(activities),
     };
   }, [], { entities: LIST_ENTITIES });
   return { data: data ?? null, loading, error };
+}
+
+/** Last activity per client from the cached activity list (built once per change; the Friday review reuses it). */
+export function lastActivityOf(activitiesEntry) {
+  return activitiesEntry.derive('lastByClient', lastActivityByClient);
 }
 
 const byName = (a, b) => String(a.name).localeCompare(String(b.name)) || (a.id < b.id ? -1 : 1);

@@ -63,3 +63,32 @@ export function useFinishedThisSession() {
   }, []);
   return { keep: finished, version: n };
 }
+
+// The Friday review's checklist ticks, per week, on this device (a convenience: the review is done
+// together at one screen; nothing depends on it).
+const REVIEW_KEY = 'suite.planner.review';
+
+/** The review steps ticked for the week starting `monday` (a Set of step ids). */
+export function getReviewChecks(monday) {
+  try {
+    const all = JSON.parse(storage()?.getItem(REVIEW_KEY) ?? '{}') ?? {};
+    return new Set(Array.isArray(all[monday]) ? all[monday] : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/** Tick or untick a review step for that week (older weeks are dropped: the last 8 are kept). */
+export function setReviewCheck(monday, step, on) {
+  try {
+    const all = JSON.parse(storage()?.getItem(REVIEW_KEY) ?? '{}') ?? {};
+    const set = new Set(Array.isArray(all[monday]) ? all[monday] : []);
+    if (on) set.add(step);
+    else set.delete(step);
+    all[monday] = [...set];
+    const keep = Object.keys(all).sort().slice(-8);
+    storage()?.setItem(REVIEW_KEY, JSON.stringify(Object.fromEntries(keep.map((k) => [k, all[k]]))));
+  } catch {
+    /* storage unavailable: the ticks last until the page closes */
+  }
+}

@@ -54,15 +54,17 @@ export function TaskTick({ task, onError }) {
 
 /**
  * One task in a list: tick, title (opens it), and a line with its due day, owner, business,
- * client (a deleted client is named as such), estimate and whether it's one of today's top 3.
+ * client (a deleted client is named as such), estimate, its goal (C4b) and whether it's one of
+ * today's top 3.
  */
-export function TaskRow({ task, me, today, businessesById, clientsById, accountsById, onOpen, showClient = true, showOwner = true }) {
+export function TaskRow({ task, me, today, businessesById, clientsById, accountsById, goalsById, onOpen, showClient = true, showOwner = true, actions = null }) {
   const [error, setError] = useState(null);
   const state = dueState(task, today);
   const due = dueLabel(task, today);
   const business = businessesById?.get(task.business_id);
   const client = task.client_id ? clientsById?.get(task.client_id) : null;
   const account = task.account_id ? accountsById?.get(task.account_id) : null;
+  const goal = task.goal_id ? goalsById?.get(task.goal_id) : null;
   const done = Boolean(task.done_at);
   return (
     <li className={`planner-task${done ? ' done' : ''}`} data-task-id={task.id} data-owner={task.owner}>
@@ -87,8 +89,14 @@ export function TaskRow({ task, me, today, businessesById, clientsById, accounts
           ) : null}
           {!showClient && account ? <span>{account.name}</span> : null}
           {task.estimate_minutes ? <span><Icon name="clock" size={13} style={{ verticalAlign: '-2px' }} /> {formatMinutes(task.estimate_minutes)}</span> : null}
+          {goal ? (
+            <span className="planner-goal-tag" title={goal.kind === 'month' ? 'Month priority' : 'Week goal'}>
+              <Icon name="target" size={13} style={{ verticalAlign: '-2px' }} /> {goal.title}
+            </span>
+          ) : null}
           <SyncBadges record={task} />
         </div>
+        {actions ? <div className="planner-row-actions">{actions(task)}</div> : null}
         {error ? <span role="alert" style={{ color: 'var(--danger)', fontSize: 'var(--text-xs)' }}>{error}</span> : null}
       </div>
     </li>

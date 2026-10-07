@@ -2,10 +2,11 @@
 // today (timed ones in time order), then the rest of today's top 3; their own tasks and the shared
 // list (marked), never the other person's own. Tick to finish (undo stays possible this session),
 // "Plan my day" for the morning plan, the capture field (fixed above the tab bar on phones), the
-// inbox count and the relationships without a next step.
+// inbox count and the relationships without a next step. C4b: the overbooked warning with what to
+// push, "N to sort" (tasks with no day and no goal) and Focus.
 // Today's calendar (Apple Calendar meetings) is a later package: nothing is shown for it yet.
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { PageHeader, Card, Button, EmptyState, Icon } from '../../ui/index.js';
 import { formatDate } from '../../ui/format.js';
 import { useAuth } from '../../auth/session.jsx';
@@ -13,12 +14,16 @@ import { BusinessChip, TextButton } from '../crm/parts.jsx';
 import { KIND_LABELS } from '../crm/logic.js';
 import { usePlannerData } from './data.js';
 import { buildToday, openInbox, relationshipsWithoutNextStep, TOP_LIMIT } from './logic.js';
+import { unplannedTasks, dayMinutesFor } from './plan.js';
+import { DayLoadPanel } from './planParts.jsx';
 import { PagedTaskList, ShowMore, PAGE, CaptureBar, CaptureSpacer, useToday, muted } from './parts.jsx';
 import { useFinishedThisSession } from './prefs.js';
 import { TaskSheet, newTaskInitial } from './forms.jsx';
 import PlanSheet from './PlanSheet.jsx';
 
 const SHOWN_FLAGS = 5;
+// Three header buttons fit one row on a 390px phone.
+const tight = { paddingLeft: 'var(--space-3)', paddingRight: 'var(--space-3)' };
 
 function Section({ title, tone, count, children, testId }) {
   return (
@@ -83,9 +88,12 @@ export default function TodayPage() {
     return rows.sort((a, b) => name(a).localeCompare(name(b)) || (a.id < b.id ? -1 : 1));
   }, [data]);
   const inboxCount = useMemo(() => (data ? openInbox(data.inbox).length : 0), [data]);
+  const toSort = useMemo(() => (data ? unplannedTasks(data.tasks, { goalsById: data.goalsById, me, today }).length : 0), [data, me, today]);
+  const dayMinutes = data ? dayMinutesFor(data.workdays, me) : 0;
+  const navigate = useNavigate();
 
   const rowProps = {
-    me, today, businessesById: data?.businessesById, clientsById: data?.clientsById, accountsById: data?.accountsById,
+    me, today, businessesById: data?.businessesById, clientsById: data?.clientsById, accountsById: data?.accountsById, goalsById: data?.goalsById,
     onOpen: (task) => setSheet({ kind: 'task', record: task }),
   };
   const close = () => setSheet(null);
@@ -105,8 +113,9 @@ export default function TodayPage() {
         subtitle={formatDate(today, { weekday: true })}
         actions={(
           <>
-            <Button variant="primary" onClick={() => setSheet({ kind: 'plan' })} disabled={!data}><Icon name="star" size={18} />Plan my day</Button>
-            <Button onClick={addTask} disabled={!data}><Icon name="plus" size={18} />Task</Button>
+            <Button variant="primary" style={tight} onClick={() => setSheet({ kind: 'plan' })} disabled={!data}><Icon name="star" size={18} />Plan my day</Button>
+            <Button style={tight} onClick={() => navigate('/focus')} disabled={!data || !view?.total}><Icon name="focus" size={18} />Focus</Button>
+            <Button style={tight} onClick={addTask} disabled={!data}><Icon name="plus" size={18} />Task</Button>
           </>
         )}
       />
@@ -117,6 +126,7 @@ export default function TodayPage() {
         ) : (
           <div className="planner-today">
             <div className="planner-col" data-testid="today-tasks">
+              <DayLoadPanel tasks={data.tasks} me={me} today={today} dayMinutes={dayMinutes} goalsById={data.goalsById} framed testId="today-load" />
               {view.overdue.length ? (
                 <Section title="Overdue" tone="danger" count={view.overdue.length} testId="overdue">
                   <PagedTaskList tasks={view.overdue} testId="overdue" {...rowProps} />
@@ -152,6 +162,14 @@ export default function TodayPage() {
                   <span data-testid="today-top">Top 3: {view.topCount} of {TOP_LIMIT} picked</span>
                   <TextButton style={{ marginLeft: 'auto' }} onClick={() => setSheet({ kind: 'plan' })}>Plan</TextButton>
                 </div>
+                <Link to="/plan/week?sort=1" className="planner-link-row" data-testid="today-to-sort">
+                  <Icon name="flag" size={20} />
+                  {toSort ? `${toSort} to sort (no day or goal)` : 'Nothing to sort'}
+                  <Icon name="chevron" size={16} />
+                </Link>
+                <Link to="/plan/week" className="planner-link-row">
+                  <Icon name="target" size={20} /> This week’s goals <Icon name="chevron" size={16} />
+                </Link>
                 <Link to="/tasks" className="planner-link-row">
                   <Icon name="tasks" size={20} /> All tasks <Icon name="chevron" size={16} />
                 </Link>

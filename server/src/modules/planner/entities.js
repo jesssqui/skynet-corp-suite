@@ -1,12 +1,13 @@
-// The planner's synced record types (C4a): tasks and inbox items. Registered with the sync module
-// at start-up; devices learn them from GET /api/sync/info. C4b adds week goals and month
-// priorities here (new entities, and a nullable goal field on task — never rename a field).
+// The planner's synced record types: tasks and inbox items (C4a); goals (week goals and month
+// priorities), each task's goal and each person's workday (C4b). Registered with the sync module
+// at start-up; devices learn them from GET /api/sync/info. New fields are nullable and never
+// renamed (CLAUDE.md, rule 5): old devices' steps without them still apply.
 //
 // Refs are global entity names (the CRM's `business`, `client`, `account`, `relationship`): a task
 // belongs to one of our businesses (`parent`; businesses are never deleted) and only *points at*
 // a client / account / relationship, so deleting a client never hides the person's tasks.
-import { OWNERS } from '@suite/shared/actors';
-import { INBOX_SOURCES, TASK_TITLE_MAX, INBOX_TEXT_MAX } from '@suite/shared/planner';
+import { ACTORS, OWNERS } from '@suite/shared/actors';
+import { INBOX_SOURCES, TASK_TITLE_MAX, INBOX_TEXT_MAX, GOAL_KINDS, GOAL_TITLE_MAX } from '@suite/shared/planner';
 
 export const PLANNER_ENTITIES = [
   {
@@ -30,6 +31,9 @@ export const PLANNER_ENTITIES = [
       // it was picked by each actor (TOP_FIELDS in @suite/shared/planner).
       top_on_owner: { type: 'date' },
       top_on_partner: { type: 'date' },
+      // C4b: the week goal or month priority it belongs to. A plain ref: deleting a goal never
+      // hides its tasks (they become unplanned again).
+      goal_id: { type: 'id', ref: 'goal' },
     },
   },
   {
@@ -43,6 +47,35 @@ export const PLANNER_ENTITIES = [
       cleared_at: { type: 'datetime' },
       became_entity: { type: 'text', max: 40 },
       became_id: { type: 'id' }, // no ref: what it became may be deleted later
+    },
+  },
+  {
+    // C4b: a week goal (period = its Monday) or a month priority (period = the 1st of its month).
+    entity: 'goal',
+    table: 'planner_goals',
+    ops: ['create', 'update', 'delete'],
+    fields: {
+      kind: { type: 'enum', values: GOAL_KINDS, required: true },
+      period: { type: 'date', required: true }, // checked against kind by the module (checkGoal)
+      business_id: { type: 'id', ref: 'business', parent: true, required: true },
+      title: { type: 'text', max: GOAL_TITLE_MAX, required: true },
+      target: { type: 'number' },
+      progress: { type: 'number' },
+      owner: { type: 'enum', values: OWNERS }, // the screens default it to whoever makes it
+      notes: { type: 'text', max: 20_000 },
+      done_at: { type: 'datetime' },
+      position: { type: 'integer' },
+      carried_from: { type: 'id' }, // no ref: the goal it was copied from may be deleted later
+    },
+  },
+  {
+    // C4b: one per person, fixed ids (WORKDAY_IDS), made by the server at start; never deleted.
+    entity: 'workday',
+    table: 'planner_workdays',
+    ops: ['create', 'update'],
+    fields: {
+      actor: { type: 'enum', values: ACTORS, required: true },
+      day_minutes: { type: 'integer' },
     },
   },
 ];

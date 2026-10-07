@@ -10,7 +10,8 @@ signal, the sync bar and the Needs attention page), the CRM's core records from 
 clients, accounts, contacts, consent, relationships, services, activities, links — all synced) and its screens from
 **C3b** (client list and search, the client page with its timeline, quick notes and call logs — all offline), and the
 planner from **C4a** (module `planner`: tasks, the shared list, the capture inbox, each person's Today with the morning
-plan, and the "No next step" flag on relationships — all synced and offline).
+plan, and the "No next step" flag on relationships — all synced and offline), and planning from **C4b** (same module:
+week goals and month priorities, the Monday and monthly plans, the Friday review, Focus, the overbooked-day warning).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -45,7 +46,8 @@ shared/                    @suite/shared — ids.js (UUIDv7), time.js, hlc.js (s
                            fields.js (synced field types + value checks, used by the server and devices),
                            normalize.js (clean emails/phones/postal codes/tags), crm.js (CRM value lists, our
                            businesses' fixed ids, the consent rule), planner.js (task/inbox value lists, "HH:MM"
-                           times, automatedTaskOwner, the "no next step" rule); tests in shared/test
+                           times, automatedTaskOwner, the "no next step" rule; C4b: GOAL_KINDS, goal periods,
+                           addDays/weekStart/monthStart, WORKDAY_IDS + dayMinutesOf, isUnplannedTask); tests in shared/test
 server/src/
   index.js                 start: open db, createApp, listen, heartbeat, backup schedule, shutdown
   app.js                   createApp({config, db, log}) — migrations, services, routes, static client, errors
@@ -59,8 +61,9 @@ server/src/
   modules/sync/            offline sync: registry.js, service.js, routes.js, identity.js (session -> actor + device)
   modules/crm/             CRM core records: entities.js (the record types), service.js (registration, seeds, reads),
                            routes.js (read API), migrations/001_create_crm.sql
-  modules/planner/         C4a tasks + inbox: entities.js, service.js (registration, checkTask, automatedOwnerFor),
-                           migrations/001_create_planner.sql; no routes
+  modules/planner/         tasks + inbox (C4a), goals + workdays (C4b): entities.js, service.js (registration,
+                           checkTask/checkGoal/checkWorkday, automatedOwnerFor, goals(), seedWorkdays),
+                           migrations/001_create_planner.sql, 002_goals.sql; no routes
   backup/                  backup.js, restore.js, schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file)
 server/scripts/            backup.js, restore.js, users.js (CLIs)
@@ -93,13 +96,17 @@ client/src/
                            ClientTasksCard.jsx (the client page's Tasks card + "No next step · Add"), forms.jsx
                            (TaskSheet, InboxNoteSheet, newTaskInitial), parts.jsx (TaskRow, tick, CaptureBar, useToday),
                            data.js (cached reads via crm/data.js), prefs.js (last business per person on this device,
-                           ticks kept this session), logic.js + taskForm.js (no React; client/test/planner*.test.js),
-                           planner.css
+                           ticks kept this session, the review's ticks), logic.js + taskForm.js (no React;
+                           client/test/planner*.test.js), planner.css.
+                           C4b: WeekPlanPage (/plan/week), MonthPlanPage (/plan/month), ReviewPage (/plan/review),
+                           FocusPage (/focus), goals.jsx (GoalSheet, GoalItem, GoalTick, CarryOver), planParts.jsx
+                           (PlanTabs, Meter, DayLoadPanel, SortList), plan.js + goalForm.js (no React;
+                           client/test/plan.test.js, planning-forms.test.js)
 client/public/             manifest.webmanifest, icons (placeholders)
 client/test/               node --test: the engine against a real server with syncdemo + fixtures/chk (a UNIQUE column),
                            overlay, the CRM screens' logic (clients.test.js) and forms with two devices
-                           (clients-forms.test.js), the planner's logic (planner.test.js) and two devices
-                           (planner-forms.test.js); fake-indexeddb
+                           (clients-forms.test.js), the planner's logic (planner.test.js, plan.test.js) and two
+                           devices (planner-forms.test.js, planning-forms.test.js); fake-indexeddb
 test/e2e/                  Playwright end-to-end tests (npm run test:e2e); proxy.js cuts the server off for real outages
 ```
 
@@ -750,10 +757,13 @@ only its own tables and has **no HTTP routes**: devices use their offline copy, 
   move right after a star clears it. Ticking sets `done_at`; the row stays (ticked, with undo) for the rest of the app session
   (`keepFinished`, in memory). Today's calendar (Apple Calendar) is a later package: **nothing is shown for it yet**.
 - **Morning plan** (`PlanSheet`, "Plan my day"): proposes overdue + due today on my Today (mine and the shared list's)
-  + **my** undated open tasks (the shared undated pile stays on Tasks for either person to pick). Star up to three
-  (`TOP_LIMIT`; `top_on = today`), Move → Tomorrow / another day (`due_date` changes, the time stays, a top pick stops
-  being one; Undo puts both back). The load is the estimates of open tasks on today (dated ≤ today or picked) against
-  `DAY_MINUTES` (8 h) — the real overbooking warning is C4b. Each tap is saved at once (one or two fields).
+  + **my** undated open tasks that belong to **this week's goals or this month's priorities** (C4b; before C4b it
+  proposed every undated task of mine). Undated tasks with no goal are counted ("N with no day or goal to sort" →
+  the Monday plan's To sort step) instead of being offered as today's. Star up to three
+  (`TOP_LIMIT`; `top_on = today`), Move → Today (undated rows) / Tomorrow / another day (`due_date` changes, the time
+  stays, a top pick stops being one unless moved to today; Undo puts both back). The load and overbooking warning are
+  C4b's `DayLoadPanel` against the person's day length, changed here ("Your day: 8 h · Change"). Each tap is saved at
+  once (one or two fields).
 - **No next step** (`relationshipsWithoutNextStep`, shared): an **active** relationship whose account and client are
   live, with no **open** task naming it (`relationship_id`) that has a **due date** (overdue still counts: it shows as
   overdue instead). Any owner's task counts. Shown on the client page's relationship rows ("No next step · Add" →
@@ -794,9 +804,7 @@ only its own tables and has **no HTTP routes**: devices use their offline copy, 
   `relationshipTasks` (by relationship) from `useClientPageData`.
 
 **For C4b / C5 / D3**
-- **C4b** (week goals, month priorities, overbooking): add `goal` / `priority` entities here (`planner_` tables) and a
-  nullable `goal_id` ref on `task` (a new field, never a rename). Replace `DAY_MINUTES` in `planLoad` with the real
-  day length and warning; Plan my day already shows the load and moves work to a named day.
+- **C4b**: done — see "Planning (C4b)" (one `goal` entity for both kinds, `task.goal_id`, `workday`).
 - **C5** (Siri, share sheet): create `inbox_item`s with `source: 'siri' | 'share'` — through a device (a Shortcut
   opening a capture URL that calls `store.create`) or, if a server route is added, `sync.applyLocal({ actor, … })`.
 - **D3 / automations**: tasks from automations use `automatedOwnerFor` and `applyLocal`; a reminder or notification
@@ -804,6 +812,111 @@ only its own tables and has **no HTTP routes**: devices use their offline copy, 
   (tasks with a date/time) read `planner_tasks` with `deleted_at IS NULL AND done_at IS NULL`, ignoring a time without
   a date.
 - Open: the pull scope (open tasks only) is still TODO (see C2b "Scope"); done tasks accumulate.
+
+## Planning (planner module, C4b)
+Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (no React), shared facts in
+`shared/planner.js`; tests `server/test/planning.test.js`, `client/test/plan.test.js`, `client/test/planning-forms.test.js`
+(two devices), `test/e2e/planning.e2e.test.js` (iPhone, Mac, and 3,000 tasks + 300 goals).
+
+**Record types** (migration `002_goals.sql`: new tables + `ALTER TABLE planner_tasks ADD COLUMN goal_id`; no rows changed):
+- `goal` (`planner_goals`; create/update/delete): kind* (`week|month`), period* (date: the week's **Monday** / the
+  month's **1st**), business_id*⇧ (Personal included), title* (≤ 300), target (number > 0), progress (number ≥ 0, set
+  by hand; +1 button), owner (`OWNERS`, optional — screens default it to the maker; null reads as shared), notes,
+  done_at (datetime), position (integer, order within a business and period), carried_from (id, **no ref**: the goal
+  it was copied from).
+- `task.goal_id` → goal: a **plain ref** (deleting a goal never hides its tasks; they become unplanned again).
+  Old devices' steps without it still apply (tested on a C4a database).
+- `workday` (`planner_workdays`; create/update, never deleted): actor* (`owner|partner`), day_minutes (30–1440, null =
+  `DEFAULT_DAY_MINUTES` 8 h). **One per person with a fixed id** (`WORKDAY_IDS`), made by the server at start
+  (`seedWorkdays`, through `applyLocal`, stamped at an old fixed time, only if the id never existed) — devices only
+  update it (two phones creating "my settings" offline would make two). `checkWorkday` refuses a create whose id
+  isn't `WORKDAY_IDS[actor]`, any update of `actor`, and a day length outside 30–1440. Read with
+  `dayMinutesFor(workdays, actor)`; Plan my day shows its RecordSync (flag + ClashPanel) beside "Your day".
+  **Why synced, not device-local**: the Monday plan on the Mac and Today on the phone must agree on what overbooked
+  means, and the Friday review is done together on one screen.
+
+**Rules**
+- **checkGoal**: period fits kind (`isGoalPeriod`); an update that changes `kind` or `period` must send **both** (so the
+  later step wins the pair — one alone could pair with the other device's change); target > 0, progress ≥ 0. Readers
+  still snap a period to its kind (`goalPeriodOf`) in case a clash settled field by field splits the pair. Screens
+  don't edit kind/period: a goal is made in its week or month; carrying over makes a copy.
+- **Month priorities**: one to three per business per month — more is **warned** (sheet and month page,
+  `priorityOverflow`), never refused (two offline creates must both survive).
+- **Weeks** run Monday–Sunday in the device's local calendar; all date maths is `addDays`/`weekStart`/`monthStart` on
+  "YYYY-MM-DD" (Date.UTC, no time zone or DST), never `new Date('YYYY-MM-DD')`. **"This month" is one rule
+  everywhere: `planMonth(day)` = the month that day's week's Thursday is in** (a week belongs to the month with most
+  of its days; `weekMonth` is the same). Used by the morning plan (`isCurrentGoal`), the task sheet's choices
+  (`goalChoices`), the Monday plan's "This month:" line, the monthly plan's default month and its week goals, and
+  stale goals. So on Wed Sep 30 and Thu Oct 1 (the week of Sep 28) "this month" is October.
+- **Unplanned** (`isUnplannedTask(task, goalsById, today)`): an open task with no due_date and no **current** goal —
+  none, a deleted one, or a goal of an earlier period, **done or not** (`isStaleGoal`: before this week / this
+  planning month — a goal ticked done can still leave unfinished tasks). Counted "N to sort" on Today and Tasks
+  (mine + shared), the Tasks filter "To sort", and the Monday plan's **To sort** step (`SortList`; a stale goal's task
+  says "Was part of (✓ when done) “goal”"): Today / Tomorrow / Monday (one tap), another day (pick or type it, then **Move there**:
+  nothing is saved while typing) or a goal (`goalChoices` in a select: two). Capture stays two taps: nothing forces a
+  day or goal at creation.
+- **A goal never changes a task's business** (it may be a client's next step for another business): filing under a goal
+  sets only `goal_id` (`goalChange`, `goalPick`); when the businesses differ the task sheet says "Different business from
+  the goal (X) · Use X" (`goalBusinessNote`) and To sort's sorted line offers "Use X" (`businessMismatch`) — one tap,
+  never silent. Changing a goal's business leaves its tasks alone. A task made from a goal's card starts with the
+  goal's business (a default, not a change).
+- **Task sheet** "Part of": this and next week's goals, this and next month's priorities, the week/month of its due
+  date, and its current goal (`goalChoices`, `<optgroup>`s via `SelectField` options' `group`). A task made from a
+  goal's card (or `/tasks?goal=`) starts with that goal and its business. "Focus on this task" opens Focus.
+- **Load** (`taskDay`, `dayLoad`, `loadsByDay`): each open task of mine or the shared list counts on **one** day —
+  overdue and today's top picks on today, others on their due date; done tasks and the other person's own never. No
+  estimate = 0 minutes, listed as "no estimate". Overbooked = minutes > the person's day length.
+- **What to push** (`pushSuggestions`): from the day's estimated tasks, in order **untimed before timed → not my top 3
+  before a top pick → no goal or a week goal before a month priority → latest-created first** (UUIDv7 id), taken until
+  the day fits; each to `nextDayWithRoom` (first later day whose load + it ≤ day length, counting earlier suggestions;
+  a task longer than a day goes to the first empty day; every day of the week has the same length). **Shared tasks
+  count on both people's day loads**; one the *other* person starred as a top pick today is never suggested (moving
+  it would move their pick). One tap moves it
+  (`pushChange` = C4a's `moveChange`, from the latest record); moved rows stay with Undo. Shown on Today (only when
+  over), in Plan my day (always), and per day on the Monday plan ("Fix" on an overbooked day).
+- **Carry-over** (`carryOverCandidates`/`carryFields`): last week's (month's) goals not done and not already carried
+  (no goal in this period with `carried_from` = its id) are offered; the copy keeps business, title, target, progress
+  so far, owner (or the carrier), notes, at the end of its business's list. The old goal is never changed; its open,
+  **undated** tasks move to the copy (`carryTaskMoves`, goal_id only — dated ones keep their day, done ones stay).
+  Carried on two devices at once → two copies with the same `carried_from`: the Monday and monthly plans show
+  "carried over twice · Remove the extra" (`carriedTwice`/`CarriedTwice` → `removeExtraCopies` in `carryFix.js`: the
+  extra's open tasks move to the first copy, the extra is deleted, that is synced, then each task's open `goal_id`
+  clash between the two copies is settled `keep_winner` — the surviving goal — so no "Use this instead" points at the
+  deleted copy). Needs a connection (settling clashes does); offline the button waits. Nothing bigger.
+- **Monday plan** `/plan/week?week=` (`?sort=1` scrolls to To sort): carry-over, each non-archived business's goals
+  (add, edit, tick, +1, up/down `reorderChanges`, tasks under each with "+ Task", "This month:" priorities as context),
+  the week strip (`weekLoads`), To sort. Wide screens: goals left, week + To sort right.
+- **Monthly plan** `/plan/month?month=YYYY-MM`: carry-over, per business "N of 3 priorities" with progress bars and tasks,
+  and that month's week goals grouped by week (tick from here).
+- **Friday review** `/plan/review` (this week): overdue (both people), this week's goals (one-tap done), renewals
+  (services not done/cancelled with `renewal_date` today…+30, `renewalsDue`), active clients quiet for 60 days
+  (`quietClients`: last activity — C3b's `lastActivityByClient`, shared via `lastActivityOf` — or, with none, when the
+  client was made, ≥ 60 days ago), hand work over (Yours / Partner's: open tasks due by the end of next week or
+  undated; one tap gives/takes, Undo), relationships with no next step (C4a's rule), and two "Not connected yet"
+  lines (duplicate matches → D2; this week's order entry → the Order Manager connection). Each step has a "reviewed"
+  tick kept per week on this device (`prefs.js`, localStorage, last 8 weeks) — a convenience, not data.
+- **Focus** `/focus?task=` (Today's Focus button; "Focus on this task" in the sheet): the queue is Today's order
+  (`focusQueue` = buildToday's overdue + due today + picks; a task opened from elsewhere goes first), taken once.
+  **Done** finishes and moves to the next still to do (wrapping, `nextInQueue`); **Skip** leaves it out for this
+  session and moves on; **Next / Previous** just look. The client's contacts (tel/mailto), accounts and the last 4
+  timeline items sit beside the task (below on phones) via `useClientPageData`. At the end: "Go back to the N skipped".
+- **Reads**: `usePlannerData` adds `goals`, `goalsById`, `tasksByGoal`, `workdays` (cached lists: `goal` belongs to
+  `business`); `useReviewData` adds services and the last-activity map. Measured (e2e, desktop Chromium here, 3,000 tasks + 300
+  goals): Today ~0.5 s, Monday plan ~0.3 s, sorting a task ~0.3 s, month ~0.1 s, review ~0.1 s, Focus ~0.3 s. That
+  test has **no CRM scale data** (C3b's 3,000-client set is `clients-scale.e2e.test.js`), so the review's renewals and
+  quiet-client lists are measured empty there.
+- **Nav**: "Plan" (`/plan` → `/plan/week`), with Week / Month / Friday review tabs (`PlanTabs`); seven tabs on phones.
+
+**For C5 / C6 / C8 / D15**
+- **C5** (Siri, share sheet): captured items still become tasks with no day or goal → they land in To sort, by design.
+- **C6 / calendar**: a task's day is `taskDay`; the overbooked warning has no calendar meetings yet — when Apple Calendar
+  events arrive, add their minutes to `dayLoad`/`loadsByDay` (timed events are never "suggested to push").
+- **C8 overview** ("goals against targets"): `ctx.services.planner.goals(kind, period)` returns live goals of one period
+  (server); devices use `goalsOf` + `goalProgress`. The last-Friday-of-the-month review of priorities can reuse
+  `reviewLists` with `goalsOf(goals, 'month', monthStart(today))`.
+- **D15 / automations** that create tasks for a goal: set `goal_id` (plain ref) and the goal's business; a goal made by
+  an automation should use `goalPeriod(kind, day)` for its period and `position: null`.
+- Open: per-weekday day lengths (weekends) and time off are not modelled; done goals and tasks accumulate (pull scope).
 
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
@@ -813,8 +926,11 @@ only its own tables and has **no HTTP routes**: devices use their offline copy, 
 - **C3a (core records)**: done — see "CRM". **C3b (screens)**: done — see "CRM screens".
 - **C4a (tasks, inbox, Today)**: done — see "Planner". Tasks belong to a business (Personal included) and only point at
   a client/account/relationship; the shared list is `owner: 'shared'`; hand-made tasks default to their maker,
-  automated ones to the business's `default_owner`. Next: C4b goals and priorities (same module), C5 capture by Siri
-  and the share sheet (`inbox_item.source`), D2 matching (links), the pull scope when volumes need it.
+  automated ones to the business's `default_owner`.
+- **C4b (planning)**: done — see "Planning". Goals are one entity with `kind` (week | month) rather than two; a task
+  belongs to a day **or** a goal (plain `goal_id`), and "unplanned" is derived, never stored; each person's day length
+  is a synced `workday` record with a fixed id. Next: C5 capture by Siri and the share sheet (`inbox_item.source`), C8
+  the overview (goals against targets), D2 matching (links), the pull scope when volumes need it.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).

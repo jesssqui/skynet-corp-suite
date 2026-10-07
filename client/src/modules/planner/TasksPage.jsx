@@ -1,13 +1,15 @@
 // All tasks (/tasks): filters for whose (Mine / Partner's / Shared / All), our business, client and
-// due (overdue / today / this week / no date / done), kept in the URL so Back restores them; 50
-// rows at a time; the add/edit sheet with every field (reassigning the owner is the handoff).
+// due (overdue / today / this week / no date / to sort / done) and a goal (?goal=), kept in the URL
+// so Back restores them; 50 rows at a time; the add/edit sheet with every field (reassigning the
+// owner is the handoff). C4b: "N to sort" (no day and no goal) with the filter and a link to sort.
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { PageHeader, Card, Button, EmptyState, Icon, Segmented, SelectField } from '../../ui/index.js';
 import { useAuth } from '../../auth/session.jsx';
 import { pickableBusinesses } from '../crm/logic.js';
 import { usePlannerData } from './data.js';
 import { filterTasks, OWNER_FILTERS, DUE_FILTERS } from './logic.js';
+import { unplannedTasks } from './plan.js';
 import { TaskList, useToday, muted } from './parts.jsx';
 import { useFinishedThisSession } from './prefs.js';
 import { TaskSheet, newTaskInitial } from './forms.jsx';
@@ -26,9 +28,10 @@ export default function TasksPage() {
   const business = params.get('business') ?? '';
   const client = params.get('client') ?? '';
   const due = params.get('due') ?? 'open';
+  const goal = params.get('goal') ?? '';
   const [shown, setShown] = useState(PAGE);
   const [sheet, setSheet] = useState(null);
-  useEffect(() => setShown(PAGE), [owner, business, client, due]);
+  useEffect(() => setShown(PAGE), [owner, business, client, due, goal]);
   // ?open=<task id> (links from the inbox): open that task's sheet once, then drop the parameter.
   const openId = params.get('open');
   useEffect(() => {
@@ -48,9 +51,12 @@ export default function TasksPage() {
   };
 
   const rows = useMemo(
-    () => (data ? filterTasks(data.tasks, { owner, business, client, due }, { me, today, keep }) : []),
-    [data, owner, business, client, due, me, today, keep, version],
+    () => (data ? filterTasks(data.tasks, { owner, business, client, due, goal }, { me, today, keep, goalsById: data.goalsById }) : []),
+    [data, owner, business, client, due, goal, me, today, keep, version],
   );
+  // "N to sort": my open tasks and the shared list's with no day and no goal (C4b).
+  const toSort = useMemo(() => (data ? unplannedTasks(data.tasks, { goalsById: data.goalsById, me, today }).length : 0), [data, me, today]);
+  const goalRecord = goal && data ? data.goalsById.get(goal) : null;
   // Clients to filter by: those with a task (a long client list would be no use here), plus the chosen one.
   const clientOptions = useMemo(() => {
     if (!data) return [];
@@ -59,7 +65,7 @@ export default function TasksPage() {
     return [...ids].map((id) => data.clientsById.get(id) ?? { id, name: '(deleted client)' }).sort(byName);
   }, [data, client]);
   const businessOptions = useMemo(() => pickableBusinesses(data?.businesses ?? [], business || null), [data, business]);
-  const filtered = owner !== 'all' || business || client || due !== 'open';
+  const filtered = owner !== 'all' || business || client || due !== 'open' || goal;
   const close = () => setSheet(null);
 
   return (
@@ -73,8 +79,8 @@ export default function TasksPage() {
             disabled={!data}
             onClick={() => setSheet({
               initial: newTaskInitial({
-                me, businesses: data.businesses, context: business || null, client_id: client || undefined,
-                owner: owner === 'shared' ? 'shared' : undefined,
+                me, businesses: data.businesses, context: goalRecord?.business_id ?? (business || null), client_id: client || undefined,
+                owner: owner === 'shared' ? 'shared' : undefined, goal_id: goalRecord?.id,
               }),
             })}
           >
@@ -83,6 +89,21 @@ export default function TasksPage() {
         )}
       />
       <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
+        {data && toSort && due !== 'unplanned' ? (
+          <div className="planner-to-sort-bar" data-testid="tasks-to-sort">
+            <Icon name="flag" size={18} />
+            <span><strong>{toSort} to sort</strong> — yours and the shared list’s, with no day and no goal.</span>
+            <button type="button" className="crm-link-button" onClick={() => setParam('due', 'unplanned', 'open')}>Show them</button>
+            <Link to="/plan/week?sort=1" style={{ fontWeight: 600 }}>Sort on the Monday plan</Link>
+          </div>
+        ) : null}
+        {goal ? (
+          <div className="planner-to-sort-bar" data-testid="tasks-goal-filter">
+            <Icon name="target" size={18} />
+            <span>Part of <strong>{goalRecord?.title ?? 'a deleted goal'}</strong></span>
+            <button type="button" className="crm-link-button" onClick={() => setParam('goal', '')}>Show all goals’ tasks</button>
+          </div>
+        ) : null}
         <div style={{ display: 'grid', gap: 6 }}>
           <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>Whose</span>
           <div style={{ overflowX: 'auto' }}>
@@ -124,6 +145,7 @@ export default function TasksPage() {
               businessesById={data.businessesById}
               clientsById={data.clientsById}
               accountsById={data.accountsById}
+              goalsById={data.goalsById}
               onOpen={(task) => setSheet({ record: task })}
             />
           ) : (

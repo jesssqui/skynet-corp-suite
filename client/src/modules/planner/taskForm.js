@@ -10,7 +10,7 @@ export { editChanges, isDirty, changedFields } from '../crm/formFields.js';
 
 export const taskForm = {
   defaults: {
-    title: '', notes: '', owner: '', business_id: '', client_id: '', account_id: '', relationship_id: '',
+    title: '', notes: '', owner: '', business_id: '', client_id: '', account_id: '', relationship_id: '', goal_id: '',
     due_date: '', due_time: '', estimate: '', done: false, done_at: '', top: false, top_prev: '', today: '', me: 'owner',
   },
   // estimate is typed/picked as text; done and top are ticks over done_at / the person's top field.
@@ -44,6 +44,7 @@ export const taskForm = {
         client_id: v.client_id || null,
         account_id: v.account_id || null,
         relationship_id: v.relationship_id || null,
+        goal_id: v.goal_id || null,
         due_date: v.due_date || null,
         due_time: v.due_date ? (v.due_time || null) : null,
         estimate_minutes: Number.isSafeInteger(estimate) ? estimate : null,
@@ -92,4 +93,19 @@ export function linkChange(v, key, value, { accountsById, relationshipsById }) {
   }
   if (key === 'due_date' && !value) next.due_time = '';
   return next;
+}
+
+/**
+ * Picking the goal a task is part of (C4b): only the goal changes. The business is never changed
+ * silently (the task may be a client's next step for another business): when it differs from the
+ * goal's, the sheet says so and offers one tap to use the goal's (goalBusinessNote).
+ */
+export function goalPick(v, goalId) {
+  return { ...v, goal_id: goalId };
+}
+
+/** The goal's business when the form's business differs from it (for "Different business from the goal"), else null. */
+export function goalBusinessNote(v, goalsById) {
+  const goal = v.goal_id ? goalsById?.get(v.goal_id) : null;
+  return goal && v.business_id && goal.business_id !== v.business_id ? goal.business_id : null;
 }
