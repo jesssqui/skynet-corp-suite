@@ -12,7 +12,9 @@
     "./fields": "./fields.js",
     "./normalize": "./normalize.js",
     "./crm": "./crm.js",
-    "./planner": "./planner.js"
+    "./planner": "./planner.js",
+    "./csv": "./csv.js",
+    "./intake": "./intake.js"
   },
   "scripts": {
     "test": "node --test \"test/*.test.js\""
