@@ -56,7 +56,7 @@ export function createLocalLocks() {
 }
 
 const sortByKey = (a, b) => (a.k[0] - b.k[0]) || (a.k[1] - b.k[1]);
-const isNetworkError = (err) => !err?.status; // status 0 / missing: never reached the server
+const isNetworkError = (err) => err?.status === 0; // the request never reached the server
 
 function definitionsFrom(info) {
   const map = new Map();
@@ -150,7 +150,7 @@ export function createSyncEngine({
     nextRetryAt: null,
     generation: null,
     clockWarning: null,
-    stoppedBy: null, // session code when a 401 stopped it
+    stoppedBy: null, // why it stopped: a 401 session code, device_mismatch, unavailable (no IndexedDB), closed (deleted elsewhere), stop
   };
 
   // ---- events -------------------------------------------------------------
@@ -196,12 +196,16 @@ export function createSyncEngine({
     if (stopped || !conn) throw new SyncError('stopped', 'The offline copy is closed (signed out?)');
     return conn.db;
   }
+  /** Reads and writes asked for while the database is still opening wait for it. */
+  async function opened() {
+    if (!conn && !stopped && starting) await starting.catch(() => {});
+  }
   const tx = (stores, mode, fn) => transact(db(), stores, mode, fn);
 
   function onDbClosed() {
     // Deleted or closed under us (clearLocalData, another tab, the browser): stop for good.
     if (stopped) return;
-    halt({ phase: 'stopped' });
+    halt({ phase: 'stopped', stoppedBy: 'closed', lastError: null });
     emit('data');
   }
 
@@ -268,7 +272,8 @@ export function createSyncEngine({
     try {
       await starting;
     } catch (err) {
-      halt({ phase: 'stopped', lastError: err.message });
+      // (stop() while opening is not a failure: it has already stopped.)
+      if (!(err instanceof SyncError && err.code === 'stopped')) halt({ phase: 'stopped', stoppedBy: 'unavailable', lastError: err.message });
       throw err;
     }
     syncNow('open');
@@ -295,7 +300,7 @@ export function createSyncEngine({
   /** Stop syncing and close the database (signed out, or the session ended). Keeps the data. */
   function stop() {
     if (stopped) return;
-    halt({ phase: 'stopped' });
+    halt({ phase: 'stopped', stoppedBy: 'stop' });
   }
 
   /** Stop and delete everything this device holds (see clearLocalData). */
@@ -328,6 +333,7 @@ export function createSyncEngine({
    *   where: field equality ({ done: false }) or a function; sort: a field name ('-due' = descending) or a compare function
    */
   async function list(entity, { where, sort } = {}) {
+    await opened();
     const data = await readEntity(entity);
     const map = overlay(data.records, changesFor(entity, data), fieldNames(entity));
     return [...map.values()].map((r) => toView(entity, r)).filter((r) => matches(where, r)).sort(sorter(sort));
@@ -335,6 +341,7 @@ export function createSyncEngine({
 
   /** One record, or null when this device doesn't have it (or it was deleted). */
   async function get(entity, id) {
+    await opened();
     const data = await readEntity(entity, id);
     const rec = overlay(data.records, changesFor(entity, data).filter((c) => c.step.recordId === id), fieldNames(entity)).get(id);
     return rec ? toView(entity, rec) : null;
@@ -403,6 +410,7 @@ export function createSyncEngine({
 
   /** Create a record; returns its new id (made here, so it works offline). */
   async function create(entity, fields, { id } = {}) {
+    await opened();
     const def = definition(entity, 'create');
     const recordId = id ?? newId();
     if (!isId(recordId)) throw new SyncError('invalid_step', 'id must be a UUIDv7 from newId()');
@@ -414,6 +422,7 @@ export function createSyncEngine({
 
   /** Change some fields; only those that differ are sent. Returns false when nothing changed. */
   async function update(entity, id, changes) {
+    await opened();
     const def = definition(entity, 'update');
     const current = await get(entity, id);
     if (!current) throw new SyncError('not_found', `This ${entity} is not on this device (deleted?)`);
@@ -427,6 +436,7 @@ export function createSyncEngine({
 
   /** Delete a record (soft on the server; it disappears here at once). */
   async function remove(entity, id) {
+    await opened();
     definition(entity, 'delete');
     if (!(await get(entity, id))) throw new SyncError('not_found', `This ${entity} is not on this device`);
     await addStep({ entity, recordId: id, op: 'delete' });
@@ -698,7 +708,10 @@ export function createSyncEngine({
         await t.put('meta', at, 'lastPullAt');
       }
     });
-    if (!full || !body.hasMore) await dataChanged();
+    // Redraw when the copy changed: a page with changes, or a finished pull from scratch (the swap).
+    // Most periodic pulls bring nothing and redraw nothing.
+    const changed = full ? !body.hasMore : body.changes.length > 0;
+    if (changed) await dataChanged();
   }
 
   async function pruneSent() {
