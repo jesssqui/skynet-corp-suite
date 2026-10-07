@@ -175,6 +175,35 @@ test('two devices merge: different fields both apply, notes add up, and the same
   }
 });
 
+test('a delete against an unseen edit keeps the record, flagged, until someone settles it', async (t) => {
+  const server = await startServer(t);
+  const a = await makeDevice(t, server, 'owner');
+  const b = await makeDevice(t, server, 'partner');
+  const itemId = await a.engine.create('item', { title: 'Keep or delete?' });
+  await settle(a.engine);
+  await settle(b.engine);
+
+  b.online = false;
+  await b.engine.remove('item', itemId);
+  assert.equal(await b.engine.get('item', itemId), null, 'gone at once on the device that deleted it');
+  await a.engine.update('item', itemId, { phone: '555' });
+  await a.engine.syncNow();
+  b.online = true;
+  await b.engine.syncNow();
+  const kept = await b.engine.get('item', itemId);
+  assert.ok(kept, 'the server kept it: the delete is not shown as done');
+  assert.equal(kept._sync.flagged, true);
+  assert.equal(kept._sync.clashes[0].kind, 'delete');
+  assert.equal(kept.phone, '555');
+
+  // Deleting after all, from the other device.
+  await a.engine.syncNow();
+  await a.engine.resolveClash((await a.engine.get('item', itemId))._sync.clashes[0].id, 'keep_loser');
+  await b.engine.syncNow();
+  assert.equal(await a.engine.get('item', itemId), null);
+  assert.equal(await b.engine.get('item', itemId), null);
+});
+
 test('changes are shown on top of the pulled copy until a complete pull brings them back', async (t) => {
   const server = await startServer(t);
   const a = await makeDevice(t, server, 'owner');
