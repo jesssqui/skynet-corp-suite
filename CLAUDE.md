@@ -2,8 +2,8 @@
 
 Private business and life management suite (Skynet Corp Suite; `suite` is the short name used in code, packages and file names) for two people. Runs in Docker on the Mac mini at
 home beside the Wholesale Order Manager, reachable only over Tailscale (Tailscale Serve gives it HTTPS). The CRM is its
-core (later packages); this repo currently holds the skeleton from package **C0**: server, client shell, one example
-module (`health`), tests, Docker and nightly backups.
+core (later packages); this repo currently holds the skeleton from package **C0** (server, client shell, one example
+module `health`, tests, Docker, nightly backups) and the server half of offline sync from **C2a** (module `sync`).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -26,7 +26,7 @@ Deploying, Tailscale Serve, backup scheduling and the restore drill: **DEPLOY.md
 
 ## Layout
 ```
-shared/                    @suite/shared — ids.js (UUIDv7), time.js; tests in shared/test
+shared/                    @suite/shared — ids.js (UUIDv7), time.js, hlc.js (sync clock stamps); tests in shared/test
 server/src/
   index.js                 start: open db, createApp, listen, heartbeat, backup schedule, shutdown
   app.js                   createApp({config, db, log}) — migrations, services, routes, static client, errors
@@ -35,10 +35,11 @@ server/src/
   db/migrate.js            per-module migrations, schema_migrations table
   modules/index.js         server module registration list (order = migration order)
   modules/<name>/          index.js (shape), routes.js, service.js, migrations/NNN_name.sql|js
+  modules/sync/            offline sync: registry.js, service.js, routes.js, identity.js (stand-in until C1)
   backup/                  backup.js, restore.js, schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file)
 server/scripts/            backup.js, restore.js (CLIs)
-server/test/               node --test; helpers.js has tmpDir/testConfig/dumpDb
+server/test/               node --test; helpers.js has tmpDir/testConfig/dumpDb; fixtures/syncdemo = test-only synced module
 client/src/
   main.jsx, App.jsx        providers + router built from the module list
   shell/                   AppShell (sidebar on desktop, bottom tab bar on phones), shell.css
@@ -98,13 +99,99 @@ Design (code in `server/src/backup/`, tests in `server/test/backup.test.js`):
   on clean shutdown) is fresh, verifies the file, saves the current database as `backups/pre-restore-*.db`, removes
   `-wal/-shm`, swaps the file in. The heartbeat works across containers sharing the volume (a port check would not).
 
+## Offline sync (C2a: server half)
+Devices (iPhone, Mac) keep working with no connection: they make records with their own IDs and save every change as
+a small **step** in an outbox, push the steps when connected, and pull what changed since their bookmark. Code:
+`server/src/modules/sync/`, tests `server/test/sync.test.js` (with the test-only module in `server/test/fixtures/syncdemo`).
+
+**Tables** (all `sync_*`): `sync_steps` (the log: one row per step key, ever), `sync_records` (per record: created,
+deleted, flagged, `changed_seq` for pulls), `sync_field_versions` (per field: stamp, seq, device, actor, step — for
+last-writer-wins), `sync_clashes` (the review list: both values, both actors/devices/times, resolved yes/no),
+`sync_devices` (device → actor, bookmark `last_pull_cursor`, newest stamp, clock skew), `sync_meta` (generation, seq,
+server clock, server device id).
+
+**A step** (made on the device, JSON):
+`{ key, entity, recordId, op: 'create'|'update'|'delete', fields?, hlc, seen? }`
+- `key`: `newId()` made when the change is made — the idempotency key. Resent steps answer `duplicate`.
+- `recordId`: the record's UUIDv7, made on the device for a create.
+- `fields`: only synced fields; a create may omit optional ones (null); an update sends just what changed; a delete none.
+- `hlc`: a stamp from `createHlc(deviceId)` (`@suite/shared/hlc`) — `clock.now()` per change.
+- `seen`: the device's cursor from its last **complete** pull (the page with `hasMore: false`) when the change was made.
+  It is how the server tells "edited after seeing the other change" (no clash) from "edited at the same time" (clash).
+  Missing or from another generation = "saw nothing" (safest: more clashes to review, nothing silently lost).
+
+**Endpoints** (`/api/sync`; identity until C1: headers `X-Suite-Device: <uuidv7>` and `X-Suite-Actor: owner|partner`,
+or `deviceId`/`actor` in the body/query):
+- `POST /push {steps:[…], deviceTime?}` → `{ generation, seq, hlc, serverTime, clockWarning?, results:[…] }`, one result
+  per step in order: `applied` | `duplicate` | `clash` (applied in part or kept for review; `applied`/`lost` field
+  lists, `clashes` ids, `kept`) | `rejected` (`code` + `reason`; nothing written — show it in "needs attention", never
+  drop it). Each step is its own transaction. Max 500 steps/push, 64 KB/step, 1 MB/body (413 beyond).
+- `GET /pull?since=<cursor>&limit=<1–1000, default 200>` → `{ generation, reset, cursor, hasMore, hlc, changes }`;
+  a change is `{ entity, id, seq, deleted:false, flagged, fields, clashes:[open clashes] }` or `{ entity, id, seq,
+  deleted:true }`. Keep calling with the returned cursor until `hasMore` is false. Cursors are opaque (`<generation>.<seq>`).
+- `GET /clashes?status=open|all&entity=&recordId=`, `POST /clashes/:id/resolve {resolution: keep_winner|keep_loser}`
+  (keep_loser applies the other value, or the delete, as a new change; 409 if the detail changed again since).
+- `GET /info` → generation, current cursor, server clock, registered entities with their fields (for client-side checks).
+
+**Rules**
+- **Exactly once, in order**: steps apply in the order sent; a device's stamps must increase (an older stamp after a
+  newer one is `out_of_order`); the key makes repeats `duplicate`. Every applied step gets the next server `seq`.
+- **Clock: hybrid logical clock (HLC)**, compared as text (`<ms>-<counter>-<deviceId>`). Chosen over plain device
+  timestamps (a wrong clock would decide clashes; ties possible) and over server arrival order (a phone offline for days
+  would overwrite newer edits just by arriving last). An HLC is the device's wall clock, but it never goes backwards and
+  always moves past every stamp the device has pulled (`clock.receive(response.hlc)` after each push/pull), so a change
+  made after seeing another sorts after it even on a slow clock. Stamps more than 5 min ahead of the server are
+  clamped to server time on arrival (a clock set to next year can't win everything); `deviceTime` on push lets the
+  server warn about a skewed clock. Known limit: a device with a clock far *behind* loses concurrent clashes — the
+  losing value is kept for review, so nothing is lost.
+- **Different fields** of one record from two devices: both apply. **Same field**, concurrent (other device, and the
+  version is newer than the step's `seen`): the later stamp wins, the other value goes to `sync_clashes`, either arrival
+  order gives the same result. Not concurrent (same device, or already seen): it just applies. Same value: no clash.
+- **Delete vs edit** (concurrent): the record is kept (un-deleted if the delete arrived first), `flagged`, and a
+  `delete` clash records the delete as the loser. Settle it by keeping the record or deleting after all. A delete of
+  something you had fully seen just deletes (and settles any open clashes on it as `superseded`); an edit of something
+  you knew was deleted is rejected (`deleted`).
+- **Deletes are soft**: the row stays with `deleted_at` set; pulls send a tombstone.
+- **Restore generation**: `restore.js` marks the restored file; on the next start sync gives the database a new
+  `generation`. A pull with a cursor from another generation (or ahead of the server) gets `reset: true` and starts
+  from the beginning; steps with such a `seen` are treated as "saw nothing".
+
+**How a module syncs a record type** (C3a):
+1. Its migration makes the table: `id TEXT PRIMARY KEY`, `deleted_at TEXT`, the synced columns, and optionally
+   `created_at`, `created_by`, `updated_at`, `updated_by`, `flagged INTEGER NOT NULL DEFAULT 0` — sync fills those
+   (times from the step's stamp, i.e. when it was done on the device; actor = who). Use nullable columns or `required`
+   fields; foreign-key failures come back as `rejected` / `constraint`.
+2. In `createService(ctx)`: `ctx.services.sync.registerEntity({ module, entity, table, fields, ops | appendOnly })`.
+   Field types: `text` (`max`, default 10 000), `integer`, `number`, `boolean` (stored 0/1, sent true/false), `date`
+   (YYYY-MM-DD), `datetime` (nowIso format), `id` (UUIDv7), `enum` (`values`); `required: true`. `appendOnly: true` =
+   create only (notes, activities, call logs: they simply add up). The table must start with the module's name;
+   entity names are global, short and singular (`client`, `task`, `note`).
+3. The module comes **after `sync`** in `modules/index.js`.
+4. **All writes go through sync**: devices push steps; server code calls `ctx.services.sync.applyLocal({ actor, entity,
+   op, recordId?, fields })` (imports, automations — same rules and log, server's own device id). TEMP triggers make
+   any other write to a registered table fail on the app's connection. Reads are the module's own SQL — always filter
+   `deleted_at IS NULL`; `sync.recordState(entity, id)` gives flag + open clashes for a record page.
+5. Plan new fields as nullable or with defaults; renaming/removing a synced field breaks old outbox steps (`unknown_field`).
+
+**For C2b (browser side)**: keep a device id (`newId()`, once) and a persisted HLC (`createHlc(id, { last })`, save
+`peek()`); for each change write the step to the outbox with `seen` = cursor of the last complete pull; push in order,
+remove `applied`/`duplicate`/`clash` results from the outbox but **keep sent steps for 30 days** (backup retention) so
+they can be re-sent after a restore; move `rejected` ones to "needs attention". On `reset: true` (or a new
+`generation` on push), drop the local copy of server data, re-push the kept sent steps first (in order; they come back
+`duplicate` or apply again), then the outbox, then pull from scratch. Show `clashes` on each record with keep/discard.
+**For C1**: replace `identify()` in `modules/sync/identity.js` with the session (actor from the account, device id
+bound to the session); keep the `{ actor, deviceId }` shape. `ACTORS` there are the two people (`system` = server).
+
+**Not done in C2a / open**: clash resolution needs a connection (no offline "resolve" step yet); pulls send every
+synced record (no "active clients only" scope yet — C2b/C3a should add an entity/scope filter); old tombstones,
+step-log and resolved clashes are never pruned; restores done by copying a file by hand (not `npm run restore`) are not
+detected — always restore with the script.
+
 ## Decisions for later packages
 - **C1 (sign-in)**: sessions/passkeys go in their own module; set `app.set('trust proxy', 'loopback')` when cookies need
   `secure` (Tailscale Serve terminates TLS and proxies from loopback). Keep the localhost binding regardless.
-- **C2 (offline sync)**: IDs and time helpers already live in `@suite/shared` so the client can make records offline.
-  Each change ("keyed step") should get its own `newId()` as its idempotency key; UUIDv7 order = creation order per device.
-  `health_meta.instance_id` names the database and survives restores — C2 may want an extra "restore generation" so
-  devices can tell the server went back in time and re-send their outbox. No service worker yet; C2 adds it.
+- **C2 (offline sync)**: server half done in C2a — see "Offline sync" above. `health_meta.instance_id` still names the
+  database and survives restores; the sync `generation` is what changes on a restore. No service worker yet; C2b adds it.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
