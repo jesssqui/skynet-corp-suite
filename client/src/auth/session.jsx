@@ -41,24 +41,29 @@ export function AuthProvider({ children }) {
   const sessionLost = useCallback(async (code) => {
     // Signed out (here or from the other person's Devices page): this device's copy must go.
     if (code === 'device_signed_out') await clearLocalData();
+    // Signed out here while offline (the copy is already gone): that is what the person needs to read,
+    // not "your session ended".
+    const notice = readPendingSignOut() && code !== 'device_signed_out' ? NOTICES.signed_out : NOTICES[code] ?? null;
     setState((s) => (s.status === 'signed-out' && code === 'not_signed_in'
       ? s // already on the sign-in screen: keep its message
-      : { status: 'signed-out', session: null, offline: false, notice: NOTICES[code] ?? null, error: null }));
+      : { status: 'signed-out', session: null, offline: false, notice, error: null }));
   }, []);
 
   const check = useCallback(async () => {
     // A sign-out made offline goes to the server first; until it does, nobody is signed in here.
     if (readPendingSignOut()) {
+      let done = false;
       try {
         await api.post('/api/auth/logout');
+        done = true;
       } catch (err) {
-        if (err.status !== 401) {
-          setState((s) => (s.status === 'signed-out' ? s : { status: 'signed-out', session: null, offline: false, notice: NOTICES.signed_out, error: null }));
-          return;
-        }
+        // Already signed out on the server: done. Session ended (or no cookie): the device row is still
+        // active and only a session can sign it out — keep it pending for the next sign-in (signedIn).
+        // No connection: keep it pending and try again later.
+        done = err.status === 401 && err.code === 'device_signed_out';
       }
-      setPendingSignOut(null);
-      setState((s) => (s.status === 'signed-out' ? s : { status: 'signed-out', session: null, offline: false, notice: NOTICES.signed_out, error: null }));
+      if (done) setPendingSignOut(null);
+      setState({ status: 'signed-out', session: null, offline: false, notice: NOTICES.signed_out, error: null });
       return;
     }
     try {

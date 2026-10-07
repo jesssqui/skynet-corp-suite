@@ -420,7 +420,8 @@ sent), `suite.theme`.
 - **Signing out offline**: the server can't be told and the HttpOnly cookie stays, so `suite.signOutPending` remembers
   the device id; the next check sends `POST /api/auth/logout` before anything else (until it gets through, nobody is
   signed in here — the old session never quietly resumes), and a sign-in meanwhile signs that device out from the new
-  session. The Account page offers Sign out without a connection too.
+  session. If that session ended in the meantime (401 `session_expired`/`not_signed_in`), only a session can sign the
+  device out, so it stays pending for the next sign-in; the screen says "Signed out", not "your session ended". The Account page offers Sign out without a connection too.
 - **Switching person**: the sign-in screen warns when the last person's unsent changes would be deleted (another
   username typed while the remembered session's outbox isn't empty).
 - **Clashes** come with the pulled record (`_sync.clashes`); ClashPanel settles them with

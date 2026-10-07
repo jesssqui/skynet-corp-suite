@@ -255,3 +255,33 @@ test('a device clock far off shows in the sync bar', async (t) => {
   await page.getByTestId('clock-warning').waitFor(WAIT);
   assert.match(await page.getByTestId('clock-warning').textContent(), /clock is off/);
 });
+
+test('an offline sign-out whose session ends before it reaches the server is sent by the next sign-in', async (t) => {
+  const server = await startServer(t);
+  const { base, db, users } = server;
+  const browser = await launch(t);
+  const mac = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+  await watch(mac);
+  const page = await mac.newPage();
+  await signIn(page, base, 'sam', users.partner.totpSecret);
+  await barSays(page, 'All changes saved');
+  const oldDevice = await page.evaluate(() => localStorage.getItem('suite.deviceId'));
+
+  server.proxy.down();
+  await page.goto(`${base}/account`);
+  await page.getByRole('button', { name: /Sign out of this device/ }).click();
+  await page.getByText('Signed out').waitFor(WAIT);
+  // The session ends before the device reaches the server again.
+  db.prepare("UPDATE auth_sessions SET ended_at = ?, end_reason = 'expired' WHERE ended_at IS NULL").run(new Date().toISOString());
+  server.proxy.up();
+  await page.reload();
+  await page.getByText('Signed out. The data saved on this device was cleared.').waitFor(WAIT);
+  assert.equal(await page.getByText('Your session ended').count(), 0);
+  assert.equal(await page.evaluate(() => localStorage.getItem('suite.signOutPending')), oldDevice, 'still to be sent');
+  assert.equal(db.prepare('SELECT signed_out_at FROM auth_devices WHERE id = ?').get(oldDevice).signed_out_at, null);
+
+  // The next sign-in signs the old device out (it gets a new one).
+  await signIn(page, base, 'sam', users.partner.totpSecret, { from: null });
+  await until(() => db.prepare('SELECT signed_out_at FROM auth_devices WHERE id = ?').get(oldDevice).signed_out_at, 'the old device signed out');
+  assert.equal(await page.evaluate(() => localStorage.getItem('suite.signOutPending')), null);
+});
