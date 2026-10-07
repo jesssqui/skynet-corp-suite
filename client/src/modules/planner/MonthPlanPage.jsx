@@ -11,11 +11,11 @@ import { goalPeriodOf } from '@suite/shared/planner';
 import { usePlannerData } from './data.js';
 import {
   monthParam, monthLabel, weekLabel, weeksOfMonth, goalsOf, goalsByBusiness, planBusinesses, carryOverCandidates, goalProgress,
-  priorityOverflow, addMonthStarts, monthStart, MONTH_PRIORITY_LIMIT,
+  priorityOverflow, addMonthStarts, planMonth, MONTH_PRIORITY_LIMIT,
 } from './plan.js';
 import { useToday, muted } from './parts.jsx';
 import { TaskSheet, newTaskInitial } from './forms.jsx';
-import { GoalSheet, GoalItem, GoalTick, CarryOver } from './goals.jsx';
+import { GoalSheet, GoalItem, GoalTick, CarryOver, CarriedTwice } from './goals.jsx';
 import { PlanTabs } from './planParts.jsx';
 import { PeriodNav } from './WeekPlanPage.jsx';
 
@@ -46,7 +46,7 @@ export default function MonthPlanPage() {
 
   const goMonth = (m) => {
     const next = new URLSearchParams(window.location.search);
-    if (m === monthStart(today)) next.delete('month');
+    if (m === planMonth(today)) next.delete('month');
     else next.set('month', m.slice(0, 7));
     setParams(next, { replace: true });
   };
@@ -63,8 +63,8 @@ export default function MonthPlanPage() {
           <PeriodNav
             onPrev={() => goMonth(addMonthStarts(first, -1))}
             onNext={() => goMonth(addMonthStarts(first, 1))}
-            onCurrent={() => goMonth(monthStart(today))}
-            isCurrent={first === monthStart(today)}
+            onCurrent={() => goMonth(planMonth(today))}
+            isCurrent={first === planMonth(today)}
             prevLabel="Last month"
             nextLabel="Next month"
             currentLabel="This month"
@@ -77,6 +77,7 @@ export default function MonthPlanPage() {
           <Card><p style={{ ...muted, margin: 0 }}>{loading ? 'Loading…' : ' '}</p></Card>
         ) : (
           <>
+            <CarriedTwice goals={data.goals} kind="month" period={first} data={data} />
             {view.carry.length ? (
               <Card>
                 <CarryOver candidates={view.carry} period={first} me={me} data={data} existing={view.priorities} kind="month" testId="carry-over-month" />

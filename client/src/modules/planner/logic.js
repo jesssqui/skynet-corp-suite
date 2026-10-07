@@ -9,7 +9,7 @@ import { BUSINESS_IDS } from '@suite/shared/crm';
 import { SHARED } from '@suite/shared/actors';
 import {
   isDueTime, isOpenTask, isUnplannedTask, ESTIMATE_MAX_MINUTES, DEFAULT_DAY_MINUTES, relationshipsWithoutNextStep, topField,
-  addDays, weekStart, monthStart, goalPeriodOf,
+  addDays, weekStart, goalPeriodOf, planMonth,
 } from '@suite/shared/planner';
 import { formatDate, parseLocalDate } from '../../ui/format.js';
 
@@ -161,11 +161,12 @@ export function buildToday({ tasks, me, today, keep = new Set() }) {
 // ---- the morning plan -------------------------------------------------------------------------------
 
 /**
- * Is this goal current on `today`: a week goal of this week, or a month priority of this month?
+ * Is this goal current on `today`: a week goal of this week, or a month priority of this planning
+ * month (planMonth: the month this week's Thursday is in)?
  */
 export function isCurrentGoal(goal, today) {
   const period = goalPeriodOf(goal);
-  return Boolean(period) && period === (goal.kind === 'month' ? monthStart(today) : weekStart(today));
+  return Boolean(period) && period === (goal.kind === 'month' ? planMonth(today) : weekStart(today));
 }
 
 /**
@@ -183,7 +184,7 @@ export function proposePlan({ tasks, me, today, goalsById = new Map() }) {
   const forGoals = tasks.filter((t) => t.owner === me && isOpenTask(t) && !t.due_date && t.goal_id
     && goalsById.has(t.goal_id) && isCurrentGoal(goalsById.get(t.goal_id), today))
     .sort((a, b) => (isTop(b, today, me) - isTop(a, today, me)) || compareDue(a, b));
-  const toSort = tasks.filter((t) => isMineOrShared(t, me) && isUnplannedTask(t, goalsById)).length;
+  const toSort = tasks.filter((t) => isMineOrShared(t, me) && isUnplannedTask(t, goalsById, today)).length;
   return { overdue: overdue.map((t) => t.id), dueToday: dueToday.map((t) => t.id), forGoals: forGoals.map((t) => t.id), toSort };
 }
 
@@ -273,7 +274,7 @@ export function filterTasks(tasks, { owner = 'all', business = '', client = '', 
     if (due === 'overdue') return state === 'overdue';
     if (due === 'today') return state === 'today';
     if (due === 'none') return state === 'none';
-    if (due === 'unplanned') return state === 'none' && !(t.goal_id && goalsById.has(t.goal_id));
+    if (due === 'unplanned') return isUnplannedTask(t, goalsById, today) || (keep.has(t.id) && !t.due_date);
     if (week) return Boolean(t.due_date) && t.due_date >= week.start && t.due_date <= week.end;
     return true;
   });

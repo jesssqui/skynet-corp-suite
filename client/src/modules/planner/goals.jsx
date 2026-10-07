@@ -11,7 +11,7 @@ import { BusinessChip, FormSheet, RecordSync, TextButton, useAction } from '../c
 import { SyncBadges } from '../../sync/components.jsx';
 import { pickableBusinesses } from '../crm/logic.js';
 import { goalForm, goalValues, editChanges, isDirty } from './goalForm.js';
-import { goalOwner, goalProgress, reorderChanges, nextPosition, carryFields, MONTH_PRIORITY_LIMIT } from './plan.js';
+import { goalOwner, goalProgress, reorderChanges, nextPosition, carryFields, carryTaskMoves, carriedTwice, MONTH_PRIORITY_LIMIT } from './plan.js';
 import { compareDue, isOpenTask, otherActor } from './logic.js';
 import { OwnerBadge, TaskList, muted } from './parts.jsx';
 import { Meter } from './planParts.jsx';
@@ -22,6 +22,8 @@ const KIND_WORD = { week: 'goal', month: 'priority' };
 /**
  * Add or edit a week goal / month priority. New ones: `initial` = { kind, period, business_id };
  * `siblings` = the business's goals of that period (its position, and the three-a-month warning).
+ * Changing a goal's business leaves its tasks alone (their business is their own; each task shows
+ * "Different business from the goal" in its sheet).
  */
 export function GoalSheet({ record = null, initial = {}, siblings = [], businesses = [], onClose, onDone }) {
   const { session } = useAuth();
@@ -203,7 +205,8 @@ export function GoalItem({ goal, siblings, data, me, today, onEdit, onAddTask, o
 
 /**
  * Last period's unfinished goals, offered for carrying over into `period` (a new goal is copied;
- * the old one is left as it was). One tap each, or all at once.
+ * the old one is left as it was, and its open, undated tasks move to the copy — goal_id only —
+ * so they stay planned). One tap each, or all at once.
  */
 export function CarryOver({ candidates, period, me, data, existing, kind, testId = 'carry-over' }) {
   const { busy, error, run } = useAction();
@@ -212,8 +215,9 @@ export function CarryOver({ candidates, period, me, data, existing, kind, testId
     const positions = new Map();
     for (const g of goals) {
       const base = positions.get(g.business_id) ?? nextPosition(existing.filter((x) => x.business_id === g.business_id));
-      await store.create('goal', carryFields(g, period, { me, position: base }));
+      const copy = await store.create('goal', carryFields(g, period, { me, position: base }));
       positions.set(g.business_id, base + 1);
+      for (const id of carryTaskMoves(data.tasks, g.id)) await store.update('task', id, { goal_id: copy });
     }
   });
   return (
@@ -237,6 +241,36 @@ export function CarryOver({ candidates, period, me, data, existing, kind, testId
           );
         })}
       </ul>
+      {error ? <Notice tone="danger">{error}</Notice> : null}
+    </div>
+  );
+}
+
+/**
+ * Goals carried over twice into one period (both devices carried the same goal before they saw
+ * each other's copy): a notice per pair with one tap to remove the extra — its open tasks move to
+ * the one kept first (goal_id only), then the extra is deleted.
+ */
+export function CarriedTwice({ goals, kind, period, data, testId = 'carried-twice' }) {
+  const { busy, error, run } = useAction();
+  const doubles = carriedTwice(goals, { kind, period });
+  if (!doubles.length) return null;
+  const fix = ({ keep, extras }) => run(async () => {
+    for (const extra of extras) {
+      for (const t of data.tasksByGoal.get(extra.id) ?? []) if (isOpenTask(t)) await store.update('task', t.id, { goal_id: keep.id });
+      await store.remove('goal', extra.id);
+    }
+  });
+  return (
+    <div style={{ display: 'grid', gap: 'var(--space-2)' }} data-testid={testId}>
+      {doubles.map((d) => (
+        <Notice key={d.keep.id} tone="warn">
+          <span>“{d.keep.title}” was carried over twice (on two devices at once).</span>{' '}
+          <button type="button" className="crm-link-button" disabled={busy} onClick={() => fix(d)} aria-label={`Remove the extra copy of ${d.keep.title}`}>
+            Remove the extra
+          </button>
+        </Notice>
+      ))}
       {error ? <Notice tone="danger">{error}</Notice> : null}
     </div>
   );

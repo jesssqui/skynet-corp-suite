@@ -55,7 +55,7 @@ export default function TasksPage() {
     [data, owner, business, client, due, goal, me, today, keep, version],
   );
   // "N to sort": my open tasks and the shared list's with no day and no goal (C4b).
-  const toSort = useMemo(() => (data ? unplannedTasks(data.tasks, { goalsById: data.goalsById, me }).length : 0), [data, me]);
+  const toSort = useMemo(() => (data ? unplannedTasks(data.tasks, { goalsById: data.goalsById, me, today }).length : 0), [data, me, today]);
   const goalRecord = goal && data ? data.goalsById.get(goal) : null;
   // Clients to filter by: those with a task (a long client list would be no use here), plus the chosen one.
   const clientOptions = useMemo(() => {

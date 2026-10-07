@@ -7,13 +7,13 @@
 // calendar (addDays, weekStart, monthStart from @suite/shared/planner), never new Date('YYYY-MM-DD').
 // Weeks run Monday to Sunday.
 import {
-  addDays, weekStart, monthStart, addMonthStarts, weekday, goalPeriodOf, isUnplannedTask, isOpenTask, dayMinutesOf,
-  WORKDAY_IDS, MONTH_PRIORITY_LIMIT, SHARED,
+  addDays, weekStart, monthStart, addMonthStarts, weekday, goalPeriodOf, isUnplannedTask, isOpenTask, dayMinutesOf, planMonth,
+  isStaleGoal, WORKDAY_IDS, MONTH_PRIORITY_LIMIT, SHARED,
 } from '@suite/shared/planner';
 import { parseLocalDate } from '../../ui/format.js';
-import { buildToday, compareDue, dueTimeOf, isMineOrShared, isTop, moveChange, relationshipsWithoutNextStep } from './logic.js';
+import { buildToday, compareDue, dueTimeOf, isMineOrShared, isTop, moveChange, otherActor, relationshipsWithoutNextStep } from './logic.js';
 
-export { MONTH_PRIORITY_LIMIT };
+export { MONTH_PRIORITY_LIMIT, planMonth, isStaleGoal };
 
 // ---- weeks and months ------------------------------------------------------------------------------
 
@@ -46,11 +46,11 @@ export function dayShort(ymd) {
 }
 
 /**
- * The month a week belongs to (for the monthly plan's "week goals of the month"): the month its
- * Thursday is in, so a week split across two months counts once, where most of its days are.
+ * The month a week belongs to: the month its Thursday is in (planMonth), so a week split across
+ * two months counts once, where most of its days are. The same rule decides "this month".
  */
 export function weekMonth(monday) {
-  return monthStart(addDays(weekStart(monday), 3));
+  return planMonth(monday);
 }
 
 /** The Mondays of the weeks that belong to the month starting `first` (weekMonth). */
@@ -78,10 +78,10 @@ export function weekParam(value, today) {
   return weekStart(validYmd(value) ? value : today);
 }
 
-/** A `?month=` value ("2026-10" or any day of it) as its 1st; this month when missing or bad. */
+/** A `?month=` value ("2026-10" or any day of it) as its 1st; this planning month (planMonth) when missing or bad. */
 export function monthParam(value, today) {
   const v = /^\d{4}-\d{2}$/.test(value ?? '') ? `${value}-01` : value;
-  return monthStart(validYmd(v) ? v : today);
+  return validYmd(v) ? monthStart(v) : planMonth(today);
 }
 
 export { addMonthStarts };
@@ -200,13 +200,13 @@ export function carryFields(goal, period, { me, position = null }) {
  */
 export function goalChoices(goals, { today, dueDate = null, current = null, businessesById = new Map() }) {
   const weeks = new Set([weekStart(today), addDays(weekStart(today), 7)]);
-  const months = new Set([monthStart(today), addMonthStarts(today, 1)]);
+  const thisMonth = planMonth(today);
+  const months = new Set([thisMonth, addMonthStarts(thisMonth, 1)]);
   if (dueDate && validYmd(dueDate)) {
     weeks.add(weekStart(dueDate));
-    months.add(monthStart(dueDate));
+    months.add(planMonth(dueDate));
   }
   const thisWeek = weekStart(today);
-  const thisMonth = monthStart(today);
   const label = (g) => `${businessesById.get(g.business_id)?.name ?? 'Unknown business'} — ${g.title}${g.done_at ? ' (done)' : ''}`;
   const weekGroup = (p) => (p === thisWeek ? 'This week’s goals' : p === addDays(thisWeek, 7) ? 'Next week’s goals' : `Week of ${weekLabel(p)}`);
   const monthGroup = (p) => (p === thisMonth ? 'This month’s priorities' : `${monthLabel(p)} priorities`);
@@ -233,23 +233,56 @@ export function goalChoices(goals, { today, dueDate = null, current = null, busi
 }
 
 /**
- * The change that files a task under a goal: its goal, and the goal's business when the task was
- * filed under another (a task for "follow up 5 quiet wholesale customers" is wholesale work).
+ * The change that files a task under a goal: only its goal. The task's business is never changed
+ * silently (it may be a client's next step for another business); when it differs from the goal's,
+ * the screens say "Different business from the goal" and offer one tap to use the goal's
+ * (businessMismatch).
  */
 export function goalChange(task, goal) {
-  if (!goal) return { goal_id: null };
-  return { goal_id: goal.id, ...(task.business_id !== goal.business_id ? { business_id: goal.business_id } : {}) };
+  return { goal_id: goal ? goal.id : null };
+}
+
+/** The goal's business when a task filed under it has another one (null when they match or there is no goal). */
+export function businessMismatch(task, goal) {
+  return goal && task && task.business_id !== goal.business_id ? goal.business_id : null;
+}
+
+/**
+ * Carrying a goal over moves its open, undated tasks to the copy (goal_id only): their ids.
+ * Dated tasks keep their day (and their old goal, for the record); done ones stay where they were.
+ */
+export function carryTaskMoves(tasks, fromGoalId) {
+  return tasks.filter((t) => t.goal_id === fromGoalId && isOpenTask(t) && !t.due_date).map((t) => t.id);
+}
+
+/**
+ * Goals carried over twice into one period (both devices carried the same goal before seeing the
+ * other's copy): [{ keep, extras }] — keep the first made (UUIDv7 ids sort by creation).
+ */
+export function carriedTwice(goals, { kind, period }) {
+  const by = new Map();
+  for (const g of goals) {
+    if (g.kind !== kind || !g.carried_from || goalPeriodOf(g) !== period) continue;
+    const list = by.get(g.carried_from);
+    if (list) list.push(g);
+    else by.set(g.carried_from, [g]);
+  }
+  return [...by.values()].filter((l) => l.length > 1).map((l) => {
+    const sorted = [...l].sort((a, b) => (a.id < b.id ? -1 : 1));
+    return { keep: sorted[0], extras: sorted.slice(1) };
+  });
 }
 
 // ---- tasks to sort -------------------------------------------------------------------------------
 
 /**
- * Open tasks that belong to no day and no goal (isUnplannedTask), oldest first. whose: 'mine' (my
- * own and the shared list's), 'partner' (the other person's own), 'all'.
+ * Open tasks that belong to no day and no current goal (isUnplannedTask: none, a deleted one, or
+ * an unfinished goal of an earlier period), oldest first. whose: 'mine' (my own and the shared
+ * list's), 'partner' (the other person's own), 'all'.
  */
-export function unplannedTasks(tasks, { goalsById, me, whose = 'mine' }) {
+export function unplannedTasks(tasks, { goalsById, me, today, whose = 'mine' }) {
   return tasks.filter((t) => {
-    if (!isUnplannedTask(t, goalsById)) return false;
+    if (!isUnplannedTask(t, goalsById, today)) return false;
     if (whose === 'mine') return isMineOrShared(t, me);
     if (whose === 'partner') return t.owner !== me && t.owner !== SHARED;
     return true;
@@ -341,7 +374,9 @@ export function pushOrder(today, me, goalsById) {
 /**
  * What to push off an overbooked day, in pushOrder, until it fits: [{ task, to }] where `to` is
  * the next day with room (counting the suggestions before it). Tasks without an estimate count 0
- * and are never suggested (moving them frees nothing). [] when the day fits.
+ * and are never suggested (moving them frees nothing). A shared task counts on both people's
+ * days, but one the other person starred as a top pick today is never suggested (moving it would
+ * move their pick). [] when the day fits.
  * @param {{ tasks: object[], me, today, day?, dayMinutes, goalsById?: Map }} args
  */
 export function pushSuggestions({ tasks, me, today, day = today, dayMinutes, goalsById = new Map() }) {
@@ -350,7 +385,9 @@ export function pushSuggestions({ tasks, me, today, day = today, dayMinutes, goa
   const loads = loadsByDay(tasks, { me, today });
   const out = [];
   let left = load.minutes;
-  for (const t of load.tasks.filter((x) => x.estimate_minutes > 0).sort(pushOrder(today, me, goalsById))) {
+  const other = otherActor(me);
+  const movable = (x) => x.estimate_minutes > 0 && !(x.owner === SHARED && isTop(x, today, other));
+  for (const t of load.tasks.filter(movable).sort(pushOrder(today, me, goalsById))) {
     if (left <= dayMinutes) break;
     const to = nextDayWithRoom(loads, { from: day, minutes: t.estimate_minutes, dayMinutes });
     loads.set(to, (loads.get(to) ?? 0) + t.estimate_minutes);

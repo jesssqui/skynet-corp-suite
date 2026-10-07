@@ -106,6 +106,17 @@ export function addMonthStarts(ymd, n) {
   return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 10);
 }
 
+/**
+ * The month a day plans in: the month its week's Thursday is in. One rule everywhere ("this month"
+ * on the Monday plan, a task's "Part of" choices, the morning plan, the monthly plan's default and
+ * its week goals): a week split across two months belongs to the one with most of its days, so on
+ * Wed Sep 30 and Thu Oct 1 (the week of Sep 28) "this month" is October — planned on the first
+ * Monday, as the plan says.
+ */
+export function planMonth(ymd) {
+  return monthStart(addDays(weekStart(ymd), 3));
+}
+
 /** The period a goal of `kind` covering the day `ymd` has: its week's Monday, or its month's 1st. */
 export function goalPeriod(kind, ymd) {
   return kind === 'month' ? monthStart(ymd) : weekStart(ymd);
@@ -156,13 +167,30 @@ export function isOpenTask(task) {
 }
 
 /**
- * "Every task belongs to a day, a week goal or a month priority": an open task with no due date
- * and no live goal (none, or one that was deleted) is unplanned — it waits to be sorted.
- * @param {object} task
- * @param {{ has(id): boolean }} liveGoals  the live goals' ids (a Set or a Map)
+ * A goal left behind: not done, and its period is before the current one (an earlier week for a
+ * week goal; an earlier planning month — planMonth — for a month priority). Its open tasks no
+ * longer belong anywhere current.
  */
-export function isUnplannedTask(task, liveGoals) {
-  return isOpenTask(task) && !task.due_date && !(task.goal_id && liveGoals?.has(task.goal_id));
+export function isStaleGoal(goal, today) {
+  if (!goal || goal.done_at || !today) return false;
+  const period = goalPeriodOf(goal);
+  if (!period) return false;
+  return period < (goal.kind === 'month' ? planMonth(today) : weekStart(today));
+}
+
+/**
+ * "Every task belongs to a day, a week goal or a month priority": an open task with no due date
+ * and no live, current goal is unplanned — it waits to be sorted. No goal, a deleted one, or (with
+ * `today` and goal records) an unfinished goal of an earlier period (isStaleGoal) all count.
+ * @param {object} task
+ * @param {Map<string, object>|Set<string>} liveGoals  the live goals by id (a Set: ids only, no staleness check)
+ * @param {string|null} today  the device's local date ("YYYY-MM-DD")
+ */
+export function isUnplannedTask(task, liveGoals, today = null) {
+  if (!isOpenTask(task) || task.due_date) return false;
+  if (!task.goal_id || !liveGoals?.has(task.goal_id)) return true;
+  const goal = typeof liveGoals.get === 'function' ? liveGoals.get(task.goal_id) : null;
+  return goal && typeof goal === 'object' ? isStaleGoal(goal, today) : false;
 }
 
 /**

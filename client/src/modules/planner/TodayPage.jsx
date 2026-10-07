@@ -88,7 +88,7 @@ export default function TodayPage() {
     return rows.sort((a, b) => name(a).localeCompare(name(b)) || (a.id < b.id ? -1 : 1));
   }, [data]);
   const inboxCount = useMemo(() => (data ? openInbox(data.inbox).length : 0), [data]);
-  const toSort = useMemo(() => (data ? unplannedTasks(data.tasks, { goalsById: data.goalsById, me }).length : 0), [data, me]);
+  const toSort = useMemo(() => (data ? unplannedTasks(data.tasks, { goalsById: data.goalsById, me, today }).length : 0), [data, me, today]);
   const dayMinutes = data ? dayMinutesFor(data.workdays, me) : 0;
   const navigate = useNavigate();
 

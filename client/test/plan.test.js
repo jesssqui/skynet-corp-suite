@@ -11,10 +11,10 @@ import { isUnplannedTask, WORKDAY_IDS, goalPeriodOf, isGoalPeriod } from '@suite
 import {
   weekDays, weekLabel, monthLabel, weekMonth, weeksOfMonth, weekParam, monthParam, addMonthStarts, weekStart, monthStart, addDays,
   compareGoals, goalsOf, goalProgress, priorityOverflow, reorderChanges, nextPosition, carryOverCandidates, carryFields, goalChoices, goalChange,
-  unplannedTasks, quickDays, dayMinutesFor, taskDay, dayLoad, loadsByDay, nextDayWithRoom, pushSuggestions, pushChange, weekLoads,
+  unplannedTasks, quickDays, dayMinutesFor, businessMismatch, carryTaskMoves, carriedTwice, planMonth, taskDay, dayLoad, loadsByDay, nextDayWithRoom, pushSuggestions, pushChange, weekLoads,
   overdueTasks, renewalsDue, quietClients, handoffTasks, reviewLists, focusQueue, nextInQueue, previousInQueue, planBusinesses,
 } from '../src/modules/planner/plan.js';
-import { buildToday, proposePlan, filterTasks } from '../src/modules/planner/logic.js';
+import { buildToday, proposePlan, filterTasks, isCurrentGoal } from '../src/modules/planner/logic.js';
 
 const TODAY = '2026-10-07'; // a Wednesday
 const MONDAY = '2026-10-05';
@@ -134,7 +134,7 @@ test('carry-over: last period’s unfinished goals are offered once; the copy ke
   assert.deepEqual(titles(carryOverCandidates(goals, { kind: 'month', from: '2026-09-01', to: '2026-10-01' })), ['Launch the Lefty’s site']);
 });
 
-test('a task’s “Part of” choices and filing a task under a goal (its business follows the goal)', () => {
+test('a task’s “Part of” choices and filing a task under a goal (its business is kept; a difference is pointed out)', () => {
   const businessesById = new Map([[W, { id: W, name: 'Wholesale' }], [PERSONAL, { id: PERSONAL, name: 'Personal' }]]);
   const thisWeek = goal({ title: 'Follow up quiet customers' });
   const nextWeek = goal({ title: 'Count the stock', period: '2026-10-12' });
@@ -151,13 +151,32 @@ test('a task’s “Part of” choices and filing a task under a goal (its busin
   const withDate = goalChoices(goals, { today: TODAY, dueDate: '2026-11-18', current: old.id, businessesById });
   assert.equal(withDate[0].value, old.id, 'its current goal is always offered');
   assert.ok(withDate.some((c) => c.value === later.id), 'and the goals of the week it is due');
+  // Filing under a goal never changes the business silently: the screens say it differs and offer it.
   const t = task({ business_id: PERSONAL });
-  assert.deepEqual(goalChange(t, thisWeek), { goal_id: thisWeek.id, business_id: W });
-  assert.deepEqual(goalChange(task({ business_id: W }), thisWeek), { goal_id: thisWeek.id });
+  assert.deepEqual(goalChange(t, thisWeek), { goal_id: thisWeek.id });
+  assert.equal(businessMismatch(t, thisWeek), W);
+  assert.equal(businessMismatch(task({ business_id: W }), thisWeek), null);
   assert.deepEqual(goalChange(t, null), { goal_id: null });
 });
 
 // ---- tasks to sort -----------------------------------------------------------------------------------
+
+test('“this month” is one rule everywhere: the month this week’s Thursday is in (Sep 30 and Oct 1 agree)', () => {
+  const sept = goal({ kind: 'month', period: '2026-09-01', title: 'September priority' });
+  const oct = goal({ kind: 'month', period: '2026-10-01', title: 'October priority' });
+  const bizById = new Map([[W, { id: W, name: 'Wholesale' }]]);
+  for (const day of ['2026-09-28', '2026-09-30', '2026-10-01', '2026-10-04']) {
+    assert.equal(planMonth(day), '2026-10-01', `${day}: the week of Sep 28 plans in October`);
+    assert.equal(weekMonth(weekStart(day)), planMonth(day), 'the Monday plan’s “This month” line');
+    assert.deepEqual([isCurrentGoal(sept, day), isCurrentGoal(oct, day)], [false, true], 'the morning plan');
+    const choices = goalChoices([sept, oct], { today: day, businessesById: bizById });
+    assert.deepEqual(choices.filter((c) => c.group === 'This month’s priorities').map((c) => c.label), ['Wholesale — October priority'], 'the task sheet');
+    assert.equal(monthParam(null, day), '2026-10-01', 'the monthly plan opens on it');
+  }
+  assert.equal(planMonth('2026-09-27'), '2026-09-01', 'the Sunday before is still September');
+  assert.equal(planMonth('2026-11-01'), '2026-10-01', 'Sun Nov 1 ends a week that plans in October');
+  assert.equal(planMonth('2026-11-02'), '2026-11-01');
+});
 
 test('unplanned: an open task with no day and no live goal; whose; the tasks page filter; quick days', () => {
   const g = goal({});
@@ -186,6 +205,36 @@ test('unplanned: an open task with no day and no live goal; whose; the tasks pag
   assert.deepEqual(quickDays('2026-10-11').map((d) => d.label), ['Today', 'Tomorrow'], 'on Sunday, tomorrow is Monday');
 });
 
+test('a task left on an unfinished goal of an earlier period is unplanned; carrying over moves open, undated tasks to the copy', () => {
+  const lastWeek = goal({ title: 'Last week, not done', period: '2026-09-28' });
+  const lastWeekDone = goal({ title: 'Last week, done', period: '2026-09-28', done_at: '2026-10-02T12:00:00.000Z' });
+  const lastMonth = goal({ kind: 'month', period: '2026-09-01', title: 'September' });
+  const thisWeek = goal({ title: 'This week' });
+  const goalsById = byId([lastWeek, lastWeekDone, lastMonth, thisWeek]);
+  const stale = task({ title: 'On last week’s goal', goal_id: lastWeek.id });
+  const onDone = task({ title: 'On a finished goal', goal_id: lastWeekDone.id });
+  const onMonth = task({ title: 'On September’s priority', goal_id: lastMonth.id });
+  const current = task({ title: 'On this week’s goal', goal_id: thisWeek.id });
+  const dated = task({ title: 'Dated, last week’s goal', goal_id: lastWeek.id, due_date: '2026-10-09' });
+  const doneTask = task({ title: 'Done, last week’s goal', goal_id: lastWeek.id, done_at: '2026-10-01T10:00:00.000Z' });
+  const rows = [stale, onDone, onMonth, current, dated, doneTask];
+  assert.deepEqual(titles(unplannedTasks(rows, { goalsById, me: 'owner', today: TODAY })), ['On last week’s goal', 'On September’s priority']);
+  assert.equal(isUnplannedTask(stale, goalsById), false, 'without today: no staleness check (C4a callers)');
+  assert.equal(isUnplannedTask(stale, new Set([lastWeek.id]), TODAY), false, 'ids only: no staleness check');
+  assert.deepEqual(titles(filterTasks(rows, { due: 'unplanned' }, { me: 'owner', today: TODAY, goalsById })), ['On last week’s goal', 'On September’s priority']);
+  assert.equal(proposePlan({ tasks: rows, me: 'owner', today: TODAY, goalsById }).toSort, 2);
+  // Carrying last week's goal over takes its open, undated tasks along (dated and done ones stay).
+  assert.deepEqual(carryTaskMoves(rows, lastWeek.id), [stale.id]);
+  const copy = goal({ ...carryFields(lastWeek, MONDAY, { me: 'owner' }) });
+  const moved = rows.map((t) => (carryTaskMoves(rows, lastWeek.id).includes(t.id) ? { ...t, goal_id: copy.id } : t));
+  assert.deepEqual(titles(unplannedTasks(moved, { goalsById: byId([...goalsById.values(), copy]), me: 'owner', today: TODAY })), ['On September’s priority']);
+  // Carried on two devices at once: the first copy is kept, the other is the extra.
+  const twin = goal({ ...carryFields(lastWeek, MONDAY, { me: 'partner' }) });
+  const other = goal({ ...carryFields(lastWeekDone, MONDAY, { me: 'owner' }) });
+  assert.deepEqual(carriedTwice([copy, twin, other, lastWeek], { kind: 'week', period: MONDAY }).map((d) => [d.keep.id, d.extras.map((e) => e.id)]), [[copy.id, [twin.id]]]);
+  assert.deepEqual(carriedTwice([copy, twin], { kind: 'week', period: '2026-10-12' }), []);
+});
+
 test('the morning plan proposes overdue, due today and my undated goal tasks — not undated tasks that belong nowhere', () => {
   const g = goal({});
   const lastMonth = goal({ kind: 'month', period: '2026-09-01' });
@@ -206,7 +255,7 @@ test('the morning plan proposes overdue, due today and my undated goal tasks —
   assert.deepEqual(t(plan.overdue), ['Overdue']);
   assert.deepEqual(t(plan.dueToday), ['Due today']);
   assert.deepEqual(t(plan.forGoals), ['Goal task, undated', 'Priority task, undated']);
-  assert.equal(plan.toSort, 2, 'the loose ends (mine and the shared one) are counted for sorting instead');
+  assert.equal(plan.toSort, 3, 'the loose ends (mine and the shared one) and the task left on last month’s priority are counted for sorting instead');
 });
 
 // ---- the overbooked day ------------------------------------------------------------------------------
@@ -274,6 +323,12 @@ test('what to push: untimed before timed, not top 3, no goal or week goal before
   const theirs = pushSuggestions({ tasks: rows, me: 'partner', today: TODAY, dayMinutes: 480, goalsById });
   assert.deepEqual(titles(theirs.map((x) => x.task)), ['Partner’s own'], 'the latest made goes first and is enough');
   assert.equal(theirs[0].to, '2026-10-08', 'longer than a day: the first empty day');
+  // A shared task the partner starred today counts on my day but is never suggested (it's their pick).
+  const theirPick = d({ title: 'Shared, the partner’s pick', owner: 'shared', top_on_partner: TODAY });
+  const withPick = pushSuggestions({ tasks: [...rows, theirPick], me: 'owner', today: TODAY, dayMinutes: 180, goalsById });
+  assert.ok(!withPick.some((x) => x.task === theirPick), 'not suggested');
+  assert.deepEqual(titles(withPick.map((x) => x.task)), ['Shared, newest', 'Newer, week goal', 'Older, no goal', 'For a month priority'], 'it still counts: one more hour to push');
+  assert.equal(dayLoad([...rows, theirPick], { me: 'partner', today: TODAY, dayMinutes: 480 }).tasks.includes(theirPick), true, 'and it counts on the partner’s day too');
   // Moving one: its date, and my top pick for today goes.
   assert.deepEqual(pushChange(top, '2026-10-08', TODAY, 'owner').change, { due_date: '2026-10-08', top_on_owner: null });
   // The next day with room skips full days.

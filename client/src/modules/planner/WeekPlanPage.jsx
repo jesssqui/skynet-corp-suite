@@ -12,11 +12,11 @@ import { usePlannerData } from './data.js';
 import { formatMinutes } from './logic.js';
 import {
   weekParam, weekLabel, weekLoads, dayShort, goalsOf, goalsByBusiness, planBusinesses, carryOverCandidates, unplannedTasks,
-  dayMinutesFor, monthStart, addDays, weekStart,
+  dayMinutesFor, weekMonth, addDays, weekStart,
 } from './plan.js';
 import { useToday, muted } from './parts.jsx';
 import { TaskSheet, newTaskInitial } from './forms.jsx';
-import { GoalSheet, GoalItem, CarryOver } from './goals.jsx';
+import { GoalSheet, GoalItem, CarryOver, CarriedTwice } from './goals.jsx';
 import { PlanTabs, DayLoadPanel, SortList, Meter } from './planParts.jsx';
 
 const h2 = { fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', margin: 0 };
@@ -81,11 +81,11 @@ export default function WeekPlanPage() {
       goals,
       byBusiness: goalsByBusiness(goals),
       businesses: planBusinesses(data.businesses, goals),
-      priorities: goalsByBusiness(goalsOf(data.goals, 'month', monthStart(addDays(monday, 3)))),
+      priorities: goalsByBusiness(goalsOf(data.goals, 'month', weekMonth(monday))),
       carry: carryOverCandidates(data.goals, { kind: 'week', from: addDays(monday, -7), to: monday }),
     };
   }, [data, monday]);
-  const toSort = useMemo(() => (data ? unplannedTasks(data.tasks, { goalsById: data.goalsById, me, whose }) : []), [data, me, whose]);
+  const toSort = useMemo(() => (data ? unplannedTasks(data.tasks, { goalsById: data.goalsById, me, today, whose }) : []), [data, me, today, whose]);
   const dayMinutes = data ? dayMinutesFor(data.workdays, me) : 0;
 
   // ?sort=1 (from Today, Tasks and Plan my day): straight to the To sort step.
@@ -134,6 +134,7 @@ export default function WeekPlanPage() {
         ) : (
           <div className="planner-plan-grid">
             <div className="planner-col">
+              <CarriedTwice goals={data.goals} kind="week" period={monday} data={data} />
               {view.carry.length ? (
                 <Card>
                   <CarryOver candidates={view.carry} period={monday} me={me} data={data} existing={view.goals} kind="week" />
