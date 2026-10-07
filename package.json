@@ -25,5 +25,8 @@
     "user:password": "npm run users -w server -- password",
     "user:reset-2fa": "npm run users -w server -- reset-2fa",
     "user:unlock": "npm run users -w server -- unlock"
+  },
+  "devDependencies": {
+    "playwright-core": "1.56.0"
   }
 }
