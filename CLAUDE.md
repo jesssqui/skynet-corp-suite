@@ -829,7 +829,9 @@ Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (
 - `workday` (`planner_workdays`; create/update, never deleted): actor* (`owner|partner`), day_minutes (30–1440, null =
   `DEFAULT_DAY_MINUTES` 8 h). **One per person with a fixed id** (`WORKDAY_IDS`), made by the server at start
   (`seedWorkdays`, through `applyLocal`, stamped at an old fixed time, only if the id never existed) — devices only
-  update it (two phones creating "my settings" offline would make two). Read with `dayMinutesFor(workdays, actor)`.
+  update it (two phones creating "my settings" offline would make two). `checkWorkday` refuses a create whose id
+  isn't `WORKDAY_IDS[actor]`, any update of `actor`, and a day length outside 30–1440. Read with
+  `dayMinutesFor(workdays, actor)`; Plan my day shows its RecordSync (flag + ClashPanel) beside "Your day".
   **Why synced, not device-local**: the Monday plan on the Mac and Today on the phone must agree on what overbooked
   means, and the Friday review is done together on one screen.
 
@@ -841,13 +843,23 @@ Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (
 - **Month priorities**: one to three per business per month — more is **warned** (sheet and month page,
   `priorityOverflow`), never refused (two offline creates must both survive).
 - **Weeks** run Monday–Sunday in the device's local calendar; all date maths is `addDays`/`weekStart`/`monthStart` on
-  "YYYY-MM-DD" (Date.UTC, no time zone or DST), never `new Date('YYYY-MM-DD')`. A week belongs to the month its
-  **Thursday** is in (`weekMonth`; the monthly plan's "week goals of the month").
-- **Unplanned** (`isUnplannedTask`): an open task with no due_date and no **live** goal_id. Counted "N to sort" on Today
-  and Tasks (mine + shared), the Tasks filter "To sort", and the Monday plan's **To sort** step (`SortList`): Today /
-  Tomorrow / Monday (one tap), another day (two) or a goal (`goalChoices` in a select: two). Filing under a goal also
-  sets the task's business to the goal's (`goalChange`, `goalPick` in the task sheet). Capture stays two taps: nothing
-  forces a day or goal at creation.
+  "YYYY-MM-DD" (Date.UTC, no time zone or DST), never `new Date('YYYY-MM-DD')`. **"This month" is one rule
+  everywhere: `planMonth(day)` = the month that day's week's Thursday is in** (a week belongs to the month with most
+  of its days; `weekMonth` is the same). Used by the morning plan (`isCurrentGoal`), the task sheet's choices
+  (`goalChoices`), the Monday plan's "This month:" line, the monthly plan's default month and its week goals, and
+  stale goals. So on Wed Sep 30 and Thu Oct 1 (the week of Sep 28) "this month" is October.
+- **Unplanned** (`isUnplannedTask(task, goalsById, today)`): an open task with no due_date and no **current** goal —
+  none, a deleted one, or an unfinished goal of an earlier period (`isStaleGoal`: before this week / this planning
+  month, not done; a task under a *done* earlier goal counts as planned). Counted "N to sort" on Today and Tasks
+  (mine + shared), the Tasks filter "To sort", and the Monday plan's **To sort** step (`SortList`; a stale goal's task
+  says what it was part of): Today / Tomorrow / Monday (one tap), another day (pick or type it, then **Move there**:
+  nothing is saved while typing) or a goal (`goalChoices` in a select: two). Capture stays two taps: nothing forces a
+  day or goal at creation.
+- **A goal never changes a task's business** (it may be a client's next step for another business): filing under a goal
+  sets only `goal_id` (`goalChange`, `goalPick`); when the businesses differ the task sheet says "Different business from
+  the goal (X) · Use X" (`goalBusinessNote`) and To sort's sorted line offers "Use X" (`businessMismatch`) — one tap,
+  never silent. Changing a goal's business leaves its tasks alone. A task made from a goal's card starts with the
+  goal's business (a default, not a change).
 - **Task sheet** "Part of": this and next week's goals, this and next month's priorities, the week/month of its due
   date, and its current goal (`goalChoices`, `<optgroup>`s via `SelectField` options' `group`). A task made from a
   goal's card (or `/tasks?goal=`) starts with that goal and its business. "Focus on this task" opens Focus.
@@ -857,12 +869,18 @@ Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (
 - **What to push** (`pushSuggestions`): from the day's estimated tasks, in order **untimed before timed → not my top 3
   before a top pick → no goal or a week goal before a month priority → latest-created first** (UUIDv7 id), taken until
   the day fits; each to `nextDayWithRoom` (first later day whose load + it ≤ day length, counting earlier suggestions;
-  a task longer than a day goes to the first empty day; every day of the week has the same length). One tap moves it
+  a task longer than a day goes to the first empty day; every day of the week has the same length). **Shared tasks
+  count on both people's day loads**; one the *other* person starred as a top pick today is never suggested (moving
+  it would move their pick). One tap moves it
   (`pushChange` = C4a's `moveChange`, from the latest record); moved rows stay with Undo. Shown on Today (only when
   over), in Plan my day (always), and per day on the Monday plan ("Fix" on an overbooked day).
 - **Carry-over** (`carryOverCandidates`/`carryFields`): last week's (month's) goals not done and not already carried
   (no goal in this period with `carried_from` = its id) are offered; the copy keeps business, title, target, progress
-  so far, owner (or the carrier), notes, at the end of its business's list. The old goal is never changed.
+  so far, owner (or the carrier), notes, at the end of its business's list. The old goal is never changed; its open,
+  **undated** tasks move to the copy (`carryTaskMoves`, goal_id only — dated ones keep their day, done ones stay).
+  Carried on two devices at once → two copies with the same `carried_from`: the Monday and monthly plans show
+  "carried over twice · Remove the extra" (`carriedTwice`/`CarriedTwice`: the extra's open tasks move to the first
+  copy, then the extra is deleted). Nothing bigger.
 - **Monday plan** `/plan/week?week=` (`?sort=1` scrolls to To sort): carry-over, each non-archived business's goals
   (add, edit, tick, +1, up/down `reorderChanges`, tasks under each with "+ Task", "This month:" priorities as context),
   the week strip (`weekLoads`), To sort. Wide screens: goals left, week + To sort right.
@@ -882,7 +900,9 @@ Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (
   timeline items sit beside the task (below on phones) via `useClientPageData`. At the end: "Go back to the N skipped".
 - **Reads**: `usePlannerData` adds `goals`, `goalsById`, `tasksByGoal`, `workdays` (cached lists: `goal` belongs to
   `business`); `useReviewData` adds services and the last-activity map. Measured (e2e, desktop Chromium here, 3,000 tasks + 300
-  goals): Today ~0.5 s, Monday plan ~0.3 s, sorting a task ~0.3 s, month ~0.1 s, review ~0.1 s, Focus ~0.3 s.
+  goals): Today ~0.5 s, Monday plan ~0.3 s, sorting a task ~0.3 s, month ~0.1 s, review ~0.1 s, Focus ~0.3 s. That
+  test has **no CRM scale data** (C3b's 3,000-client set is `clients-scale.e2e.test.js`), so the review's renewals and
+  quiet-client lists are measured empty there.
 - **Nav**: "Plan" (`/plan` → `/plan/week`), with Week / Month / Friday review tabs (`PlanTabs`); seven tabs on phones.
 
 **For C5 / C6 / C8 / D15**

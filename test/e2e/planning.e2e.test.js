@@ -51,6 +51,9 @@ function seed(ctx) {
   ids.untimed = task('owner', { title: 'Pack the Cedar Lane order', business_id: W, due_date: today, estimate_minutes: 120 });
   ids.shared = task('partner', { title: 'Water the office plants', owner: 'shared', due_date: today, estimate_minutes: 15 });
   ids.unplanned = task('owner', { title: 'Call Cedar Lane about reorders', estimate_minutes: 30 });
+  ids.poBox = task('owner', { title: 'Renew the PO box' });
+  // Left on last week's unfinished goal: to sort until the goal is carried over (then it moves along).
+  ids.leftOver = task('owner', { title: 'Recount the vape tins', business_id: W, goal_id: ids.lastWeek, estimate_minutes: 45 });
   ids.handoff = task('owner', { title: 'Photograph the new arrivals', business_id: BUSINESS_IDS.save_point, due_date: addDays(today, 6) });
   ids.partnerOverdue = task('partner', { title: 'List the board game lot', business_id: BUSINESS_IDS.save_point, due_date: addDays(today, -2) });
   return { today, monday, ids };
@@ -67,13 +70,17 @@ async function setWeekGoals(page, server, { monday, ids }, label) {
   await page.waitForURL(/\/plan\/week/, WAIT);
   const carry = page.getByTestId('carry-over');
   await carry.getByText('Count the back-room stock').waitFor(WAIT);
+  await page.getByTestId('to-sort').locator(`[data-sort-task="${ids.leftOver}"]`).getByTestId('stale-goal').waitFor(WAIT);
   await carry.getByRole('button', { name: 'Carry over: Count the back-room stock' }).click();
   await carry.waitFor({ state: 'detached', ...WAIT });
+  await page.locator(`[data-sort-task="${ids.leftOver}"]`).waitFor({ state: 'detached', ...WAIT });
   const goals = page.getByTestId('week-goals');
   await goals.locator('[data-goal-id]', { hasText: 'Count the back-room stock' }).getByText('1 of 3').waitFor(WAIT);
   const carried = await until(() => goal(server.db, 'carried_from = ?', ids.lastWeek), 'the carried goal on the server');
   assert.deepEqual([carried.period, carried.business_id, carried.progress, carried.target], [monday, W, 1, 3]);
   assert.equal(goal(server.db, 'id = ?', ids.lastWeek).period, addDays(monday, -7), 'last week’s goal left as it was');
+  await goals.locator(`[data-goal-id="${carried.id}"]`).getByText('Recount the vape tins').waitFor(WAIT);
+  await until(() => taskRow(server.db, ids.leftOver).goal_id === carried.id, 'its open task moved to the copy');
 
   await page.getByRole('button', { name: 'Add a week goal for Wholesale' }).click();
   const sheet = page.getByTestId('goal-form');
@@ -104,14 +111,24 @@ async function sortOntoGoal(page, context, server, { ids }, goalId, { offline })
   const list = page.getByTestId('to-sort');
   const row = list.locator(`[data-sort-task="${ids.unplanned}"]`);
   await row.waitFor(WAIT);
-  assert.equal(await page.getByTestId('to-sort-count').innerText(), '1');
+  assert.equal(await page.getByTestId('to-sort-count').innerText(), '2');
   if (offline) {
     await airplane(context, server, true);
     await barSays(page, 'Offline');
   }
   await row.locator(`#sort-goal-${ids.unplanned}`).selectOption({ label: `Wholesale — ${NEW_GOAL}` });
   await row.waitFor({ state: 'detached', ...WAIT });
-  await page.getByTestId('to-sort-sorted').getByText(`Call Cedar Lane about reorders → goal “${NEW_GOAL}”`).waitFor(WAIT);
+  const sorted = page.getByTestId('to-sort-sorted').locator('li', { hasText: `Call Cedar Lane about reorders → goal “${NEW_GOAL}”` });
+  // Its business (Personal) is kept and the difference pointed out; one tap uses the goal's.
+  await sorted.getByTestId('goal-business-note').waitFor(WAIT);
+  await sorted.getByRole('button', { name: 'Use Wholesale' }).click();
+  await sorted.getByTestId('goal-business-note').waitFor({ state: 'detached', ...WAIT });
+  // Another day: pick (or type) it, then Move there — nothing is saved until then.
+  const po = list.locator(`[data-sort-task="${ids.poBox}"]`);
+  await po.locator(`#sort-day-${ids.poBox}`).fill(addDays(localDate(), 9));
+  assert.equal(taskRow(server.db, ids.poBox).due_date, null);
+  await po.getByRole('button', { name: 'Move there: Renew the PO box' }).click();
+  await po.waitFor({ state: 'detached', ...WAIT });
   await page.getByTestId('to-sort-empty').waitFor(WAIT);
   // It now hangs off the goal.
   await page.getByTestId(`goal-tasks-${goalId}`).getByText('Call Cedar Lane about reorders').waitFor(WAIT);
@@ -122,7 +139,8 @@ async function sortOntoGoal(page, context, server, { ids }, goalId, { offline })
   }
   await barSays(page, 'All changes saved');
   const t = await until(() => (taskRow(server.db, ids.unplanned).goal_id === goalId ? taskRow(server.db, ids.unplanned) : null), 'the sorted task on the server');
-  assert.equal(t.business_id, W, 'its business follows the goal');
+  assert.equal(t.business_id, W, 'the goal’s business, after the one tap');
+  assert.equal(taskRow(server.db, ids.poBox).due_date, addDays(localDate(), 9));
 }
 
 /** 3. Overbook today (a 6-hour day in Plan my day), then accept a suggestion and see it fit. */
@@ -252,7 +270,7 @@ test('iPhone: week goals, a task sorted onto a goal offline, an overbooked day f
   await signIn(page, server.base, 'jessy', server.users.owner.totpSecret);
   await barSays(page, 'All changes saved');
   // Today counts the task to sort.
-  await page.getByTestId('today-to-sort').filter({ hasText: '1 to sort' }).waitFor(WAIT);
+  await page.getByTestId('today-to-sort').filter({ hasText: '3 to sort' }).waitFor(WAIT);
   assert.ok((await noSideways(page)) <= 0, 'no sideways scrolling on Today (with Focus in the header)');
   const tab = await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Plan', exact: true }).boundingBox();
   assert.ok(tab.height >= 44 && tab.width >= 44, 'the Plan tab is a full tap target');
@@ -328,6 +346,8 @@ test('Mac: week goals and a task from a goal’s card, sorting, an overbooked da
   assert.deepEqual(await page.evaluate(() => window.__cspViolations), []);
 });
 
+// Planner records only: no CRM scale data here (C3b's 3,000 clients / 33,000 records are measured in
+// clients-scale.e2e.test.js); the review's renewals and quiet clients read empty lists at this size.
 test('at scale: 3,000 tasks and 300 goals — Today, the Monday plan, the monthly plan, the review and Focus stay quick', async (t) => {
   const server = await startServer(t);
   const sync = server.ctx.services.sync;
