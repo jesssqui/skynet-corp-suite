@@ -1,4 +1,4 @@
-# suite
+# Skynet Corp Suite
 
 A private business and life management suite for two people: one place for clients, follow-ups, tasks and the day's
 plan across every business. Runs at home on the Mac mini, reachable only over Tailscale.

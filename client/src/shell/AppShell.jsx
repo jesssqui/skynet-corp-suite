@@ -12,7 +12,7 @@ export default function AppShell({ children }) {
       <nav className="shell-sidebar" aria-label="Main">
         <div className="shell-brand">
           <img className="shell-brand-mark" src="/icons/icon.svg" alt="" />
-          Suite
+          Skynet Corp Suite
         </div>
         {navItems.map((item) => (
           <NavLink key={item.id} to={item.path} end={item.path === '/'} className={linkClass('shell-nav-link')}>

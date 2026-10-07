@@ -1,4 +1,4 @@
-# Deploying the suite on the Mac mini
+# Deploying Skynet Corp Suite on the Mac mini
 
 The suite runs in Docker on the Mac mini, listening only on the Mac's `127.0.0.1:3100`. Tailscale Serve puts an HTTPS
 address in front of it that only devices on your tailnet can open. Backups run every night inside the container and are
@@ -55,8 +55,8 @@ touch "/Users/<you>/Library/Mobile Documents/com~apple~CloudDocs/Suite Backups/.
 ## 2. Configure and start
 
 ```bash
-git clone <repo> ~/Developer/suite      # or copy the folder
-cd ~/Developer/suite
+git clone https://github.com/jesssqui/skynet-corp-suite.git ~/Developer/skynet-corp-suite
+cd ~/Developer/skynet-corp-suite
 cp .env.example .env
 open -e .env                            # set SUITE_OFFSITE_DIR to the folder from step 1 (no quotes needed)
 APP_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build

@@ -1,6 +1,6 @@
-# Suite
+# Skynet Corp Suite
 
-Private business and life management suite (working name `suite`) for two people. Runs in Docker on the Mac mini at
+Private business and life management suite (Skynet Corp Suite; `suite` is the short name used in code, packages and file names) for two people. Runs in Docker on the Mac mini at
 home beside the Wholesale Order Manager, reachable only over Tailscale (Tailscale Serve gives it HTTPS). The CRM is its
 core (later packages); this repo currently holds the skeleton from package **C0**: server, client shell, one example
 module (`health`), tests, Docker and nightly backups.
