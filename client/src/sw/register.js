@@ -19,7 +19,9 @@ export function getUpdateState() {
 
 export function subscribeUpdate(fn) {
   listeners.add(fn);
-  return () => listeners.delete(fn);
+  return () => {
+    listeners.delete(fn);
+  };
 }
 
 function track(reg) {
@@ -63,24 +65,32 @@ export function registerServiceWorker() {
   });
 
   const go = async () => {
+    let reg;
     try {
-      const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
-      set({ ready: true });
-      track(reg);
-      // Home-screen apps rarely navigate, so also look for a new version when the app comes
-      // back to the foreground (at most every 10 minutes) and every hour while it stays open.
-      let lastCheck = Date.now();
-      const check = () => {
-        lastCheck = Date.now();
-        reg.update().catch(() => {});
-      };
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && Date.now() - lastCheck > 10 * 60 * 1000) check();
-      });
-      setInterval(check, 60 * 60 * 1000);
+      reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
     } catch (err) {
-      console.warn('Service worker not registered; the app will not open offline:', err);
+      // Opened offline: the script can't be fetched to check for updates, but the installed
+      // worker keeps serving the app. Follow it anyway (a waiting update still gets offered).
+      reg = await navigator.serviceWorker.getRegistration('/').catch(() => null);
+      if (!reg) {
+        console.warn('Service worker not registered; the app will not open offline:', err);
+        return;
+      }
     }
+    set({ ready: true });
+    track(reg);
+    // Home-screen apps rarely navigate, so also look for a new version when the app comes back
+    // to the foreground (at most every 10 minutes), when it is back online, and every hour.
+    let lastCheck = Date.now();
+    const check = () => {
+      lastCheck = Date.now();
+      reg.update().catch(() => {});
+    };
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastCheck > 10 * 60 * 1000) check();
+    });
+    window.addEventListener('online', check);
+    setInterval(check, 60 * 60 * 1000);
   };
   if (document.readyState === 'complete') go();
   else window.addEventListener('load', go, { once: true });

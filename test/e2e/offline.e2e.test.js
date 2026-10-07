@@ -4,7 +4,7 @@
 //   npm run test:e2e        (builds the client first; needs a Chromium for playwright-core —
 //                            here PLAYWRIGHT_BROWSERS_PATH, on a Mac `npx playwright-core install chromium`)
 //
-// Set E2E_SCREENSHOTS=<dir> to keep screenshots of the phone at each stage.
+// Set E2E_SCREENSHOTS=<dir> to keep screenshots of the phone at each stage, E2E_DEBUG=1 to see the pages' console.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -187,13 +187,6 @@ test('a new version waits for "Reload": the open app keeps its own files, then s
 
   // The app notices (as it does when coming back to the foreground) and offers to reload.
   await page.evaluate(() => navigator.serviceWorker.getRegistration().then((r) => r.update()));
-  if (process.env.E2E_DEBUG) {
-    await new Promise((r) => setTimeout(r, 2000));
-    console.log(await page.evaluate(async () => {
-      const r = await navigator.serviceWorker.getRegistration();
-      return JSON.stringify({ installing: r.installing?.state, waiting: r.waiting?.state, active: r.active?.state, caches: await caches.keys() });
-    }));
-  }
   await page.getByText('A new version of the suite is ready.').waitFor(WAIT);
   // Meanwhile the open app still works on its own version, offline too.
   await phone.setOffline(true);

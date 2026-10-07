@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import { Button } from '../ui/index.js';
 import { applyUpdate, getUpdateState, subscribeUpdate } from '../sw/register.js';
 
 /** "A new version is ready": the open app keeps its own version until the person reloads. */
 export default function UpdateBanner() {
-  const [state, setState] = useState(getUpdateState);
-  useEffect(() => subscribeUpdate(setState), []);
+  // (useSyncExternalStore: an update found between the first render and the subscription isn't missed.)
+  const state = useSyncExternalStore(subscribeUpdate, getUpdateState);
   if (!state.updateReady && !state.updated) return null;
   return (
     <div
