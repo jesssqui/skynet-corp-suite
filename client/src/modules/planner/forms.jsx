@@ -10,7 +10,7 @@ import { store, useRecord } from '../../sync/index.js';
 import { useAuth } from '../../auth/session.jsx';
 import { FormSheet, RecordSync, useAction } from '../crm/parts.jsx';
 import { KIND_LABELS, pickableBusinesses, textOrNull, fold } from '../crm/logic.js';
-import { taskForm, taskValues, editChanges, isDirty, linkChange, goalPick } from './taskForm.js';
+import { taskForm, taskValues, editChanges, isDirty, linkChange, goalPick, goalBusinessNote } from './taskForm.js';
 import { estimateOptions, otherActor, relationshipLabel, clearedFields, defaultBusinessId, alreadySorted } from './logic.js';
 import { goalChoices } from './plan.js';
 import { usePlannerData } from './data.js';
@@ -100,7 +100,7 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
   const set = (k) => (e) => {
     const value = e?.target ? (e.target.type === 'checkbox' ? e.target.checked : e.target.value) : e;
     setV((cur) => {
-      if (pick && k === 'goal_id') return goalPick(cur, value, pick.goalsById);
+      if (k === 'goal_id') return goalPick(cur, value);
       return pick && ['client_id', 'account_id', 'relationship_id', 'due_date'].includes(k)
         ? linkChange(cur, k, value, pick)
         : { ...cur, [k]: value };
@@ -217,6 +217,14 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
               ...options.goals,
             ]}
           />
+          {goalBusinessNote(v, pick?.goalsById) ? (
+            <Notice tone="info">
+              <span data-testid="goal-business-note">Different business from the goal ({pick.businessesById.get(goalBusinessNote(v, pick.goalsById))?.name ?? 'unknown'}).</span>{' '}
+              <button type="button" className="crm-link-button" onClick={() => setV((cur) => ({ ...cur, business_id: goalBusinessNote(cur, pick.goalsById) }))}>
+                Use {pick.businessesById.get(goalBusinessNote(v, pick.goalsById))?.name ?? 'it'}
+              </button>
+            </Notice>
+          ) : null}
           <div style={row}>
             <TextField
               id="task-date"

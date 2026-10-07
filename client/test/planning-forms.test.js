@@ -9,8 +9,8 @@ import { localDate } from '@suite/shared/time';
 import { WORKDAY_IDS, weekStart, addDays, isUnplannedTask } from '@suite/shared/planner';
 import { startServer, makeDevice, row } from './helpers.js';
 import { goalForm, goalValues, editChanges } from '../src/modules/planner/goalForm.js';
-import { carryOverCandidates, carryFields, goalChange, dayMinutesFor, unplannedTasks } from '../src/modules/planner/plan.js';
-import { taskForm, taskValues, goalPick } from '../src/modules/planner/taskForm.js';
+import { carryOverCandidates, carryFields, carryTaskMoves, goalChange, dayMinutesFor, unplannedTasks } from '../src/modules/planner/plan.js';
+import { taskForm, taskValues, goalPick, goalBusinessNote } from '../src/modules/planner/taskForm.js';
 
 const W = BUSINESS_IDS.wholesale;
 const AGENCY = BUSINESS_IDS.agency;
@@ -83,8 +83,12 @@ test('carrying a goal over makes a copy the other device sees once; a task sorte
   const goals = await m.list('goal');
   const [candidate] = carryOverCandidates(goals, { kind: 'week', from: last, to: monday });
   assert.equal(candidate.id, old);
+  const leftOn = await m.create('task', { title: 'Write the homepage hero copy', owner: 'owner', business_id: AGENCY, goal_id: old });
+  const datedOn = await m.create('task', { title: 'Homepage review call', owner: 'owner', business_id: AGENCY, goal_id: old, due_date: addDays(today, 2) });
   const copy = await m.create('goal', carryFields(candidate, monday, { me: 'owner', position: 0 }));
+  for (const tid of carryTaskMoves(await m.list('task'), old)) await m.update('task', tid, { goal_id: copy });
   await m.syncNow();
+  assert.deepEqual([row(server.db, 'planner_tasks', leftOn).goal_id, row(server.db, 'planner_tasks', datedOn).goal_id], [copy, old], 'open, undated tasks move with it; dated ones keep their day');
   await p.syncNow();
   assert.deepEqual(carryOverCandidates(await p.list('goal'), { kind: 'week', from: last, to: monday }), [], 'the phone sees it carried');
   const saved = row(server.db, 'planner_goals', copy);
@@ -95,17 +99,20 @@ test('carrying a goal over makes a copy the other device sees once; a task sorte
   const id = await p.create('task', taskForm.toFields(taskValues(null, { today, me: 'partner', initial: { owner: 'partner', business_id: PERSONAL, title: 'Send the homepage proofs' } })).fields);
   await p.syncNow();
   const goalsById = new Map((await p.list('goal')).map((g) => [g.id, g]));
-  assert.equal(unplannedTasks(await p.list('task'), { goalsById, me: 'partner' }).length, 1, 'to sort');
+  assert.equal(unplannedTasks(await p.list('task'), { goalsById, me: 'partner', today }).length, 1, 'to sort');
   phone.online = false;
   await p.update('task', id, goalChange(await p.get('task', id), goalsById.get(copy)));
-  assert.equal(isUnplannedTask(await p.get('task', id), goalsById), false, 'sorted at once on the phone');
+  assert.equal(isUnplannedTask(await p.get('task', id), goalsById, today), false, 'sorted at once on the phone');
   assert.equal(row(server.db, 'planner_tasks', id).goal_id, null, 'not on the server yet');
   phone.online = true;
   await p.syncNow();
   const task = row(server.db, 'planner_tasks', id);
-  assert.deepEqual([task.goal_id, task.business_id], [copy, AGENCY], 'filed under the goal and its business');
-  // The task sheet does the same when a goal is picked.
-  assert.deepEqual(goalPick({ business_id: PERSONAL, goal_id: '' }, copy, goalsById), { business_id: AGENCY, goal_id: copy });
+  assert.deepEqual([task.goal_id, task.business_id], [copy, PERSONAL], 'filed under the goal; its business kept');
+  // The task sheet does the same, and says the businesses differ (one tap uses the goal's).
+  const picked = goalPick({ business_id: PERSONAL, goal_id: '' }, copy);
+  assert.deepEqual(picked, { business_id: PERSONAL, goal_id: copy });
+  assert.equal(goalBusinessNote(picked, goalsById), AGENCY);
+  assert.equal(goalBusinessNote({ business_id: AGENCY, goal_id: copy }, goalsById), null);
 });
 
 test('each person’s day length: synced, one record each, the default until set', async (t) => {

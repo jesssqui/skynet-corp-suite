@@ -96,10 +96,16 @@ export function linkChange(v, key, value, { accountsById, relationshipsById }) {
 }
 
 /**
- * Picking the goal a task is part of (C4b): the task's business follows the goal's (work towards
- * "follow up 5 quiet wholesale customers" is wholesale work). Clearing it changes nothing else.
+ * Picking the goal a task is part of (C4b): only the goal changes. The business is never changed
+ * silently (the task may be a client's next step for another business): when it differs from the
+ * goal's, the sheet says so and offers one tap to use the goal's (goalBusinessNote).
  */
-export function goalPick(v, goalId, goalsById) {
-  const goal = goalId ? goalsById.get(goalId) : null;
-  return { ...v, goal_id: goalId, ...(goal ? { business_id: goal.business_id } : {}) };
+export function goalPick(v, goalId) {
+  return { ...v, goal_id: goalId };
+}
+
+/** The goal's business when the form's business differs from it (for "Different business from the goal"), else null. */
+export function goalBusinessNote(v, goalsById) {
+  const goal = v.goal_id ? goalsById?.get(v.goal_id) : null;
+  return goal && v.business_id && goal.business_id !== v.business_id ? goal.business_id : null;
 }

@@ -7,7 +7,7 @@ import { Button, Card, Icon, Notice, SelectField, TextField } from '../../ui/ind
 import { store } from '../../sync/index.js';
 import { BusinessChip, useAction } from '../crm/parts.jsx';
 import { formatMinutes, shortDay, addDays } from './logic.js';
-import { dayLoad, pushSuggestions, pushChange, goalChange, quickDays, goalChoices } from './plan.js';
+import { dayLoad, pushSuggestions, pushChange, goalChange, businessMismatch, quickDays, goalChoices } from './plan.js';
 import { OwnerBadge, ShowMore, PAGE, muted } from './parts.jsx';
 
 /** Week / Month / Review: the planning pages' own tabs. */
@@ -127,29 +127,86 @@ export function DayLoadPanel({ tasks, me, today, day = today, dayMinutes, goalsB
   return framed ? <Card>{panel}</Card> : panel;
 }
 
+/** One task to sort: quick days (one tap), another day + "Move there" (typed or picked), or a goal (two taps). */
+function SortRow({ task, data, me, today, days, choices, busy, apply }) {
+  const [day, setDay] = useState('');
+  return (
+    <li className="planner-sort-row" data-sort-task={task.id}>
+      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
+        <span style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{task.title}</span>
+        <OwnerBadge owner={task.owner} me={me} />
+        <BusinessChip business={data.businessesById.get(task.business_id)} short />
+        {task.estimate_minutes ? <span style={muted}>{formatMinutes(task.estimate_minutes)}</span> : null}
+        {task.goal_id && data.goalsById.get(task.goal_id) ? (
+          <span style={muted} data-testid="stale-goal">Was part of “{data.goalsById.get(task.goal_id).title}” (an earlier period)</span>
+        ) : null}
+      </div>
+      <div className="planner-sort-actions">
+        {days.map((d) => (
+          <Button key={d.label} disabled={busy} onClick={() => apply(task, { due_date: d.day }, d.label === 'Today' ? 'today' : d.label === 'Tomorrow' ? 'tomorrow' : shortDay(d.day))} aria-label={`${d.label}: ${task.title}`}>
+            {d.label}
+          </Button>
+        ))}
+        <TextField
+          id={`sort-day-${task.id}`}
+          label="Another day"
+          type="date"
+          min={today}
+          value={day}
+          onChange={(e) => setDay(e.target.value)}
+          style={{ flex: '1 1 140px' }}
+        />
+        <Button disabled={busy || !day || day < today} onClick={() => apply(task, { due_date: day }, shortDay(day))} aria-label={`Move there: ${task.title}`}>
+          Move there
+        </Button>
+        <SelectField
+          id={`sort-goal-${task.id}`}
+          label="Or a goal"
+          value=""
+          disabled={busy || !choices.length}
+          onChange={(id) => {
+            const goal = data.goalsById.get(id);
+            if (goal) apply(task, goalChange(task, goal), `goal “${goal.title}”`, goal);
+          }}
+          options={[{ value: '', label: choices.length ? 'Choose a goal…' : 'No goals this week or month yet' }, ...choices]}
+          style={{ flex: '2 1 220px' }}
+        />
+      </div>
+    </li>
+  );
+}
+
 /**
- * The "To sort" list: open tasks with no day and no goal. Each gets a day (Today / Tomorrow /
- * Monday: one tap; another day: two) or a goal (pick from the list: two taps). A sorted task leaves
- * the list; the last few stay listed with Undo.
+ * The "To sort" list: open tasks with no day and no current goal. Each gets a day (Today /
+ * Tomorrow / Monday: one tap; another day: pick or type it, then Move there) or a goal (pick from
+ * the list: two taps). Filing under a goal never changes the task's business; when it differs,
+ * the sorted line offers "Use <the goal's business>". A sorted task leaves the list; the last few
+ * stay listed with Undo.
  */
 export function SortList({ tasks, data, me, today, testId = 'to-sort' }) {
   const [shown, setShown] = useState(PAGE);
-  const [sorted, setSorted] = useState([]); // [{ task, label, undo }] newest first
+  const [sorted, setSorted] = useState([]); // [{ task, label, undo, useBusiness }] newest first
   const { busy, error, run } = useAction();
   const choices = useMemo(
     () => goalChoices(data.goals, { today, businessesById: data.businessesById }),
     [data.goals, data.businessesById, today],
   );
   const days = quickDays(today);
-  const apply = (task, change, label) => run(async () => {
+  const apply = (task, change, label, goal = null) => run(async () => {
     const cur = await latest(task);
     const undo = Object.fromEntries(Object.keys(change).map((k) => [k, cur[k] ?? null]));
     await store.update('task', task.id, change);
-    setSorted((s) => [{ task, label, undo }, ...s.filter((x) => x.task.id !== task.id)].slice(0, 5));
+    const useBusiness = businessMismatch(cur, goal);
+    setSorted((s) => [{ task, label, undo, useBusiness }, ...s.filter((x) => x.task.id !== task.id)].slice(0, 5));
   });
   const undo = (entry) => run(async () => {
     await store.update('task', entry.task.id, entry.undo);
     setSorted((s) => s.filter((x) => x !== entry));
+  });
+  const useBusiness = (entry) => run(async () => {
+    const cur = await latest(entry.task);
+    await store.update('task', entry.task.id, { business_id: entry.useBusiness });
+    setSorted((s) => s.map((x) => (x === entry ? { ...x, useBusiness: null, undo: { ...x.undo, business_id: cur.business_id ?? null } } : x)));
   });
   return (
     <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
@@ -157,7 +214,13 @@ export function SortList({ tasks, data, me, today, testId = 'to-sort' }) {
         <ul className="planner-suggestions" data-testid={`${testId}-sorted`}>
           {sorted.map((entry) => (
             <li key={entry.task.id}>
-              <span style={{ ...muted, minWidth: 0, overflowWrap: 'anywhere' }}>{entry.task.title} → {entry.label}</span>
+              <span style={{ ...muted, minWidth: 0, overflowWrap: 'anywhere' }}>
+                {entry.task.title} → {entry.label}
+                {entry.useBusiness ? <span data-testid="goal-business-note"> · Different business from the goal</span> : null}
+              </span>
+              {entry.useBusiness ? (
+                <Button disabled={busy} onClick={() => useBusiness(entry)}>Use {data.businessesById.get(entry.useBusiness)?.name ?? 'its business'}</Button>
+              ) : null}
               <Button variant="ghost" disabled={busy} onClick={() => undo(entry)}>Undo</Button>
             </li>
           ))}
@@ -167,42 +230,7 @@ export function SortList({ tasks, data, me, today, testId = 'to-sort' }) {
       {tasks.length ? (
         <ul className="planner-sort-list" data-testid={testId}>
           {tasks.slice(0, shown).map((task) => (
-            <li key={task.id} className="planner-sort-row" data-sort-task={task.id}>
-              <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
-                <span style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{task.title}</span>
-                <OwnerBadge owner={task.owner} me={me} />
-                <BusinessChip business={data.businessesById.get(task.business_id)} short />
-                {task.estimate_minutes ? <span style={muted}>{formatMinutes(task.estimate_minutes)}</span> : null}
-              </div>
-              <div className="planner-sort-actions">
-                {days.map((d) => (
-                  <Button key={d.label} disabled={busy} onClick={() => apply(task, { due_date: d.day }, d.label === 'Today' ? 'today' : d.label === 'Tomorrow' ? 'tomorrow' : shortDay(d.day))} aria-label={`${d.label}: ${task.title}`}>
-                    {d.label}
-                  </Button>
-                ))}
-                <TextField
-                  id={`sort-day-${task.id}`}
-                  label="Another day"
-                  type="date"
-                  min={today}
-                  value=""
-                  onChange={(e) => e.target.value && apply(task, { due_date: e.target.value }, shortDay(e.target.value))}
-                  style={{ flex: '1 1 140px' }}
-                />
-                <SelectField
-                  id={`sort-goal-${task.id}`}
-                  label="Or a goal"
-                  value=""
-                  disabled={busy || !choices.length}
-                  onChange={(id) => {
-                    const goal = data.goalsById.get(id);
-                    if (goal) apply(task, goalChange(task, goal), `goal “${goal.title}”`);
-                  }}
-                  options={[{ value: '', label: choices.length ? 'Choose a goal…' : 'No goals this week or month yet' }, ...choices]}
-                  style={{ flex: '2 1 220px' }}
-                />
-              </div>
-            </li>
+            <SortRow key={task.id} task={task} data={data} me={me} today={today} days={days} choices={choices} busy={busy} apply={apply} />
           ))}
         </ul>
       ) : (
