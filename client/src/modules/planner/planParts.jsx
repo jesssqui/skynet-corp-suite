@@ -138,7 +138,9 @@ function SortRow({ task, data, me, today, days, choices, busy, apply }) {
         <BusinessChip business={data.businessesById.get(task.business_id)} short />
         {task.estimate_minutes ? <span style={muted}>{formatMinutes(task.estimate_minutes)}</span> : null}
         {task.goal_id && data.goalsById.get(task.goal_id) ? (
-          <span style={muted} data-testid="stale-goal">Was part of “{data.goalsById.get(task.goal_id).title}” (an earlier period)</span>
+          <span style={muted} data-testid="stale-goal">
+            Was part of {data.goalsById.get(task.goal_id).done_at ? '✓ ' : ''}“{data.goalsById.get(task.goal_id).title}” (an earlier {data.goalsById.get(task.goal_id).kind === 'month' ? 'month' : 'week'})
+          </span>
         ) : null}
       </div>
       <div className="planner-sort-actions">

@@ -167,12 +167,12 @@ export function isOpenTask(task) {
 }
 
 /**
- * A goal left behind: not done, and its period is before the current one (an earlier week for a
- * week goal; an earlier planning month — planMonth — for a month priority). Its open tasks no
- * longer belong anywhere current.
+ * A goal left behind: its period is before the current one (an earlier week for a week goal; an
+ * earlier planning month — planMonth — for a month priority), done or not. Its open tasks no
+ * longer belong anywhere current (a goal ticked done can still leave unfinished tasks).
  */
 export function isStaleGoal(goal, today) {
-  if (!goal || goal.done_at || !today) return false;
+  if (!goal || !today) return false;
   const period = goalPeriodOf(goal);
   if (!period) return false;
   return period < (goal.kind === 'month' ? planMonth(today) : weekStart(today));
@@ -181,7 +181,7 @@ export function isStaleGoal(goal, today) {
 /**
  * "Every task belongs to a day, a week goal or a month priority": an open task with no due date
  * and no live, current goal is unplanned — it waits to be sorted. No goal, a deleted one, or (with
- * `today` and goal records) an unfinished goal of an earlier period (isStaleGoal) all count.
+ * `today` and goal records) a goal of an earlier period, done or not (isStaleGoal), all count.
  * @param {object} task
  * @param {Map<string, object>|Set<string>} liveGoals  the live goals by id (a Set: ids only, no staleness check)
  * @param {string|null} today  the device's local date ("YYYY-MM-DD")

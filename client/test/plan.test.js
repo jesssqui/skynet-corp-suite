@@ -11,7 +11,7 @@ import { isUnplannedTask, WORKDAY_IDS, goalPeriodOf, isGoalPeriod } from '@suite
 import {
   weekDays, weekLabel, monthLabel, weekMonth, weeksOfMonth, weekParam, monthParam, addMonthStarts, weekStart, monthStart, addDays,
   compareGoals, goalsOf, goalProgress, priorityOverflow, reorderChanges, nextPosition, carryOverCandidates, carryFields, goalChoices, goalChange,
-  unplannedTasks, quickDays, dayMinutesFor, businessMismatch, carryTaskMoves, carriedTwice, planMonth, taskDay, dayLoad, loadsByDay, nextDayWithRoom, pushSuggestions, pushChange, weekLoads,
+  unplannedTasks, quickDays, dayMinutesFor, businessMismatch, carryTaskMoves, carriedTwice, planMonth, isStaleGoal, taskDay, dayLoad, loadsByDay, nextDayWithRoom, pushSuggestions, pushChange, weekLoads,
   overdueTasks, renewalsDue, quietClients, handoffTasks, reviewLists, focusQueue, nextInQueue, previousInQueue, planBusinesses,
 } from '../src/modules/planner/plan.js';
 import { buildToday, proposePlan, filterTasks, isCurrentGoal } from '../src/modules/planner/logic.js';
@@ -205,7 +205,7 @@ test('unplanned: an open task with no day and no live goal; whose; the tasks pag
   assert.deepEqual(quickDays('2026-10-11').map((d) => d.label), ['Today', 'Tomorrow'], 'on Sunday, tomorrow is Monday');
 });
 
-test('a task left on an unfinished goal of an earlier period is unplanned; carrying over moves open, undated tasks to the copy', () => {
+test('a task left on a goal of an earlier period (done or not) is unplanned; carrying over moves open, undated tasks to the copy', () => {
   const lastWeek = goal({ title: 'Last week, not done', period: '2026-09-28' });
   const lastWeekDone = goal({ title: 'Last week, done', period: '2026-09-28', done_at: '2026-10-02T12:00:00.000Z' });
   const lastMonth = goal({ kind: 'month', period: '2026-09-01', title: 'September' });
@@ -218,16 +218,19 @@ test('a task left on an unfinished goal of an earlier period is unplanned; carry
   const dated = task({ title: 'Dated, last week’s goal', goal_id: lastWeek.id, due_date: '2026-10-09' });
   const doneTask = task({ title: 'Done, last week’s goal', goal_id: lastWeek.id, done_at: '2026-10-01T10:00:00.000Z' });
   const rows = [stale, onDone, onMonth, current, dated, doneTask];
-  assert.deepEqual(titles(unplannedTasks(rows, { goalsById, me: 'owner', today: TODAY })), ['On last week’s goal', 'On September’s priority']);
+  const stuck = ['On last week’s goal', 'On a finished goal', 'On September’s priority'];
+  assert.deepEqual(titles(unplannedTasks(rows, { goalsById, me: 'owner', today: TODAY })), stuck, 'a goal ticked done still leaves its open tasks to sort');
+  assert.equal(isStaleGoal(lastWeekDone, TODAY), true);
+  assert.equal(isStaleGoal(thisWeek, TODAY), false);
   assert.equal(isUnplannedTask(stale, goalsById), false, 'without today: no staleness check (C4a callers)');
   assert.equal(isUnplannedTask(stale, new Set([lastWeek.id]), TODAY), false, 'ids only: no staleness check');
-  assert.deepEqual(titles(filterTasks(rows, { due: 'unplanned' }, { me: 'owner', today: TODAY, goalsById })), ['On last week’s goal', 'On September’s priority']);
-  assert.equal(proposePlan({ tasks: rows, me: 'owner', today: TODAY, goalsById }).toSort, 2);
+  assert.deepEqual(titles(filterTasks(rows, { due: 'unplanned' }, { me: 'owner', today: TODAY, goalsById })), stuck);
+  assert.equal(proposePlan({ tasks: rows, me: 'owner', today: TODAY, goalsById }).toSort, 3);
   // Carrying last week's goal over takes its open, undated tasks along (dated and done ones stay).
   assert.deepEqual(carryTaskMoves(rows, lastWeek.id), [stale.id]);
   const copy = goal({ ...carryFields(lastWeek, MONDAY, { me: 'owner' }) });
   const moved = rows.map((t) => (carryTaskMoves(rows, lastWeek.id).includes(t.id) ? { ...t, goal_id: copy.id } : t));
-  assert.deepEqual(titles(unplannedTasks(moved, { goalsById: byId([...goalsById.values(), copy]), me: 'owner', today: TODAY })), ['On September’s priority']);
+  assert.deepEqual(titles(unplannedTasks(moved, { goalsById: byId([...goalsById.values(), copy]), me: 'owner', today: TODAY })), ['On a finished goal', 'On September’s priority']);
   // Carried on two devices at once: the first copy is kept, the other is the extra.
   const twin = goal({ ...carryFields(lastWeek, MONDAY, { me: 'partner' }) });
   const other = goal({ ...carryFields(lastWeekDone, MONDAY, { me: 'owner' }) });
