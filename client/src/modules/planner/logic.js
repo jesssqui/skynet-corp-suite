@@ -302,6 +302,23 @@ export function captureFields(text, { source, now }) {
   return t ? { text: t, source, captured_at: now } : null;
 }
 
+/**
+ * Saving a capture without losing what is typed meanwhile: the field is cleared before the save
+ * (so the next thought can be typed at once) and the text is put back only if the save fails and
+ * the field is still empty. `setText` takes a function of the current value (React's setState).
+ * @returns {Promise<boolean>} whether it was saved (a failure is re-thrown after restoring)
+ */
+export async function saveCapture(text, { setText, save }) {
+  setText('');
+  try {
+    await save();
+    return true;
+  } catch (err) {
+    setText((cur) => (cur ? cur : text));
+    throw err;
+  }
+}
+
 /** The inbox item once it became something (a task, a note) or was dismissed (entity null). */
 export function clearedFields({ entity = null, id = null, now }) {
   return { cleared_at: now, became_entity: entity, became_id: id };

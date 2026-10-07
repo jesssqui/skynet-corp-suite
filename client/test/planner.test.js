@@ -8,7 +8,7 @@ import { automatedTaskOwner } from '@suite/shared/planner';
 import {
   addDays, weekBounds, dueState, dueLabel, dueTimeOf, buildToday, proposePlan, planLoad, topChange, moveChange,
   filterTasks, defaultBusinessId, relationshipsWithoutNextStep, nextStepFields, guessRelationship, openInbox,
-  captureFields, clearedFields, titleFromText, formatMinutes, estimateOptions, ownerLabel, compareDue, isTop,
+  captureFields, saveCapture, clearedFields, titleFromText, formatMinutes, estimateOptions, ownerLabel, compareDue, isTop,
 } from '../src/modules/planner/logic.js';
 import { taskForm, taskValues, editChanges, isDirty, linkChange } from '../src/modules/planner/taskForm.js';
 
@@ -334,4 +334,21 @@ test('top picks are per person: one person’s star on a shared task never fills
   assert.equal(start.top, true);
   assert.deepEqual(editChanges(taskForm, start, { ...start, top: false }).fields, { top_on_partner: null });
   assert.equal(taskValues(shared, { today: TODAY, me: 'owner' }).top, true);
+});
+
+test('the capture field keeps what is typed while the last item saves, and puts the text back if saving fails', async () => {
+  let field = 'Call the sign maker';
+  const setText = (v) => { field = typeof v === 'function' ? v(field) : v; };
+  // Typing the next thought while the first one is being saved.
+  const ok = await saveCapture(field, { setText, save: async () => { assert.equal(field, ''); field += 'Book the dentist'; } });
+  assert.equal(ok, true);
+  assert.equal(field, 'Book the dentist', 'not wiped when the save finishes');
+  // A failed save restores the text when the field is still empty…
+  field = 'Order labels';
+  await assert.rejects(saveCapture(field, { setText, save: async () => { throw new Error('storage_full'); } }));
+  assert.equal(field, 'Order labels');
+  // …and never overwrites something typed since.
+  field = 'Order labels';
+  await assert.rejects(saveCapture(field, { setText, save: async () => { field = 'New thought'; throw new Error('x'); } }));
+  assert.equal(field, 'New thought');
 });

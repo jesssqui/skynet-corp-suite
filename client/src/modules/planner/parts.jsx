@@ -7,7 +7,7 @@ import { localDate, nowIso } from '../../ui/format.js';
 import { store } from '../../sync/index.js';
 import { SyncBadges } from '../../sync/components.jsx';
 import { BusinessChip, useAction } from '../crm/parts.jsx';
-import { captureFields, dueLabel, dueState, formatMinutes, isTop, ownerLabel } from './logic.js';
+import { captureFields, saveCapture, dueLabel, dueState, formatMinutes, isTop, ownerLabel } from './logic.js';
 import { isPhone, keepFinished } from './prefs.js';
 import './planner.css';
 
@@ -117,10 +117,8 @@ export function CaptureBar({ inboxCount = null }) {
     e.preventDefault();
     const fields = captureFields(text, { source: isPhone() ? 'phone' : 'typed', now: nowIso() });
     if (!fields || busy) return;
-    if (await run(() => store.create('inbox_item', fields))) {
-      setText('');
-      setSaved(fields.text);
-    }
+    // Cleared before the save, so what is typed while it saves is kept (saveCapture).
+    if (await run(() => saveCapture(text, { setText, save: () => store.create('inbox_item', fields) }))) setSaved(fields.text);
   };
   return (
     <form className="planner-capture" onSubmit={submit} aria-label="Capture to the inbox" data-testid="capture">
