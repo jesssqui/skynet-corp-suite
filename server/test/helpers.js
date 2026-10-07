@@ -22,7 +22,10 @@ export function testConfig(dir, env = {}) {
 
 export const quietLog = createLogger('test', 'silent');
 
-/** Every table's schema and rows, for comparing two databases. */
+/**
+ * Every table's schema and rows, for comparing two databases. Leaves out the
+ * sync module's restore mark (restore.js adds it on purpose; see sync tests).
+ */
 export function dumpDb(file) {
   const db = new Database(file, { readonly: true });
   try {
@@ -31,6 +34,7 @@ export function dumpDb(file) {
     for (const { name } of tables.filter((t) => t.sql?.startsWith('CREATE TABLE'))) {
       out.rows[name] = db.prepare(`SELECT * FROM "${name}" ORDER BY 1`).all();
     }
+    if (out.rows.sync_meta) out.rows.sync_meta = out.rows.sync_meta.filter((r) => r.key !== 'restore_pending');
     return out;
   } finally {
     db.close();

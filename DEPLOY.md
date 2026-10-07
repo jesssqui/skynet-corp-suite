@@ -165,6 +165,9 @@ Once there is real data, also spot-check a few records you remember in the app a
 **If the Mac mini is lost:** set up a new Mac with steps 0–2 (the database starts empty), then run step (b) from
 `docker compose stop suite` onwards, pointing at the newest file in the off-machine folder.
 
+**After any restore** the phones and Macs start over automatically the next time they connect: they download
+everything again and re-send the changes they kept, so work done after the backup was made comes back.
+
 **To undo a restore:** stop the app and restore the `pre-restore-…db` file the restore printed, the same way
 (it is inside the volume: `/app/data/backups/pre-restore-….db`).
 
