@@ -156,6 +156,13 @@ const paths = {
       <path d="M4.5 6v12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V6M4.5 12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3" />
     </>
   ),
+  upload: (
+    <>
+      <path d="M12 15.5V4M7.5 8.5 12 4l4.5 4.5" />
+      <path d="M4 14.5v3.5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3.5" />
+    </>
+  ),
+  list: <path d="M9 6.5h11M9 12h11M9 17.5h11M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01" />,
 };
 
 export function Icon({ name, size = 20, title, style, className }) {
