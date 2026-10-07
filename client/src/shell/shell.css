@@ -128,3 +128,14 @@
     color: var(--accent);
   }
 }
+
+/* The sync bar's "Syncing…" icon turns (no motion when the system asks for less: theme.css). */
+@keyframes sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sync-spin {
+  animation: sync-spin 1.2s linear infinite;
+}

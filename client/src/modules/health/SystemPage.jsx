@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../../api/client.js';
 import { PageHeader, Card, Button, Badge, KeyValue, Segmented, Icon, useTheme } from '../../ui/index.js';
 
@@ -76,6 +77,13 @@ export default function SystemPage() {
           ) : (
             <span style={{ color: 'var(--text-muted)' }}>—</span>
           )}
+        </Card>
+
+        <Card title="This device">
+          <p style={{ margin: '0 0 var(--space-3)', fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
+            The copy of your records kept here for working offline, and changes waiting to be sent.
+          </p>
+          <Link to="/sync">Offline data</Link>
         </Card>
 
         <Card title="Appearance">

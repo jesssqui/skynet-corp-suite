@@ -3,6 +3,8 @@ import { Icon } from '../ui/index.js';
 import { navItems } from '../modules/index.js';
 import { useAuth } from '../auth/session.jsx';
 import BackupBanner from './BackupBanner.jsx';
+import UpdateBanner from './UpdateBanner.jsx';
+import { SyncBar } from '../sync/components.jsx';
 import './shell.css';
 
 const linkClass = (base) => ({ isActive }) => `${base}${isActive ? ' active' : ''}`;
@@ -30,6 +32,8 @@ export default function AppShell({ children }) {
 
       <main className="shell-main">
         <div className="shell-content">
+          <SyncBar />
+          <UpdateBanner />
           <BackupBanner />
           {children}
         </div>

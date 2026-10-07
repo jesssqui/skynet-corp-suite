@@ -8,8 +8,9 @@
 import home from './home/index.jsx';
 import health from './health/index.jsx';
 import auth from './auth/index.jsx';
+import sync from './sync/index.jsx';
 
-export const modules = [home, health, auth];
+export const modules = [home, health, auth, sync];
 
 export const navItems = modules
   .filter((m) => m.nav)

@@ -3,6 +3,7 @@ import { api } from '../../api/client.js';
 import { useAuth } from '../../auth/session.jsx';
 import { PageHeader, Card, Button, Badge, Notice, Icon, EmptyState } from '../../ui/index.js';
 import AccountTabs from './AccountTabs.jsx';
+import { useUnsentWarning } from '../../sync/components.jsx';
 
 function ago(iso) {
   if (!iso) return '—';
@@ -19,6 +20,7 @@ function ago(iso) {
 const isPhoneName = (name) => /iPhone|Android phone|phone/i.test(name);
 
 function DeviceRow({ device, current, onChanged, onSignedOutSelf }) {
+  const { warning } = useUnsentWarning();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(device.name);
   const [confirming, setConfirming] = useState(false);
@@ -101,7 +103,7 @@ function DeviceRow({ device, current, onChanged, onSignedOutSelf }) {
           {confirming ? (
             <>
               <span style={{ fontSize: 'var(--text-sm)' }}>
-                {current ? 'Sign out here and clear this device’s saved data?' : 'Sign it out? Its saved data is cleared the next time it connects.'}
+                {current ? `Sign out here and clear this device’s saved data?${warning ? ` ${warning}` : ''}` : 'Sign it out? Its saved data is cleared the next time it connects.'}
               </span>
               <Button
                 variant="danger"

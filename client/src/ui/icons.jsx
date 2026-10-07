@@ -54,9 +54,36 @@ const paths = {
     </>
   ),
   dot: <circle cx="12" cy="12" r="3" />,
+  cloud: <path d="M7 18.5h10a4 4 0 0 0 .6-7.96A5.5 5.5 0 0 0 7.1 9.1 4.75 4.75 0 0 0 7 18.5Z" />,
+  cloudOff: (
+    <>
+      <path d="M9.2 6.6A5.5 5.5 0 0 1 17.6 10.54 4 4 0 0 1 19.4 17.7M16 18.5H7a4.75 4.75 0 0 1-.95-9.4" />
+      <path d="M3.5 3.5l17 17" />
+    </>
+  ),
+  sync: (
+    <>
+      <path d="M19.5 9A7.5 7.5 0 0 0 6 6.6L4.5 8M4.5 15A7.5 7.5 0 0 0 18 17.4L19.5 16" />
+      <path d="M4.5 4v4h4M19.5 20v-4h-4" />
+    </>
+  ),
+  check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
+  alert: (
+    <>
+      <path d="M12 3.5 2.8 19.5h18.4L12 3.5Z" />
+      <path d="M12 10v4.5M12 17.2v.1" />
+    </>
+  ),
+  chevron: <path d="M9.5 6l6 6-6 6" />,
+  database: (
+    <>
+      <ellipse cx="12" cy="6" rx="7.5" ry="3" />
+      <path d="M4.5 6v12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V6M4.5 12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3" />
+    </>
+  ),
 };
 
-export function Icon({ name, size = 20, title, style }) {
+export function Icon({ name, size = 20, title, style, className }) {
   return (
     <svg
       width={size}
@@ -70,6 +97,7 @@ export function Icon({ name, size = 20, title, style }) {
       aria-hidden={title ? undefined : true}
       role={title ? 'img' : undefined}
       style={{ flexShrink: 0, ...style }}
+      className={className}
     >
       {title ? <title>{title}</title> : null}
       {paths[name] ?? paths.dot}
