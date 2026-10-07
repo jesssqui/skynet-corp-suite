@@ -5,7 +5,8 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Icon, Notice, SelectField, Segmented, TextAreaField, TextField, CheckboxField } from '../../ui/index.js';
 import { nowIso } from '../../ui/format.js';
-import { store, useRecord } from '../../sync/index.js';
+import { store, useRecord, useSyncEngine } from '../../sync/index.js';
+import { removeExtraCopies } from './carryFix.js';
 import { useAuth } from '../../auth/session.jsx';
 import { BusinessChip, FormSheet, RecordSync, TextButton, useAction } from '../crm/parts.jsx';
 import { SyncBadges } from '../../sync/components.jsx';
@@ -248,27 +249,27 @@ export function CarryOver({ candidates, period, me, data, existing, kind, testId
 
 /**
  * Goals carried over twice into one period (both devices carried the same goal before they saw
- * each other's copy): a notice per pair with one tap to remove the extra — its open tasks move to
- * the one kept first (goal_id only), then the extra is deleted.
+ * each other's copy): a notice per pair with one tap to remove the extra (removeExtraCopies: its
+ * open tasks move to the copy kept, the extra is deleted, and the tasks' goal_id clashes between
+ * the copies are settled keeping the survivor). Needs a connection.
  */
-export function CarriedTwice({ goals, kind, period, data, testId = 'carried-twice' }) {
+export function CarriedTwice({ goals, kind, period, testId = 'carried-twice' }) {
   const { busy, error, run } = useAction();
+  const engine = useSyncEngine();
   const doubles = carriedTwice(goals, { kind, period });
   if (!doubles.length) return null;
-  const fix = ({ keep, extras }) => run(async () => {
-    for (const extra of extras) {
-      for (const t of data.tasksByGoal.get(extra.id) ?? []) if (isOpenTask(t)) await store.update('task', t.id, { goal_id: keep.id });
-      await store.remove('goal', extra.id);
-    }
-  });
+  // Settling the tasks' clashes needs the server: offline, wait (nothing half-done).
+  const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+  const fix = (d) => run(() => removeExtraCopies(engine, d));
   return (
     <div style={{ display: 'grid', gap: 'var(--space-2)' }} data-testid={testId}>
       {doubles.map((d) => (
         <Notice key={d.keep.id} tone="warn">
           <span>“{d.keep.title}” was carried over twice (on two devices at once).</span>{' '}
-          <button type="button" className="crm-link-button" disabled={busy} onClick={() => fix(d)} aria-label={`Remove the extra copy of ${d.keep.title}`}>
+          <button type="button" className="crm-link-button" disabled={busy || offline} onClick={() => fix(d)} aria-label={`Remove the extra copy of ${d.keep.title}`}>
             Remove the extra
           </button>
+          {offline ? <span> (needs a connection)</span> : null}
         </Notice>
       ))}
       {error ? <Notice tone="danger">{error}</Notice> : null}

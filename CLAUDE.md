@@ -849,10 +849,10 @@ Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (
   (`goalChoices`), the Monday plan's "This month:" line, the monthly plan's default month and its week goals, and
   stale goals. So on Wed Sep 30 and Thu Oct 1 (the week of Sep 28) "this month" is October.
 - **Unplanned** (`isUnplannedTask(task, goalsById, today)`): an open task with no due_date and no **current** goal —
-  none, a deleted one, or an unfinished goal of an earlier period (`isStaleGoal`: before this week / this planning
-  month, not done; a task under a *done* earlier goal counts as planned). Counted "N to sort" on Today and Tasks
+  none, a deleted one, or a goal of an earlier period, **done or not** (`isStaleGoal`: before this week / this
+  planning month — a goal ticked done can still leave unfinished tasks). Counted "N to sort" on Today and Tasks
   (mine + shared), the Tasks filter "To sort", and the Monday plan's **To sort** step (`SortList`; a stale goal's task
-  says what it was part of): Today / Tomorrow / Monday (one tap), another day (pick or type it, then **Move there**:
+  says "Was part of (✓ when done) “goal”"): Today / Tomorrow / Monday (one tap), another day (pick or type it, then **Move there**:
   nothing is saved while typing) or a goal (`goalChoices` in a select: two). Capture stays two taps: nothing forces a
   day or goal at creation.
 - **A goal never changes a task's business** (it may be a client's next step for another business): filing under a goal
@@ -879,8 +879,10 @@ Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (
   so far, owner (or the carrier), notes, at the end of its business's list. The old goal is never changed; its open,
   **undated** tasks move to the copy (`carryTaskMoves`, goal_id only — dated ones keep their day, done ones stay).
   Carried on two devices at once → two copies with the same `carried_from`: the Monday and monthly plans show
-  "carried over twice · Remove the extra" (`carriedTwice`/`CarriedTwice`: the extra's open tasks move to the first
-  copy, then the extra is deleted). Nothing bigger.
+  "carried over twice · Remove the extra" (`carriedTwice`/`CarriedTwice` → `removeExtraCopies` in `carryFix.js`: the
+  extra's open tasks move to the first copy, the extra is deleted, that is synced, then each task's open `goal_id`
+  clash between the two copies is settled `keep_winner` — the surviving goal — so no "Use this instead" points at the
+  deleted copy). Needs a connection (settling clashes does); offline the button waits. Nothing bigger.
 - **Monday plan** `/plan/week?week=` (`?sort=1` scrolls to To sort): carry-over, each non-archived business's goals
   (add, edit, tick, +1, up/down `reorderChanges`, tasks under each with "+ Task", "This month:" priorities as context),
   the week strip (`weekLoads`), To sort. Wide screens: goals left, week + To sort right.

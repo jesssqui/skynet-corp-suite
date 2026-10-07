@@ -11,6 +11,8 @@ import { startServer, makeDevice, row } from './helpers.js';
 import { goalForm, goalValues, editChanges } from '../src/modules/planner/goalForm.js';
 import { carryOverCandidates, carryFields, carryTaskMoves, goalChange, dayMinutesFor, unplannedTasks } from '../src/modules/planner/plan.js';
 import { taskForm, taskValues, goalPick, goalBusinessNote } from '../src/modules/planner/taskForm.js';
+import { carriedTwice } from '../src/modules/planner/plan.js';
+import { removeExtraCopies, goalClashesToSettle } from '../src/modules/planner/carryFix.js';
 
 const W = BUSINESS_IDS.wholesale;
 const AGENCY = BUSINESS_IDS.agency;
@@ -126,4 +128,50 @@ test('each person’s day length: synced, one record each, the default until set
   const after = await mac.engine.list('workday');
   assert.deepEqual([dayMinutesFor(after, 'partner'), dayMinutesFor(after, 'owner')], [330, 480], 'the Mac sees the partner’s day; the owner’s is untouched');
   assert.equal(row(server.db, 'planner_workdays', WORKDAY_IDS.partner).updated_by, 'partner');
+});
+
+test('carried over on both devices at once: Remove the extra moves the tasks, deletes the copy and settles the clashes', async (t) => {
+  const { server, mac, phone } = await twoDevices(t);
+  const m = mac.engine;
+  const p = phone.engine;
+  const today = localDate();
+  const monday = weekStart(today);
+  const last = addDays(monday, -7);
+  const old = await m.create('goal', { kind: 'week', period: last, business_id: W, title: 'Count the back-room stock', owner: 'owner' });
+  const task = await m.create('task', { title: 'Recount the vape tins', owner: 'owner', business_id: W, goal_id: old });
+  await m.syncNow();
+  await p.syncNow();
+  // Both carry it over offline, each moving the task to its own copy.
+  mac.online = false;
+  phone.online = false;
+  const carry = async (e, me) => {
+    const [g] = carryOverCandidates(await e.list('goal'), { kind: 'week', from: last, to: monday });
+    const copy = await e.create('goal', carryFields(g, monday, { me, position: 0 }));
+    for (const id of carryTaskMoves(await e.list('task'), g.id)) await e.update('task', id, { goal_id: copy });
+    return copy;
+  };
+  const first = await carry(m, 'owner');
+  const second = await carry(p, 'partner');
+  mac.online = true;
+  phone.online = true;
+  await m.syncNow();
+  await p.syncNow();
+  await m.syncNow();
+  const goals = await m.list('goal');
+  const [double] = carriedTwice(goals, { kind: 'week', period: monday });
+  assert.deepEqual([double.keep.id, double.extras.map((e) => e.id)], [first, [second]], 'the first made is kept');
+  const before = await m.get('task', task);
+  assert.equal(goalClashesToSettle([before], new Set([first, second])).length, 1, 'the task carries a goal_id clash between the copies');
+
+  const result = await removeExtraCopies(m, double);
+  assert.deepEqual(result, { moved: before.goal_id === second ? 1 : 0, settled: 1 });
+  await p.syncNow();
+  assert.equal(row(server.db, 'planner_tasks', task).goal_id, first, 'the task is on the surviving copy');
+  assert.ok(row(server.db, 'planner_goals', second).deleted_at, 'the extra is gone');
+  assert.equal(server.db.prepare("SELECT count(*) AS n FROM sync_clashes WHERE entity = 'task' AND resolved = 0").get().n, 0, 'no clash left pointing at the deleted copy');
+  for (const e of [m, p]) {
+    const r = await e.get('task', task);
+    assert.deepEqual([r.goal_id, r._sync.clashes.length], [first, 0]);
+    assert.deepEqual(carriedTwice(await e.list('goal'), { kind: 'week', period: monday }), []);
+  }
 });
