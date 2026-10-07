@@ -796,7 +796,12 @@ export function createSyncEngine({
       const target = full ? 'staging' : 'records';
       for (const c of body.changes) {
         if (c.deleted) await t.delete(target, [c.entity, c.id]);
-        else await t.put(target, { entity: c.entity, id: c.id, fields: c.fields, flagged: Boolean(c.flagged), clashes: c.clashes ?? [], seq: c.seq });
+        else {
+          await t.put(target, {
+            entity: c.entity, id: c.id, fields: c.fields, flagged: Boolean(c.flagged), clashes: c.clashes ?? [], seq: c.seq,
+            ...(c.meta ? { meta: c.meta } : {}),
+          });
+        }
       }
       await t.put('meta', body.cursor, 'pull');
       if (!body.hasMore) {

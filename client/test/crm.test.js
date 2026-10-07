@@ -64,6 +64,14 @@ test('offline: a client with its account, contact, consent, relationship and a n
   assert.equal(page.accounts[0].relationships[0].kind, 'wholesale');
   assert.equal(page.contacts[0].consent[W].given, true);
   assert.equal(page.activities[0].body, 'Wants 40 tins Friday');
+
+  // Who logged the note reaches the other person's device with it (timeline: "by your partner").
+  const mac = await makeDevice(t, server, 'partner');
+  const [note] = await mac.engine.list('activity');
+  assert.equal(note._sync.createdBy, 'owner');
+  assert.match(note._sync.createdAt, /Z$/);
+  const [mine] = await e.list('activity');
+  assert.equal(mine._sync.createdBy, 'owner', 'and to the phone that made it, once pulled back');
 });
 
 test('a record whose client hasn’t reached the server waits (parked) and goes in once it has', async (t) => {

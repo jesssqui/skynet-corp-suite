@@ -32,6 +32,7 @@ const NAME_RE = /^[a-z][a-z0-9_]{0,62}$/;
 export const OPS = ['create', 'update', 'delete'];
 // Columns the sync module fills itself when the table has them (never sent by devices).
 export const STANDARD_COLUMNS = ['created_at', 'created_by', 'updated_at', 'updated_by', 'flagged'];
+const META_COLUMNS = ['created_at', 'created_by', 'updated_at', 'updated_by'];
 const RESERVED_FIELDS = new Set(['id', 'deleted_at', ...STANDARD_COLUMNS]);
 // Field types and value checks live in @suite/shared/fields: devices check changes with the same rules.
 export { DEFAULT_TEXT_MAX };
@@ -142,7 +143,9 @@ export function createRegistry(db) {
       liveChildren: new Map(), // field name -> statement: live ids whose field names a record
       standard: new Set(STANDARD_COLUMNS.filter((c) => columns.includes(c))),
       inserts: new Map(), // column list -> statement
-      selectRow: db.prepare(`SELECT ${['id', 'deleted_at', ...fieldDefs.keys()].map(q).join(', ')} FROM ${q(table)} WHERE id = ?`),
+      // The synced fields plus who/when (created_*/updated_*, those the table has) for pulls.
+      selectRow: db.prepare(`SELECT ${['id', 'deleted_at', ...fieldDefs.keys(), ...META_COLUMNS.filter((c) => columns.includes(c))]
+        .map(q).join(', ')} FROM ${q(table)} WHERE id = ?`),
       setDeleted: db.prepare(`UPDATE ${q(table)} SET deleted_at = ? WHERE id = ?`),
       updates: new Map(), // column list -> statement
     };
