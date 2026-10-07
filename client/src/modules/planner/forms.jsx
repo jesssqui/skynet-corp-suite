@@ -3,14 +3,15 @@
 // (taskForm.js), so the other person's change that arrives meanwhile survives. A sheet with
 // typed input asks before it is thrown away (FormSheet).
 import { useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { TextField, SelectField, TextAreaField, CheckboxField, Segmented, Notice } from '../../ui/index.js';
 import { localDate } from '../../ui/format.js';
-import { store } from '../../sync/index.js';
+import { store, useRecord } from '../../sync/index.js';
 import { useAuth } from '../../auth/session.jsx';
-import { FormSheet, useAction } from '../crm/parts.jsx';
+import { FormSheet, RecordSync, useAction } from '../crm/parts.jsx';
 import { KIND_LABELS, pickableBusinesses, textOrNull, fold } from '../crm/logic.js';
 import { taskForm, taskValues, editChanges, isDirty, linkChange } from './taskForm.js';
-import { estimateOptions, otherActor, relationshipLabel, clearedFields, defaultBusinessId } from './logic.js';
+import { estimateOptions, otherActor, relationshipLabel, clearedFields, defaultBusinessId, alreadySorted } from './logic.js';
 import { usePlannerData } from './data.js';
 import { getLastBusiness, setLastBusiness } from './prefs.js';
 import { nowIso } from '../../ui/format.js';
@@ -32,10 +33,48 @@ export function newTaskInitial({ me, businesses, context = null, ...rest }) {
 }
 
 /**
- * Add or edit a task. `initial` (new tasks): pre-filled values (newTaskInitial). `onSaved(id)` runs
- * after the store accepted it (before onDone), e.g. to clear the inbox item it came from.
+ * Why a sheet made from an inbox item must not save: the item was sorted (by the other person — the
+ * inbox is shared — or on another device) or deleted since the sheet opened. Reads the latest copy.
+ * @returns {Promise<null | { message: string, to: string|null, label: string|null }>}
  */
-export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDeleted, onSaved, title }) {
+export async function inboxItemGuard(itemId, me) {
+  const sorted = alreadySorted(await store.get('inbox_item', itemId), me);
+  if (!sorted) return null;
+  if (sorted.gone) return { message: 'This item isn’t in the inbox any more (deleted on another device).', to: null, label: null };
+  const who = sorted.by === me ? 'you' : sorted.by === 'system' ? 'an automation' : 'your partner';
+  if (sorted.entity === 'task' && sorted.id) {
+    return { message: `Already sorted by ${who}: it became a task.`, to: `/tasks?open=${sorted.id}`, label: 'Open that task' };
+  }
+  if (sorted.entity === 'activity' && sorted.id) {
+    const note = await store.get('activity', sorted.id).catch(() => null);
+    return {
+      message: `Already sorted by ${who}: it became a note on a client.`,
+      to: note ? `/crm/clients/${note.client_id}` : null,
+      label: note ? 'Open that client' : null,
+    };
+  }
+  return { message: `Already sorted by ${who}: it was dismissed.`, to: null, label: null };
+}
+
+/** The guard's refusal, with a link to what the item became. */
+function Blocked({ blocked }) {
+  if (!blocked) return null;
+  return (
+    <Notice tone="warn">
+      <span data-testid="already-sorted">{blocked.message}</span>
+      {blocked.to ? <> <Link to={blocked.to}>{blocked.label}</Link></> : null}
+      {' '}Nothing was saved here: close this sheet.
+    </Notice>
+  );
+}
+
+/**
+ * Add or edit a task. `initial` (new tasks): pre-filled values (newTaskInitial). `guard()` runs
+ * before a new task is created (null = go ahead; else { message, to, label } is shown and nothing is
+ * saved), e.g. the inbox item it comes from was sorted meanwhile. `onSaved(id)` runs after the store
+ * accepted it (before onDone), e.g. to clear that inbox item.
+ */
+export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDeleted, onSaved, guard, title }) {
   const { session } = useAuth();
   const me = session?.user?.actor ?? 'owner';
   const { data } = usePlannerData();
@@ -44,6 +83,8 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
   const [v, setV] = useState(start);
   const [problems, setProblems] = useState({});
   const { busy, error, run } = useAction();
+  const [blocked, setBlocked] = useState(null);
+  const live = useRecord('task', record?.id ?? null).record; // its flag and clashes, live
   // A new task saved once stays that task: if what runs after it (onSaved) fails, Save again
   // retries that part instead of making a second task.
   const created = useRef(null);
@@ -75,7 +116,12 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
       fields = r.fields;
     }
     let id = record?.id ?? null;
+    let stop = null;
     const ok = await run(async () => {
+      if (!record && !created.current && guard) {
+        stop = await guard();
+        if (stop) return;
+      }
       if (!record) {
         id = created.current ?? await store.create('task', fields);
         created.current = id;
@@ -83,7 +129,8 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
       if (fields.business_id) setLastBusiness(me, fields.business_id);
       await onSaved?.(id);
     });
-    if (ok) onDone?.(id);
+    setBlocked(stop);
+    if (ok && !stop) onDone?.(id);
   };
 
   const remove = record ? async () => {
@@ -121,6 +168,8 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
       onDelete={remove}
       deleteWarning="Delete this task? Only for a mistake: when it’s finished, tick it instead."
     >
+      {live ? <RecordSync record={live} what="task" /> : null}
+      <Blocked blocked={blocked} />
       <TextField
         id="task-title"
         label="Task"
@@ -231,7 +280,11 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
  * when it was captured; then the item leaves the inbox.
  */
 export function InboxNoteSheet({ item, onClose, onDone }) {
+  const { session } = useAuth();
+  const me = session?.user?.actor ?? 'owner';
   const { data } = usePlannerData();
+  const [blocked, setBlocked] = useState(null);
+  const saved = useRef(null); // the note, once made: a retry only clears the item
   const [q, setQ] = useState('');
   const [clientId, setClientId] = useState('');
   const [businessId, setBusinessId] = useState('');
@@ -259,11 +312,17 @@ export function InboxNoteSheet({ item, onClose, onDone }) {
           setProblem(!clientId ? 'Pick the client this note is about' : 'The note is empty');
           return;
         }
+        let stop = null;
         const ok = await run(async () => {
-          const id = await store.create('activity', { client_id: clientId, type: 'note', body: text, at: item.captured_at, business_id: businessId || null });
-          await store.update('inbox_item', item.id, clearedFields({ entity: 'activity', id, now: nowIso() }));
+          if (!saved.current) {
+            stop = await inboxItemGuard(item.id, me);
+            if (stop) return;
+          }
+          saved.current ??= await store.create('activity', { client_id: clientId, type: 'note', body: text, at: item.captured_at, business_id: businessId || null });
+          await store.update('inbox_item', item.id, clearedFields({ entity: 'activity', id: saved.current, now: nowIso() }));
         });
-        if (ok) onDone?.();
+        setBlocked(stop);
+        if (ok && !stop) onDone?.();
       }}
     >
       <TextAreaField id="note-body" label="Note" value={body} onChange={(e) => setBody(e.target.value)} rows={3} />
@@ -299,6 +358,7 @@ export function InboxNoteSheet({ item, onClose, onDone }) {
         options={[{ value: '', label: 'None in particular' }, ...pickableBusinesses(data?.businesses ?? []).map((b) => ({ value: b.id, label: b.name }))]}
       />
       {problem ? <Notice tone="warn">{problem}</Notice> : null}
+      <Blocked blocked={blocked} />
     </FormSheet>
   );
 }

@@ -9,11 +9,12 @@ import { useAuth } from '../../auth/session.jsx';
 import { store } from '../../sync/index.js';
 import { SyncBadges } from '../../sync/components.jsx';
 import { actorLabel } from '../crm/logic.js';
-import { useAction } from '../crm/parts.jsx';
+import { useAction, RecordSync } from '../crm/parts.jsx';
+import { Link } from 'react-router-dom';
 import { usePlannerData } from './data.js';
-import { openInbox, clearedFields, titleFromText } from './logic.js';
+import { openInbox, clearedFields, titleFromText, inboxDoubles, inboxOutcomes } from './logic.js';
 import { CaptureBar, CaptureSpacer, muted } from './parts.jsx';
-import { TaskSheet, InboxNoteSheet, newTaskInitial } from './forms.jsx';
+import { TaskSheet, InboxNoteSheet, newTaskInitial, inboxItemGuard } from './forms.jsx';
 
 const PAGE = 50;
 const SOURCE_LABELS = { typed: 'Typed', phone: 'Phone', siri: 'Siri', share: 'Share sheet' };
@@ -38,6 +39,46 @@ function InboxItem({ item, me, onTask, onNote, onDismiss }) {
   );
 }
 
+/**
+ * Items sorted twice at once (the inbox is shared: both people, or two offline devices, turned the
+ * same item into something): each with everything it became — so the extra task can be opened and
+ * deleted — and the clash to settle which record the item keeps.
+ */
+function SortedTwice({ items, tasksById, me }) {
+  return (
+    <Card>
+      <div className="planner-section-head">
+        <h2 style={{ color: 'var(--warn)' }}>Sorted twice</h2>
+        <span style={muted}>{items.length}</span>
+      </div>
+      <p style={{ ...muted, margin: '0 0 var(--space-2)' }}>
+        These were sorted on two devices at once. Delete what you don’t need, then settle which one the item keeps.
+      </p>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }} data-testid="sorted-twice">
+        {items.map((item) => (
+          <li key={item.id} className="planner-inbox-item" data-inbox-id={item.id}>
+            <p style={{ margin: 0, fontWeight: 550, overflowWrap: 'anywhere' }}>{item.text}</p>
+            <ul style={{ margin: 0, paddingLeft: 'var(--space-4)', display: 'grid', gap: 2 }}>
+              {inboxOutcomes(item).map((o, i) => {
+                const by = o.by === me ? 'you' : o.by ? 'your partner' : 'someone';
+                const task = o.entity === 'task' ? tasksById.get(o.id) : null;
+                return (
+                  <li key={`${o.id}-${i}`} data-outcome={o.id ?? 'dismissed'} style={{ fontSize: 'var(--text-sm)' }}>
+                    {o.entity === 'task'
+                      ? (task ? <>Task by {by}: <Link to={`/tasks?open=${o.id}`}>{task.title}</Link></> : <>Task by {by} (deleted)</>)
+                      : o.entity === 'activity' ? <>A note on a client, by {by}</> : <>Dismissed by {by}</>}
+                  </li>
+                );
+              })}
+            </ul>
+            <RecordSync record={item} what="inbox item" />
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 export default function InboxPage() {
   const { data, loading } = usePlannerData();
   const { session } = useAuth();
@@ -47,6 +88,8 @@ export default function InboxPage() {
   const [dismissed, setDismissed] = useState(null); // the last dismissed item, for Undo
   const { error, run } = useAction();
   const items = useMemo(() => (data ? openInbox(data.inbox) : []), [data]);
+  const doubles = useMemo(() => (data ? inboxDoubles(data.inbox) : []), [data]);
+  const tasksById = useMemo(() => new Map((data?.tasks ?? []).map((t) => [t.id, t])), [data]);
   const close = () => setSheet(null);
 
   const toTask = (item) => {
@@ -102,6 +145,7 @@ export default function InboxPage() {
             </div>
           ) : null}
         </Card>
+        {doubles.length ? <SortedTwice items={doubles} tasksById={tasksById} me={me} /> : null}
       </div>
       <CaptureSpacer />
 
@@ -111,6 +155,7 @@ export default function InboxPage() {
           title="Make a task"
           onClose={close}
           onDone={close}
+          guard={() => inboxItemGuard(sheet.item.id, me)}
           onSaved={(id) => store.update('inbox_item', sheet.item.id, clearedFields({ entity: 'task', id, now: nowIso() }))}
         />
       ) : null}

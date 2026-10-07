@@ -9,7 +9,7 @@ import { nowIso, localDate } from '@suite/shared/time';
 import { relationshipsWithoutNextStep } from '@suite/shared/planner';
 import { startServer, makeDevice, row } from './helpers.js';
 import { taskForm, taskValues, editChanges } from '../src/modules/planner/taskForm.js';
-import { captureFields, clearedFields, nextStepFields, titleFromText } from '../src/modules/planner/logic.js';
+import { captureFields, clearedFields, nextStepFields, titleFromText, alreadySorted, inboxDoubles, inboxOutcomes, topChange, moveChange } from '../src/modules/planner/logic.js';
 
 const W = BUSINESS_IDS.wholesale;
 
@@ -115,4 +115,76 @@ test('a call logged with a next step clears the relationship’s flag, on both d
   assert.equal((await m.get('task', taskId)).client_id, client, 'still naming the client (shown as deleted)');
   assert.equal(await m.get('client', client), null);
   assert.deepEqual(await flagged(m), []);
+});
+
+/** What the inbox's Task button does: a task from the item, then the item cleared (two store writes). */
+async function convert(engine, itemId, actor, title) {
+  const id = await engine.create('task', { title, owner: actor, business_id: BUSINESS_IDS.personal });
+  await engine.update('inbox_item', itemId, clearedFields({ entity: 'task', id, now: nowIso() }));
+  return id;
+}
+
+test('the shared inbox: an item the other person already sorted is refused, saying who and what it became', async (t) => {
+  const { mac, phone } = await twoDevices(t);
+  const item = await phone.engine.create('inbox_item', captureFields('Renew the van insurance', { source: 'phone', now: nowIso() }));
+  await phone.engine.syncNow();
+  await mac.engine.syncNow();
+  // The phone opens the Task sheet; meanwhile the Mac turns the item into a task; the phone pulls.
+  assert.equal(alreadySorted(await phone.engine.get('inbox_item', item), 'partner'), null, 'still open when the sheet opened');
+  const task = await convert(mac.engine, item, 'owner', 'Renew the van insurance');
+  assert.deepEqual(alreadySorted(await mac.engine.get('inbox_item', item), 'owner'), { gone: false, by: 'owner', entity: 'task', id: task }, 'sorted here: by me');
+  await mac.engine.syncNow();
+  await phone.engine.syncNow();
+  // What the sheet's guard reads before saving: sorted by the owner, into that task — so no second task.
+  assert.deepEqual(alreadySorted(await phone.engine.get('inbox_item', item), 'partner'), { gone: false, by: 'owner', entity: 'task', id: task });
+  // Dismissed or deleted items are refused too.
+  const other = await mac.engine.create('inbox_item', captureFields('Idea', { source: 'typed', now: nowIso() }));
+  await mac.engine.update('inbox_item', other, clearedFields({ now: nowIso() }));
+  assert.equal(alreadySorted(await mac.engine.get('inbox_item', other), 'owner').entity, null);
+  assert.equal(alreadySorted(null, 'owner').gone, true);
+});
+
+test('two offline devices sort the same item: two tasks, and the item shows both outcomes with its clash to settle', async (t) => {
+  const { server, mac, phone } = await twoDevices(t);
+  const item = await mac.engine.create('inbox_item', captureFields('Order shipping boxes', { source: 'typed', now: nowIso() }));
+  await mac.engine.syncNow();
+  await phone.engine.syncNow();
+  mac.online = false;
+  phone.online = false;
+  const fromMac = await convert(mac.engine, item, 'owner', 'Order shipping boxes');
+  const fromPhone = await convert(phone.engine, item, 'partner', 'Order shipping boxes (40)');
+  mac.online = true;
+  phone.online = true;
+  await mac.engine.syncNow();
+  await phone.engine.syncNow();
+  await mac.engine.syncNow();
+  assert.equal(server.db.prepare('SELECT count(*) AS n FROM planner_tasks WHERE deleted_at IS NULL').get().n, 2, 'both tasks exist');
+  for (const dev of [mac.engine, phone.engine]) {
+    const seen = await dev.get('inbox_item', item);
+    assert.ok(seen._sync.clashes.some((c) => c.field === 'became_id'), 'the double is kept for review');
+    assert.deepEqual(inboxDoubles(await dev.list('inbox_item')).map((i) => i.id), [item], 'listed under Sorted twice');
+    assert.deepEqual(inboxOutcomes(seen).map((o) => o.id).sort(), [fromMac, fromPhone].sort(), 'both tasks are named');
+  }
+  // Fixing it: delete the extra task and settle the clashes (keep what the item says).
+  const seen = await mac.engine.get('inbox_item', item);
+  const extra = seen.became_id === fromMac ? fromPhone : fromMac;
+  await mac.engine.remove('task', extra);
+  for (const c of seen._sync.clashes) await mac.engine.resolveClash(c.id, 'keep_winner');
+  await mac.engine.syncNow();
+  assert.deepEqual(inboxDoubles(await mac.engine.list('inbox_item')), [], 'settled: nothing left to review');
+  assert.equal(server.db.prepare('SELECT count(*) AS n FROM planner_tasks WHERE deleted_at IS NULL').get().n, 1);
+});
+
+test('a move right after a star clears the star: changes are worked out from the latest record', async (t) => {
+  const { mac } = await twoDevices(t);
+  const m = mac.engine;
+  const today = localDate();
+  const id = await m.create('task', { title: 'Draft the newsletter', owner: 'owner', business_id: W });
+  const stale = await m.get('task', id); // what the sheet rendered
+  await m.update('task', id, topChange(await m.get('task', id), today, true, 'owner'));
+  assert.deepEqual(moveChange(stale, '2026-12-01', today, 'owner').change, { due_date: '2026-12-01' }, 'from the stale copy the star would stay');
+  const { change } = moveChange(await m.get('task', id), '2026-12-01', today, 'owner');
+  await m.update('task', id, change);
+  const after = await m.get('task', id);
+  assert.deepEqual([after.due_date, after.top_on_owner], ['2026-12-01', null]);
 });

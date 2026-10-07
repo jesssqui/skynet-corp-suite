@@ -29,6 +29,14 @@ export default function TasksPage() {
   const [shown, setShown] = useState(PAGE);
   const [sheet, setSheet] = useState(null);
   useEffect(() => setShown(PAGE), [owner, business, client, due]);
+  // ?open=<task id> (links from the inbox): open that task's sheet once, then drop the parameter.
+  const openId = params.get('open');
+  useEffect(() => {
+    if (!openId || !data) return;
+    const task = data.tasks.find((t) => t.id === openId);
+    if (task) setSheet({ record: task });
+    setParam('open', '');
+  }, [openId, data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setParam = (key, value, fallback = '') => {
     // From the address bar, not this render's params: two quick changes (a tap, then a pick) must

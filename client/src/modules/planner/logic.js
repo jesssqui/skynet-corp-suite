@@ -307,6 +307,43 @@ export function clearedFields({ entity = null, id = null, now }) {
   return { cleared_at: now, became_entity: entity, became_id: id };
 }
 
+/**
+ * Has this inbox item been sorted already — by the other person (the inbox is shared), or on
+ * another device — since the sheet was opened? Read the latest copy (store.get) and ask before
+ * making a task or note from it. null = still in the inbox; else { gone } when it was deleted, or
+ * { by, entity, id } (entity null = dismissed). `by` is the actor ('owner' | 'partner' | 'system').
+ */
+export function alreadySorted(item, me) {
+  if (!item) return { gone: true, by: null, entity: null, id: null };
+  if (!item.cleared_at) return null;
+  const by = item._sync?.pending || item._sync?.local ? me : (item._sync?.updatedBy ?? null);
+  return { gone: false, by, entity: item.became_entity ?? null, id: item.became_id ?? null };
+}
+
+const SORT_FIELDS = new Set(['cleared_at', 'became_entity', 'became_id']);
+
+/**
+ * Everything an inbox item became, including what the losing side of a clash made: when both
+ * people sorted the same item at once (offline, say), two tasks exist and the item carries a clash
+ * on became_id — this lists both, so the extra one can be found and deleted.
+ * @returns {{ entity: string|null, id: string|null, by: string|null, kept: boolean }[]}
+ */
+export function inboxOutcomes(item) {
+  const out = [{ entity: item.became_entity ?? null, id: item.became_id ?? null, by: item._sync?.updatedBy ?? null, kept: true }];
+  const clashes = item._sync?.clashes ?? [];
+  const entityClash = clashes.find((c) => c.field === 'became_entity');
+  for (const c of clashes.filter((x) => x.field === 'became_id')) {
+    out.push({ entity: entityClash?.loser?.value ?? item.became_entity ?? null, id: c.loser?.value ?? null, by: c.loser?.actor ?? null, kept: false });
+  }
+  return out;
+}
+
+/** Sorted items with open clashes on how they were sorted (sorted twice at once), newest first. */
+export function inboxDoubles(items) {
+  return items.filter((i) => i.cleared_at && (i._sync?.clashes ?? []).some((c) => SORT_FIELDS.has(c.field)))
+    .sort((a, b) => (a.captured_at < b.captured_at ? 1 : -1));
+}
+
 /** A captured line as a task title: its first line, cut to fit (the rest goes in the notes). */
 export function titleFromText(text, max = 300) {
   const s = String(text ?? '').trim();
