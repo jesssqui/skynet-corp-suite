@@ -1,12 +1,14 @@
 import { NavLink } from 'react-router-dom';
 import { Icon } from '../ui/index.js';
 import { navItems } from '../modules/index.js';
+import { useAuth } from '../auth/session.jsx';
 import BackupBanner from './BackupBanner.jsx';
 import './shell.css';
 
 const linkClass = (base) => ({ isActive }) => `${base}${isActive ? ' active' : ''}`;
 
 export default function AppShell({ children }) {
+  const { session } = useAuth();
   return (
     <div className="shell">
       <nav className="shell-sidebar" aria-label="Main">
@@ -20,6 +22,10 @@ export default function AppShell({ children }) {
             {item.label}
           </NavLink>
         ))}
+        <div className="shell-signed-in">
+          <span>{session.user.displayName}</span>
+          <span className="shell-signed-in-device">{session.device.name}</span>
+        </div>
       </nav>
 
       <main className="shell-main">

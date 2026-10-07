@@ -9,7 +9,9 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      '/api': { target: 'http://127.0.0.1:3100', changeOrigin: true },
+      // changeOrigin off: the server checks that a request's Origin matches the Host it was sent to
+      // (cross-site request protection), so the Host must stay localhost:5173 like the page.
+      '/api': { target: 'http://127.0.0.1:3100', changeOrigin: false },
     },
   },
   build: {

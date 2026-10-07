@@ -2,7 +2,7 @@
 #   docker compose up -d --build
 # Reachable only at http://127.0.0.1:3100 on the Mac itself; Tailscale Serve
 # puts HTTPS in front of it for your tailnet. Nothing is exposed to the LAN or
-# the internet (there is no sign-in until package C1).
+# the internet. Everything except the sign-in screen needs a signed-in account.
 name: suite
 
 services:
@@ -23,6 +23,15 @@ services:
       BACKUP_TIME: ${BACKUP_TIME:-03:15}
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Whose X-Forwarded-* headers to believe (Express "trust proxy"). Tailscale Serve proxies
+      # from the Mac's loopback, but Docker Desktop's port forwarder makes those connections
+      # arrive in the container from its network gateway (a 172.x / 192.168.x address), hence
+      # "uniquelocal". Safe only because the port is published on 127.0.0.1 alone (below).
+      # Wrong here = sign-in fails with "Request from another origin" (see DEPLOY.md).
+      TRUST_PROXY: ${TRUST_PROXY:-loopback, uniquelocal}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      SESSION_IDLE_DAYS: ${SESSION_IDLE_DAYS:-30}
+      SESSION_MAX_DAYS: ${SESSION_MAX_DAYS:-90}
     volumes:
       # Live database: a Docker named volume (inside Docker's Linux VM), which is
       # where SQLite's WAL locking is reliable. Not a folder on the Mac.

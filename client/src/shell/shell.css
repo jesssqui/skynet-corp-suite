@@ -57,6 +57,22 @@
   color: var(--accent);
 }
 
+.shell-signed-in {
+  margin-top: auto;
+  padding: var(--space-3);
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 2px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.shell-signed-in-device {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: var(--text-xs);
+}
+
 .shell-main {
   flex: 1;
   min-width: 0;

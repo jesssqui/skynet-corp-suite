@@ -3,31 +3,26 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { newId } from '@suite/shared/ids';
 import { createHlc, parseHlc } from '@suite/shared/hlc';
-import { openDb } from '../src/db/open.js';
-import { createApp } from '../src/app.js';
 import { modules } from '../src/modules/index.js';
 import { runBackup } from '../src/backup/backup.js';
 import { restoreBackup } from '../src/backup/restore.js';
 import syncdemo from './fixtures/syncdemo/index.js';
-import { tmpDir, testConfig, quietLog } from './helpers.js';
+import { tmpDir, testConfig, startApp as startTestApp, ensureTestUsers, sessionFor } from './helpers.js';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
+// Every running test app by its base URL, so devices and requests can sign in to the right one.
+const apps = new Map();
+
 async function startApp(t, config) {
-  const db = openDb(config.dbPath);
-  const { app, ctx } = await createApp({ config, db, log: quietLog, modules: [...modules, syncdemo] });
-  const server = await new Promise((resolve) => {
-    const s = app.listen(0, '127.0.0.1', () => resolve(s));
-  });
-  let closed = false;
-  const close = () => new Promise((resolve) => {
-    if (closed) return resolve();
-    closed = true;
-    server.close(() => { db.close(); resolve(); });
-  });
-  t.after(close);
-  return { db, ctx, close, base: `http://127.0.0.1:${server.address().port}` };
+  const env = await startTestApp(t, config, { modules: [...modules, syncdemo] });
+  const users = await ensureTestUsers(env.ctx);
+  // A separate signed-in browser for requests that aren't about a particular device (clash lists, info).
+  const observer = sessionFor(env.ctx, users.owner);
+  apps.set(env.base, { ctx: env.ctx, users, observer });
+  t.after(() => apps.delete(env.base));
+  return env;
 }
 
 async function setup(t) {
@@ -41,16 +36,30 @@ async function setup(t) {
  * pull cursor, and helpers to make steps and talk to the server.
  */
 function makeDevice(base, actor, { offsetMs = 0, wall } = {}) {
-  const id = newId();
+  // Signed in as that person; the session decides the device id (and the actor).
+  const app = apps.get(base);
+  const { cookie, deviceId: id } = sessionFor(app.ctx, app.users[actor]);
   const clock = createHlc(id, { wallClock: wall ?? (() => Date.now() + offsetMs) });
   const d = {
     id,
     actor,
     base,
+    cookie,
     cursor: null,
     clock,
     headers() {
-      return { 'content-type': 'application/json', 'x-suite-device': id, 'x-suite-actor': actor };
+      return { 'content-type': 'application/json', cookie: d.cookie, origin: d.base };
+    },
+    /**
+     * Talk to another server process on the same database (e.g. after a restore). A restore ends every
+     * session, so the device signs in again — as the same device (it offers its id), keeping its outbox.
+     */
+    moveTo(newBase) {
+      const app2 = apps.get(newBase);
+      const again = sessionFor(app2.ctx, app2.users[actor], { deviceHint: id });
+      assert.equal(again.deviceId, id, 'signing in again keeps the device id');
+      d.base = newBase;
+      d.cookie = again.cookie;
     },
     step(op, entity, recordId, fields) {
       return {
@@ -100,12 +109,21 @@ const one = async (dev, step) => (await dev.push([step])).results[0];
 const rowOf = (db, id) => db.prepare('SELECT * FROM syncdemo_items WHERE id = ?').get(id);
 const count = (db, sql, ...args) => db.prepare(sql).get(...args).n;
 
+/** Signed in as the app's observer session unless the headers carry another cookie. */
+function observerHeaders(url) {
+  const base = new URL(url).origin;
+  return { cookie: apps.get(base).observer.cookie, origin: base };
+}
 async function getJson(url) {
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: observerHeaders(url) });
   return { status: res.status, body: await res.json() };
 }
 async function postJson(url, body, headers = {}) {
-  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...observerHeaders(url), ...headers },
+    body: JSON.stringify(body),
+  });
   return { status: res.status, body: await res.json() };
 }
 
@@ -483,7 +501,10 @@ test('restoring a backup starts a new generation: old cursors reset, resent step
 
   await restoreBackup({ from: backup.file, dbPath: config.dbPath, backupDir: config.backup.dir });
   const second = await startApp(t, config);
-  a.base = second.base;
+  // The restore ended the device's session: it is told so, then signs in again as the same device.
+  const expired = await fetch(`${second.base}/api/sync/info`, { headers: a.headers() });
+  assert.equal((await expired.json()).code, 'session_expired');
+  a.moveTo(second.base);
   const info2 = (await getJson(`${second.base}/api/sync/info`)).body;
   assert.notEqual(info2.generation, info1.generation);
   assert.ok(info2.lastRestoreAt);
@@ -560,12 +581,16 @@ test('validation: unknown entities and fields, bad ids, bad values, oversized pa
   assert.equal(ahead.code, 'invalid_step');
   assert.equal(rowOf(db, itemId).title, 'ok', 'nothing rejected was written');
 
-  // Request-level problems.
+  // Request-level problems. Who and which device come from the session (C1).
   const push = (body, headers) => postJson(`${base}/api/sync/push`, body, headers);
-  assert.equal((await push({ steps: [] }, { 'x-suite-actor': 'owner' })).status, 400, 'no device id');
-  assert.equal((await push({ steps: [] }, { 'x-suite-device': 'phone-1', 'x-suite-actor': 'owner' })).status, 400, 'device id not a UUIDv7');
-  assert.equal((await push({ steps: [] }, { 'x-suite-device': newId(), 'x-suite-actor': 'stranger' })).status, 400, 'unknown actor');
-  assert.equal((await push({ steps: [], deviceId: newId() }, a.headers())).status, 400, 'two different device ids');
+  const anon = await fetch(`${base}/api/sync/push`, {
+    method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ steps: [] }),
+  });
+  assert.equal(anon.status, 401, 'no session');
+  assert.equal((await anon.json()).code, 'not_signed_in');
+  assert.equal((await push({ steps: [], deviceId: newId() }, a.headers())).status, 409, 'names another device');
+  assert.equal((await push({ steps: [] }, { ...a.headers(), 'x-suite-device': newId() })).status, 409, 'names another device');
+  assert.equal((await push({ steps: [] }, { ...a.headers(), 'x-suite-device': a.id })).status, 200, 'naming its own device is fine');
   assert.equal((await push({ steps: 'x' }, a.headers())).status, 400);
   assert.equal((await push({ steps: [] }, { ...a.headers(), 'x-suite-actor': 'partner' })).status, 403, 'a device belongs to one person');
   const tooMany = Array.from({ length: 501 }, () => a.step('update', 'item', itemId, { qty: 1 }));
@@ -575,10 +600,7 @@ test('validation: unknown entities and fields, bad ids, bad values, oversized pa
   });
   assert.equal(huge.status, 413);
   const serverDevice = db.prepare("SELECT value FROM sync_meta WHERE key = 'server_device_id'").get().value;
-  assert.equal((await push({ steps: [] }, { 'x-suite-device': serverDevice, 'x-suite-actor': 'owner' })).status, 403);
-  // The same identity can come in the body instead of headers (until C1).
-  const viaBody = await postJson(`${base}/api/sync/push`, { deviceId: newId(), actor: 'partner', steps: [] });
-  assert.equal(viaBody.status, 200);
+  assert.equal((await push({ steps: [] }, { ...a.headers(), 'x-suite-device': serverDevice })).status, 409);
 });
 
 test('module tables are written only through sync, and only a module\'s own tables can be registered', async (t) => {
@@ -706,7 +728,7 @@ async function restore(t, env, backup, devices) {
   await env.close();
   await restoreBackup({ from: backup.file, dbPath: env.config.dbPath, backupDir: env.config.backup.dir });
   const env2 = await startApp(t, env.config);
-  for (const d of devices) d.base = env2.base;
+  for (const d of devices) d.moveTo(env2.base);
   return env2;
 }
 
@@ -818,4 +840,27 @@ test('registration refuses a field whose column type would change its values', a
   const item = [...records.values()].find((r) => r.entity === 'item');
   assert.equal(item.fields.phone, '0123');
   assert.equal(item.fields.done, false);
+});
+
+// ---------------------------------------------------------------- sign-in (C1)
+
+test('a signed-out device can no longer push or pull; the other device carries on', async (t) => {
+  const { base, db, ctx } = await setup(t);
+  const a = makeDevice(base, 'owner');
+  const b = makeDevice(base, 'partner');
+  const itemId = newId();
+  assert.equal((await one(a, a.step('create', 'item', itemId, { title: 'Before' }))).status, 'applied');
+  const steps = db.prepare('SELECT count(*) AS n FROM sync_steps').get().n;
+
+  // The partner signs the owner's device out (as the Devices page does).
+  ctx.services.auth.signOutDevice({ deviceId: a.id, by: apps.get(base).users.partner });
+  const push = await a.push([a.step('update', 'item', itemId, { title: 'After sign-out' })]);
+  assert.equal(push.status, 401);
+  assert.equal(push.body.code, 'device_signed_out');
+  assert.equal((await a.pullPage(null)).body.code, 'device_signed_out');
+  assert.equal(rowOf(db, itemId).title, 'Before', 'nothing from the signed-out device was applied');
+  assert.equal(db.prepare('SELECT count(*) AS n FROM sync_steps').get().n, steps);
+
+  await b.pull();
+  assert.equal((await one(b, b.step('update', 'item', itemId, { title: 'Partner edit' }))).status, 'applied');
 });

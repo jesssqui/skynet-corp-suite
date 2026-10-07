@@ -1,8 +1,9 @@
 # Deploying Skynet Corp Suite on the Mac mini
 
 The suite runs in Docker on the Mac mini, listening only on the Mac's `127.0.0.1:3100`. Tailscale Serve puts an HTTPS
-address in front of it that only devices on your tailnet can open. Backups run every night inside the container and are
-copied to a folder that lives off the Mac.
+address in front of it that only devices on your tailnet can open, and every page needs one of the two accounts
+(password + a code from an authenticator app). Backups run every night inside the container and are copied to a folder
+that lives off the Mac.
 
 Commands are run in Terminal on the Mac mini, in the repo folder, unless it says otherwise.
 
@@ -66,7 +67,7 @@ Check it (if you changed `SUITE_PORT` in `.env`, use that port instead of 3100 h
 
 ```bash
 docker compose ps                       # STATUS should become "healthy"
-curl -s http://127.0.0.1:3100/api/health
+curl -s http://127.0.0.1:3100/api/health   # {"ok":true,…} — details only show on the System page once signed in
 docker compose logs --tail=20 suite     # shows "listening" and "next backup at …"
 ```
 
@@ -105,10 +106,53 @@ tailscale serve --bg --https=8443 3100
 `tailscale serve --https=8443 off` (or `--https=443`). This is the current Serve syntax (Tailscale 1.52 and later);
 **confirm with `tailscale serve --help`** on the Mac before running it, since flags have changed between versions.
 
-Do **not** use `tailscale funnel` — that would put the suite on the public internet, and it has no sign-in until C1.
+Do **not** use `tailscale funnel` — that would put the suite on the public internet. Sign-in is a second lock, not a
+reason to open the door.
 
-Open the address on the iPhone (Tailscale connected) → Share → *Add to Home Screen*. The icon and name are
-placeholders for now.
+## 3b. Create the two accounts, with two-factor
+
+Accounts are only ever made here, on the Mac mini (there is no sign-up page), and two-factor is set up in the same
+step — an account can't sign in, and nobody can attach their own authenticator to it, until a code from *its* phone
+has been confirmed here. Do it with that person's iPhone in hand. `--actor` says who is who (`owner` = you,
+`partner` = your partner) and is what the suite records on every change:
+
+```bash
+docker compose exec suite node server/scripts/users.js add --actor owner --username jessy --name "Jessy"
+```
+
+1. Type the password twice (nothing shows while typing; at least 12 characters — a few random words work well).
+2. A QR code appears in Terminal. On **that person's iPhone**, open the Camera, point it at the QR code → *Add
+   verification code* → it goes into the **Passwords** app (or scan it with Google Authenticator / 1Password). If the
+   QR code won't scan, enlarge the Terminal window, or type the *Key* shown under it into the app instead.
+3. Type the 6-digit code the phone now shows. Only now is the account saved.
+4. **Save the 10 recovery codes** it prints (password manager, or paper kept away from the phone). Each signs in once if
+   the phone is lost. They aren't shown again.
+
+Then the partner's account, with the partner's phone:
+
+```bash
+docker compose exec suite node server/scripts/users.js add --actor partner --username <partner username> --name "<Partner name>"
+docker compose exec suite node server/scripts/users.js list      # both show "2FA: on since …, 10 recovery codes left"
+```
+
+## 3c. Each iPhone: add to the Home Screen and sign in there
+
+A home-screen web app on iPhone keeps its own sign-in, separate from Safari, so sign in **from the home-screen icon**:
+
+1. iPhone connected to Tailscale → open the suite address from step 3 in Safari → Share → *Add to Home Screen* → *Add*.
+   (The icon and name are placeholders for now.)
+2. Open **Skynet Suite** from the Home Screen → sign in: username, password, then the code from Passwords (it may
+   offer to fill it in above the keyboard).
+3. Sign in on the Mac too (Safari, the same address). In the suite: **Account → Devices** shows the Mac browser and
+   the iPhone (*iPhone · Home screen app*),
+   each with a `100.x.y.z` address (the device's tailnet address). Rename them if you like (“Jessy's iPhone”).
+
+Do the same on the partner’s iPhone with the partner’s account. Both of you now appear on the Devices page, and either of you can
+**sign out any device** there (a lost phone, an old laptop): it is signed out at once, and the next time it connects it
+clears the data saved on it and shows the sign-in screen.
+
+Sessions last 30 days without use and at most 90 days (`SESSION_IDLE_DAYS`, `SESSION_MAX_DAYS` in `.env`); then that
+device asks for the password and a code again (its data stays).
 
 ## 4. Nightly backups
 
@@ -148,17 +192,18 @@ docker compose run --rm suite node server/scripts/restore.js /offsite/<newest su
 It should print `restored … (N tables, M migrations)` and `Restore complete`. (`/tmp/drill.db` is thrown away with
 the one-off container.)
 
-**b) Full drill** — restore the live database from the off-machine copy and confirm it is the same data:
+**b) Full drill** — restore the live database from the off-machine copy and confirm it is the same data. First, signed
+in on the Mac, open **System** and note the *Database ID* and the number of migrations. Then:
 
 ```bash
-curl -s http://127.0.0.1:3100/api/health        # note db.instanceId and db.migrations
 docker compose exec suite node server/scripts/backup.js
 docker compose stop suite
 docker compose run --rm suite node server/scripts/restore.js --list
 docker compose run --rm suite node server/scripts/restore.js /offsite/<the backup you just made>
 docker compose start suite
-curl -s http://127.0.0.1:3100/api/health        # same instanceId and migrations; open the app and spot-check records
 ```
+
+Open **System** again (you may have to sign in again): same Database ID and migrations. Spot-check records.
 
 Once there is real data, also spot-check a few records you remember in the app after step (b).
 
@@ -167,11 +212,44 @@ Once there is real data, also spot-check a few records you remember in the app a
 
 **After any restore** the phones and Macs start over automatically the next time they connect: they download
 everything again and re-send the changes they kept, so work done after the backup was made comes back.
+**A restore also signs everyone out** (every session ends at the first start after it): each phone and Mac asks for
+the password and a code again and keeps its saved data. Accounts, passwords and authenticators go back to the moment of
+the backup — a password changed after it is the old one again (`users.js password` sets a new one). A device that was
+signed out after the backup is no longer marked signed out on **Account → Devices**. It has no session and can't get
+one without the password and a code, but if it is lost or gone, sign it out again there.
 
 **To undo a restore:** stop the app and restore the `pre-restore-…db` file the restore printed, the same way
 (it is inside the volume: `/app/data/backups/pre-restore-….db`).
 
 ## Troubleshooting
+
+Sign-in:
+- **“Request from another origin”** when signing in through the ts.net address → the suite isn't believing Tailscale
+  Serve's forwarded headers. Check `TRUST_PROXY` isn't overridden in `.env` (the compose default is
+  `loopback, uniquelocal`). As a last resort add the exact address to `.env`, e.g.
+  `ALLOWED_ORIGINS=https://mac-mini.tail1234.ts.net:8443`, then `docker compose up -d`. On the Devices page every device
+  should show a `100.x.y.z` address; a `172.x` or `192.168.x` one means the forwarded headers are being ignored.
+- **“Too many attempts”** → wrong passwords or codes lock that account *from that address* (each tailnet device has
+  its own `100.x.y.z` address) for 1 minute, then 2, 4… up to an hour; the same account still signs in from your other
+  devices. 30 failures within an hour from several addresses lock the whole account for 15 minutes, and 20 failures
+  from one address (any usernames) lock that address for both accounts.
+  To lift locks now, on the Mac mini:
+  `docker compose exec suite node server/scripts/users.js unlock <username>` — that account's locks, plus the
+  address locks of every device that failed on it (`password` and `reset-2fa` do the same);
+  `docker compose exec suite node server/scripts/users.js unlock --all` — every lock, all accounts and addresses.
+- **Codes don't work** → the phone's clock must be right (Settings → General → Date & Time → Set Automatically). A code
+  works once; wait for the next one.
+- **Lost phone** → sign in on another device with a **recovery code** instead of the code, then Account → *Move to a new
+  authenticator*, and on Devices sign the lost phone out. Running low on codes → Account → *New recovery codes*.
+- **Lost phone and recovery codes** → on the Mac mini, with the new phone in hand:
+  `docker compose exec suite node server/scripts/users.js reset-2fa <username>` — same QR-and-code steps as `add`;
+  the old authenticator and codes stop working only once the new code is confirmed, and new recovery codes are printed.
+- **Forgotten password** → `docker compose exec suite node server/scripts/users.js password <username>`.
+  Both sign that person out everywhere (their saved data stays).
+- **“Wrong username or password” although both are right** → `users.js list`: if it says *2FA: NOT SET UP*, run
+  `reset-2fa` for that account (an account can't sign in without confirmed two-factor).
+
+Server and backups:
 
 - `Set SUITE_OFFSITE_DIR in .env` when starting → step 2, `.env` is missing the folder.
 - Backup error mentioning `.suite-backup-target` → the drive/share isn't mounted, or step 1's `touch` was skipped.

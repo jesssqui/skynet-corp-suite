@@ -9,12 +9,14 @@
     "dev": "node --watch-path=src --watch-path=../shared src/index.js",
     "test": "node --test --test-concurrency=1 \"test/*.test.js\"",
     "backup": "node scripts/backup.js",
-    "restore": "node scripts/restore.js"
+    "restore": "node scripts/restore.js",
+    "users": "node scripts/users.js"
   },
   "dependencies": {
     "@suite/shared": "*",
     "better-sqlite3": "^12.8.0",
     "express": "^5.2.1",
-    "helmet": "^8.1.0"
+    "helmet": "^8.1.0",
+    "qrcode-generator": "^2.0.4"
   }
 }

@@ -1,31 +1,35 @@
-// Who is making a sync request: { actor, deviceId }.
+// Who is making a sync request: { actor, deviceId }, from the signed-in session.
 //
-// STAND-IN UNTIL C1 (sign-in). Today the device says who it is in headers
-// (X-Suite-Device, X-Suite-Actor) or in the push body / pull query. That is only
-// acceptable because the server is reachable from the tailnet only and both
-// people have full access anyway. C1 replaces identify() with the signed-in
-// session (actor from the session, device id bound to that session) and keeps
-// the same return shape, so nothing else in the sync module changes.
-import { isId } from '@suite/shared/ids';
+// The auth module's guard puts the session on req.auth (and app.js refuses the request
+// before it gets here when there is none, or when the device was signed out). The actor
+// is the account's (owner / partner); the device id is the one bound to the session at
+// sign-in, so a device can't speak for another one or for the other person.
+// A device may still say which device it thinks it is (X-Suite-Device header, or deviceId
+// in the body / query): if that differs from the session's, the request is refused rather
+// than stamped with the wrong device (its steps' HLC stamps would not match anyway).
+import { ACTORS } from '@suite/shared/actors';
 import { HttpError } from '../../lib/httpError.js';
 
-/** The two people who use the suite. C1 turns these into real accounts. */
-export const ACTORS = ['owner', 'partner'];
+export { ACTORS };
 
-function pick(req, header, name) {
+function claimed(req, header, name) {
   const fromHeader = req.get(header);
   const fromBody = req.body && typeof req.body === 'object' ? req.body[name] : undefined;
   const fromQuery = req.query?.[name];
-  const given = [fromHeader, fromBody, fromQuery].filter((v) => v !== undefined && v !== '');
-  if (new Set(given).size > 1) throw new HttpError(400, `${name} given twice with different values`);
-  return given[0];
+  return [fromHeader, fromBody, fromQuery].filter((v) => v !== undefined && v !== '');
 }
 
 /** @returns {{ actor: string, deviceId: string }} */
 export function identify(req) {
-  const deviceId = pick(req, 'x-suite-device', 'deviceId');
-  const actor = pick(req, 'x-suite-actor', 'actor');
-  if (!isId(deviceId)) throw new HttpError(400, 'deviceId must be a UUIDv7 made on the device (X-Suite-Device)');
-  if (!ACTORS.includes(actor)) throw new HttpError(400, `actor must be one of ${ACTORS.join(', ')} (X-Suite-Actor)`);
+  const auth = req.auth;
+  if (!auth) throw new HttpError(401, 'Sign in to continue', undefined, { code: 'not_signed_in' });
+  const deviceId = auth.device.id;
+  const actor = auth.user.actor;
+  if (claimed(req, 'x-suite-device', 'deviceId').some((v) => v !== deviceId)) {
+    throw new HttpError(409, 'This request names a different device than the one signed in here', undefined, { code: 'device_mismatch' });
+  }
+  if (claimed(req, 'x-suite-actor', 'actor').some((v) => v !== actor)) {
+    throw new HttpError(403, 'This request names a different person than the one signed in', undefined, { code: 'actor_mismatch' });
+  }
   return { actor, deviceId };
 }

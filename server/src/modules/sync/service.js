@@ -166,7 +166,7 @@ export function createSyncService({ db, log }) {
       insertDevice.run(deviceId, actor, now, now);
       return getDevice.get(deviceId);
     }
-    // A device belongs to one person. (C1 makes this a property of the session.)
+    // A device belongs to one person (the session guarantees it; this is the backstop).
     if (d.actor !== actor) throw new HttpError(403, `Device ${deviceId} belongs to ${d.actor}`);
     return d;
   }
@@ -610,6 +610,12 @@ export function createSyncService({ db, log }) {
     };
   }
 
+  /** Which actor a device id belongs to here ('system' for the server's own), or null if unknown. For auth. */
+  function deviceActor(deviceId) {
+    if (deviceId === serverDeviceId) return SYSTEM_ACTOR;
+    return getDevice.get(deviceId)?.actor ?? null;
+  }
+
   function info() {
     return {
       generation,
@@ -631,6 +637,7 @@ export function createSyncService({ db, log }) {
     listClashes,
     resolveClash,
     recordState,
+    deviceActor,
     info,
   };
 }

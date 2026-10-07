@@ -180,3 +180,67 @@ export function Segmented({ value, onChange, options, label }) {
     </div>
   );
 }
+
+/**
+ * A labelled text input. Inputs are 16px so iPhone Safari doesn't zoom in on focus.
+ * `hint` shows under the field; `error` replaces it in the danger colour.
+ */
+export function TextField({ label, hint, error, id, style, inputStyle, ...rest }) {
+  const fieldId = id ?? `f-${label.replace(/\W+/g, '-').toLowerCase()}`;
+  const note = error || hint;
+  return (
+    <div style={{ display: 'grid', gap: 6, ...style }}>
+      <label htmlFor={fieldId} style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>{label}</label>
+      <input
+        id={fieldId}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={note ? `${fieldId}-note` : undefined}
+        style={{
+          minHeight: 'var(--tap)',
+          padding: '0 var(--space-3)',
+          fontSize: 16,
+          background: 'var(--surface)',
+          border: `1px solid ${error ? 'var(--danger)' : 'var(--border)'}`,
+          borderRadius: 'var(--radius)',
+          width: '100%',
+          ...inputStyle,
+        }}
+        {...rest}
+      />
+      {note ? (
+        <span id={`${fieldId}-note`} style={{ fontSize: 'var(--text-xs)', color: error ? 'var(--danger)' : 'var(--text-muted)' }}>
+          {note}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+const noticeTones = {
+  info: { background: 'var(--accent-soft)', color: 'var(--text)', border: 'var(--accent)' },
+  ok: { background: 'var(--ok-soft)', color: 'var(--text)', border: 'var(--ok)' },
+  warn: { background: 'var(--warn-soft)', color: 'var(--text)', border: 'var(--warn)' },
+  danger: { background: 'var(--danger-soft)', color: 'var(--danger)', border: 'var(--danger)' },
+};
+
+/** A short message in a tinted box (errors, confirmations, "this device was signed out"). */
+export function Notice({ tone = 'info', children, style }) {
+  const t = noticeTones[tone];
+  return (
+    <div
+      role={tone === 'danger' ? 'alert' : 'status'}
+      style={{
+        background: t.background,
+        color: t.color,
+        borderLeft: `3px solid ${t.border}`,
+        borderRadius: 'var(--radius-sm)',
+        padding: 'var(--space-3) var(--space-4)',
+        fontSize: 'var(--text-sm)',
+        overflowWrap: 'anywhere',
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+}

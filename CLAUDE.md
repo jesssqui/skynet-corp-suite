@@ -3,14 +3,16 @@
 Private business and life management suite (Skynet Corp Suite; `suite` is the short name used in code, packages and file names) for two people. Runs in Docker on the Mac mini at
 home beside the Wholesale Order Manager, reachable only over Tailscale (Tailscale Serve gives it HTTPS). The CRM is its
 core (later packages); this repo currently holds the skeleton from package **C0** (server, client shell, one example
-module `health`, tests, Docker, nightly backups) and the server half of offline sync from **C2a** (module `sync`).
+module `health`, tests, Docker, nightly backups), the server half of offline sync from **C2a** (module `sync`) and
+sign-in from **C1** (module `auth`: two accounts, password + authenticator code, sessions, devices).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
 - **Client**: React 18 + Vite 6, react-router-dom 7 (same API as the v6 the Order Manager uses), inline styles + theme tokens.
 - **Shared**: `shared/` (`@suite/shared`) holds code that runs in both Node and the browser (IDs, time helpers).
 - npm workspaces: one `npm ci` at the root installs everything; one `package-lock.json`.
-- Dependencies are kept few and mainstream; ask before adding one.
+- Dependencies are kept few and mainstream; ask before adding one. `qrcode-generator` (MIT, no dependencies) draws the
+  authenticator QR code: in the terminal for `users.js add/reset-2fa` (server) and on the Account page (client).
 
 ## Commands (repo root)
 ```bash
@@ -21,12 +23,14 @@ npm run dev:client     # Vite on http://localhost:5173, proxies /api to :3100
 npm run build && npm start   # production-style: server also serves client/dist
 npm run backup         # one backup now (same code as the nightly one)
 npm run restore -- --list | <file> [--to <path>] [--force]
+npm run user:add -- --actor owner|partner --username <name> --name "Display"   # the only way to make an account (sets up 2FA)
+npm run user:list | user:password -- <username> | user:reset-2fa -- <username> | user:unlock -- <username>
 ```
 Deploying, Tailscale Serve, backup scheduling and the restore drill: **DEPLOY.md**.
 
 ## Layout
 ```
-shared/                    @suite/shared — ids.js (UUIDv7), time.js, hlc.js (sync clock stamps); tests in shared/test
+shared/                    @suite/shared — ids.js (UUIDv7), time.js, hlc.js (sync clock stamps), actors.js; tests in shared/test
 server/src/
   index.js                 start: open db, createApp, listen, heartbeat, backup schedule, shutdown
   app.js                   createApp({config, db, log}) — migrations, services, routes, static client, errors
@@ -35,27 +39,38 @@ server/src/
   db/migrate.js            per-module migrations, schema_migrations table
   modules/index.js         server module registration list (order = migration order)
   modules/<name>/          index.js (shape), routes.js, service.js, migrations/NNN_name.sql|js
-  modules/sync/            offline sync: registry.js, service.js, routes.js, identity.js (stand-in until C1)
+  modules/auth/            sign-in: crypto.js (scrypt, TOTP, codes), accounts.js + throttle.js (shared with the CLI),
+                           service.js (sessions, devices, the request guard, restore check), routes.js, deviceName.js
+  modules/sync/            offline sync: registry.js, service.js, routes.js, identity.js (session -> actor + device)
   backup/                  backup.js, restore.js, schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file)
-server/scripts/            backup.js, restore.js (CLIs)
-server/test/               node --test; helpers.js has tmpDir/testConfig/dumpDb; fixtures/syncdemo = test-only synced module
+server/scripts/            backup.js, restore.js, users.js (CLIs)
+server/test/               node --test; helpers.js: tmpDir/testConfig/startApp/testClock/ensureTestUsers/sessionFor/dumpDb;
+                           fixtures/syncdemo = test-only synced module
 client/src/
-  main.jsx, App.jsx        providers + router built from the module list
+  main.jsx, App.jsx        providers + router built from the module list, behind AuthGate
+  auth/                    session.jsx (AuthProvider, useAuth), SignInScreen.jsx (+ AuthGate), TwoFactorParts.jsx,
+                           Qr.jsx, device.js (device id, clearLocalData — C2b extends it)
   shell/                   AppShell (sidebar on desktop, bottom tab bar on phones), shell.css
   ui/                      the shared look: theme.css (tokens, light/dark), theme.jsx, components.jsx, icons.jsx; import from ui/index.js
   modules/index.js         client module registration list -> nav + routes
   modules/<name>/          index.jsx ({ id, nav, routes }) + pages
-  api/client.js            fetch wrapper (api.get/post/put/del, ApiError)
+  api/client.js            fetch wrapper (api.get/post/put/del, ApiError); sends X-Suite-Device; 401 session codes
+                           fire SESSION_LOST_EVENT
 client/public/             manifest.webmanifest, icons (placeholders)
 ```
 
 ## Modules
 One folder per module on each side, same name on both (`server/src/modules/health`, `client/src/modules/health`).
-- **Server shape** (`modules/<name>/index.js`): `{ name, migrationsDir, createService(ctx), createRouter(ctx, service) }`.
-  Routes mount at `/api/<name>`. `ctx = { db, config, log, services }`; `ctx.services.<other>` is how a module uses
-  another one. **A module reads and writes only its own tables** — never another module's.
-- **Client shape** (`modules/<name>/index.jsx`): `{ id, nav: { label, icon, order }, routes: [{ path, element }] }`.
+- **Server shape** (`modules/<name>/index.js`): `{ name, migrationsDir, createService(ctx), createRouter(ctx, service),
+  createPublicRouter?, start? }`. `start(ctx, service)` runs once every service exists (auth uses it to notice a
+  restore). Routes mount at `/api/<name>`. **Every `createRouter` route requires a signed-in session**
+  (app.js puts `auth.requireSession` in front; `req.auth = { user: { id, actor, username, displayName }, device: { id,
+  name }, session }`). `createPublicRouter` is only for routes that must work signed out (sign-in, the minimal health
+  check) — don't add one without a reason. `ctx = { db, config, log, services, now }` (`now()` = ms clock, tests move it);
+  `ctx.services.<other>` is how a module uses another one. **A module reads and writes only its own tables** — never
+  another module's.
+- **Client shape** (`modules/<name>/index.jsx`): `{ id, nav: { label, icon, order, path? }, routes: [{ path, element }] }`.
   Add it to `client/src/modules/index.js`; the shell's nav and router pick it up. Icons are named (`ui/icons.jsx`).
 - To add a module: create both folders, register in both lists, add tests in `server/test/<name>.test.js`.
 
@@ -71,13 +86,101 @@ One folder per module on each side, same name on both (`server/src/modules/healt
   Calendar dates are `"YYYY-MM-DD"` (`localDate`, `parseLocalDate`); never `new Date('YYYY-MM-DD')` (UTC shift).
 - Store emails lowercase and phones digits-only (plan: matching across businesses).
 
-## Security posture (until C1)
-There is **no sign-in yet**. The server binds `127.0.0.1` by default; in Docker it listens on 0.0.0.0 inside the
-container but compose publishes it on the Mac's `127.0.0.1:3100` only, and Tailscale Serve is the only way in from other
-devices (tailnet members only). Don't publish the port on other interfaces, and don't enable Tailscale Funnel, before C1.
-helmet sets a strict CSP (`script-src 'self'`): no inline scripts, no third-party script/style hosts.
-**No HSTS** (helmet's is off): browsers apply it to the whole ts.net hostname on every port, which would force the
-Order Manager's plain-http port on the same Mac to https. Tailscale Serve already makes the suite HTTPS-only.
+## Security posture
+- **Network**: the server binds `127.0.0.1` by default; in Docker it listens on 0.0.0.0 inside the container but
+  compose publishes it on the Mac's `127.0.0.1:3100` only, and Tailscale Serve is the only way in from other devices
+  (tailnet members only). Keep it that way even with sign-in: don't publish the port on other interfaces, and don't
+  enable Tailscale Funnel.
+- **Sign-in on everything**: every API route needs a session except `POST /api/auth/login|login/code` and
+  `GET /api/health` (which answers anonymous callers with `{ ok, name, version, time }` only; details, backup paths
+  and errors need a session). Unknown `/api` paths answer 401 to anonymous callers. The built client (HTML/JS) is public;
+  it shows nothing until `GET /api/auth/session` succeeds.
+- helmet sets a strict CSP (`script-src 'self'`): no inline scripts, no third-party script/style hosts.
+- **No HSTS** (helmet's is off): browsers apply it to the whole ts.net hostname on every port, which would force the
+  Order Manager's plain-http port on the same Mac to https. Tailscale Serve already makes the suite HTTPS-only.
+
+## Sign-in (auth module, C1)
+Code `server/src/modules/auth/`, client `client/src/auth/` + `client/src/modules/auth/`, tests `server/test/auth.test.js`.
+- **Accounts**: exactly two, one per actor (`owner`, `partner` — `@suite/shared/actors`, also what sync records as
+  "who"). Made only by `server/scripts/users.js` (`npm run user:add`), never over HTTP; usernames lowercase.
+  **Two-factor is set up by the CLI, with the account**: `add` validates, asks for the password, shows a terminal QR
+  code + key + otpauth link, asks for one code from the app, and only then saves the account, its TOTP secret and 10
+  recovery codes in one transaction (then prints the codes once). There is no web enrolment: an account without
+  `auth_totp` can't sign in (it gets the same `bad_credentials` as a wrong password; the server log says why).
+  `reset-2fa` (lost phone *and* lost codes) works the same way and replaces the authenticator and codes only after the
+  new code is confirmed; `password` sets a new password. Both sign the person out everywhere and unlock the account;
+  `unlock <username>` only clears rate-limit locks (the account's, and those of addresses that failed on it);
+  `unlock --all` clears every lock.
+- **Factors**: password (scrypt N=2^16 r=8 p=1, parameters stored in each hash, at most 2 hashes at once) **and**
+  an authenticator code (TOTP RFC 6238: SHA-1, 6 digits, 30 s, ±1 step, each step usable once — `auth_totp.last_step`)
+  or one of 10 one-time recovery codes (60 bits, stored as SHA-256). All secret comparisons are constant-time.
+  In-app: change password (current password; other sessions end), new recovery codes and "move to a new
+  authenticator" (password + a current code, which may be a recovery code; the new app's first code confirms it;
+  other sessions end).
+- **Passkey seam** (not built): a passkey is both factors at once. Add `auth_passkeys` (credential id, public key,
+  counter, user), `POST /login/passkey/options` + `/login/passkey` in the public router, verify, then call
+  `service.startSession({ user, deviceHint, installed, userAgent, ip, secondFactor: 'passkey' })` — the same function the
+  code steps use, so devices and cookies work unchanged. `second_factor`, `end_reason` and challenge `kind` have no
+  CHECK lists so this needs no table rebuild. Registering a passkey belongs on the Account page behind `recheck()`.
+- **Sign-in endpoints** (public): `POST /api/auth/login {username, password, deviceId?, installed?}` →
+  `{ next: 'code', challenge, expiresAt }`; `POST /login/code {challenge, code}` (TOTP or recovery code) → session
+  cookie + `{ user, device, session, deviceReplaced, usedRecoveryCode, recoveryCodesLeft }`. A challenge is a random
+  token (hashed in `auth_challenges`), 5 min, 5 tries. Wrong username and wrong password give the identical 401 `bad_credentials`.
+- **Signed-in endpoints**: `GET /session`, `POST /logout` (signs this device out), `GET /devices` (both people's),
+  `PUT /devices/:id {name}`, `POST /devices/:id/sign-out` (any device, either person), `GET /account`,
+  `POST /account/password {currentPassword, newPassword}`, `POST /account/recovery-codes {password, code}`,
+  `POST /account/two-factor/reset {password, code}` → `{ challenge, enroll }`, `POST /account/two-factor/confirm
+  {challenge, code}`. Re-check failures are 403 (not 401: the session is fine).
+- **Sessions**: 32 random bytes (base64url) in cookie `suite_session` — `HttpOnly; SameSite=Strict; Path=/`, `Secure`
+  when the request is HTTPS (`req.secure`, via trust proxy), `Max-Age` 90 days. Only SHA-256(token) is stored
+  (`auth_sessions`). Ends after `SESSION_IDLE_DAYS` (30) unused or `SESSION_MAX_DAYS` (90) after sign-in, whichever
+  first; last-seen is written at most once a minute. One session per device.
+- **Trust proxy**: `TRUST_PROXY` (default `loopback`; compose sets `loopback, uniquelocal` because Docker Desktop's port
+  forwarder delivers Serve's connections from the container network's gateway). Tailscale Serve keeps `Host` and sets
+  `X-Forwarded-Proto: https`, `X-Forwarded-Host` and `X-Forwarded-For` (its own values, not the client's), so
+  `req.secure`, `req.host` and `req.ip` (the device's 100.x address) are right.
+- **CSRF**: (1) the cookie is SameSite=Strict, so no other site's request carries it; (2) every POST/PUT/PATCH/DELETE
+  under `/api` — sign-in included — must send `Origin` equal to this server's own origin as the browser saw it
+  (`req.protocol://req.host`) or one in `ALLOWED_ORIGINS`, and `Sec-Fetch-Site`, when sent, must be `same-origin`;
+  (3) request bodies must be `application/json` (415 otherwise), which a cross-site form can't send and a cross-site
+  fetch can only send after a CORS preflight that the server never approves. GET routes must not change anything.
+  No token is needed on top: all three would have to fail at once. (The Vite dev proxy keeps `changeOrigin: false` so
+  Host matches the page's origin.)
+- **Rate limiting** (`throttle.js`, table `auth_throttle`, survives restarts): every password or code attempt — sign-in
+  and re-checks — is charged *before* checking (refunded if right, including any lock it set, so parallel guesses can't
+  slip past) to three keys, all keyed by the username as typed (unknown usernames too: no enumeration):
+  `acct-ip:<user>@<ip>` (the strict limit is per account **+ address**, not per device id) — 5 failures lock it 1 min,
+  doubling to 1 h; `acct:<user>` — 30 failures within an hour lock the account 15 min; `ip:<ip>` — 20 failures (any
+  usernames) lock that address 1 min, doubling to 1 h. Each tailnet device has its own address, so someone guessing
+  from their device locks only that address out of the account (one guess an hour keeps *them* at the 1-hour cap,
+  never the account's owner at other addresses), and one address can't reach the account-wide limit (~5 the first
+  hour, ~1 an hour after). 429 `too_many_attempts` + `Retry-After`. A full sign-in clears that address's keys for the
+  account; counts start again once a key's window (24 h / 1 h) has passed. `users.js unlock|password|reset-2fa`
+  clear the account's keys from every address plus the `ip:` keys of each address that failed on it; `unlock --all`
+  clears everything. Relies on `req.ip` being the device's tailnet address (trust proxy, below); if it weren't, every
+  device would share one address and these limits would apply to all of them together.
+- **Devices** (`auth_devices`): one per browser / home-screen install; its id **is** its sync device id. Default name
+  from the User-Agent (+ "Home screen app" when standalone); either person can rename. At sign-in the browser sends the
+  id it has: kept if it is this person's and not signed out (an expired session continues as the same device, with
+  its outbox), or if neither auth nor sync knows it (e.g. the database was restored from an older backup); otherwise a
+  new id is made and `deviceReplaced: true` tells the browser to drop what it holds for the old one.
+- **Signing a device out** (Devices page, either person; or Sign out on the device itself): sets
+  `auth_devices.signed_out_at/by` and ends its sessions. Its next request — with the old cookie, or with no cookie but
+  `X-Suite-Device: <its id>` — gets **401 `device_signed_out`**, and the cookie is cleared. A signed-out device never
+  gets a session again; signing in there makes a new device. Device rows are never pruned (so the answer keeps
+  coming); ended sessions are pruned after 180 days.
+- **401 codes** (all requests): `not_signed_in` (show sign-in), `session_expired` (sign in again, **keep** local data:
+  same person, same device), `device_signed_out` (**clear** local data, then sign in). The client's
+  `api/client.js` fires `SESSION_LOST_EVENT`; `auth/session.jsx` calls `clearLocalData()` for `device_signed_out` and
+  shows the sign-in screen with the reason. The session is re-checked when the app returns to the foreground and
+  every 5 minutes.
+- **Backups** contain the auth tables (scrypt hashes, TOTP secrets, hashed tokens). **A restore ends every session**:
+  at start (`start` hook) auth compares the sync generation with `auth_meta.sync_generation`; a different one means
+  the database was restored, so all open sessions end (`end_reason = 'restored'`). Every device then gets
+  `session_expired` (sign in again, keep local data) — including a lost phone that was signed out after the backup and
+  never reconnected, which would otherwise have its old session back. Its device row is not signed out in the restored
+  copy, so sign it out again on the Devices page (it can't sign back in without the password and a code). Restores by
+  hand (not `npm run restore`) aren't detected (same limit as sync).
 
 ## Backups
 Design (code in `server/src/backup/`, tests in `server/test/backup.test.js`):
@@ -121,8 +224,9 @@ server clock, server device id).
   From a generation a restore replaced = "saw up to min(its seq, the restored copy's last seq)". Missing or from an
   unknown generation = "saw nothing" (safest: more clashes to review, nothing silently lost).
 
-**Endpoints** (`/api/sync`; identity until C1: headers `X-Suite-Device: <uuidv7>` and `X-Suite-Actor: owner|partner`,
-or `deviceId`/`actor` in the body/query):
+**Endpoints** (`/api/sync`; signed in — the actor and device come from the session, see `identity.js`; a request that
+names a different device (`X-Suite-Device` / `deviceId`) is refused 409, a different actor 403; a signed-out device
+gets 401 `device_signed_out`):
 - `POST /push {steps:[…], deviceTime?}` → `{ generation, seq, hlc, serverTime, clockWarning?, results:[…] }`, one result
   per step in order: `applied` | `duplicate` | `clash` (applied in part or kept for review; `applied`/`lost`/`stale`
   field lists, `clashes` ids, `kept`) | `rejected` (`code` + `reason`; nothing written — show it in "needs attention", never
@@ -188,8 +292,8 @@ or `deviceId`/`actor` in the body/query):
    backfilled value out, write it with `applyLocal`; to show a new field everywhere at once, devices must re-pull from
    scratch (C2b: pull without `since`).
 
-**For C2b (browser side)**: keep a device id (`newId()`, once) and a persisted HLC (`createHlc(id, { last })`, save
-`peek()`); for each change write the step to the outbox with `seen` = cursor of the last complete pull; push in order,
+**For C2b (browser side)**: the device id comes from sign-in (`client/src/auth/device.js` `getDeviceId()`, stored by
+`AuthProvider.signedIn`); keep a persisted HLC (`createHlc(id, { last })`, save `peek()`); for each change write the step to the outbox with `seen` = cursor of the last complete pull; push in order,
 remove `applied`/`duplicate`/`clash` results from the outbox but **keep sent steps for 30 days** (backup retention) so
 they can be re-sent after a restore; move `rejected` ones to "needs attention". On `reset: true` (or a new
 `generation` on push), drop the local copy of server data, re-push the kept sent steps first (in order; they come back
@@ -205,8 +309,18 @@ they can be re-sent after a restore; move `rejected` ones to "needs attention". 
 - **Plan pruning**: `sync_steps`, `sync_field_versions`, tombstones in `sync_records`/module tables, resolved clashes and
   `sync_devices` rows all grow forever. Before it matters, add pruning (e.g. steps and tombstones older than the
   device-retention window, devices unseen for 90 days, forcing those devices to reset).
-**For C1**: replace `identify()` in `modules/sync/identity.js` with the session (actor from the account, device id
-bound to the session); keep the `{ actor, deviceId }` shape. `ACTORS` there are the two people (`system` = server).
+**After a restore** every session has ended (see "Sign-in"): devices get `session_expired`, keep their outbox and kept
+steps, sign in again (keeping their device id), then see `reset: true` and re-push as above.
+**Sign-out and C2b (must do)**: a device can be signed out from the other device at any time. When any request
+(sync or not) answers **401 `device_signed_out`**, the device must delete everything it stores for the person —
+offline records (IndexedDB), the outbox **including unsent changes** (on purpose: the phone may be lost), kept sent
+steps, the HLC, the pull cursor, cached API responses in the service worker — then show sign-in. Do it by extending
+`clearLocalData()` in `client/src/auth/device.js` (already called on that code, on Sign out, and when sign-in returns
+a different device id). On `session_expired` keep everything: after signing in again the device keeps its id, so its
+outbox pushes as before. Send `X-Suite-Device` on every request (`api/client.js` does) so a device whose cookie is
+gone still hears `device_signed_out`. A signed-out device must not push before clearing (the server refuses anyway).
+If the browser is shared (Mac), signing in as the other person gives a new device id → clear the previous person's
+copy first (`deviceReplaced` / id change).
 
 **Not done in C2a / open**: clash resolution needs a connection (no offline "resolve" step yet); pulls send every
 synced record (no "active clients only" scope yet — C2b/C3a should add an entity/scope filter); nothing is pruned
@@ -215,8 +329,7 @@ as a clash against the re-created record's values (safe: kept for review); resto
 detected — always restore with the script.
 
 ## Decisions for later packages
-- **C1 (sign-in)**: sessions/passkeys go in their own module; set `app.set('trust proxy', 'loopback')` when cookies need
-  `secure` (Tailscale Serve terminates TLS and proxies from loopback). Keep the localhost binding regardless.
+- **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: server half done in C2a — see "Offline sync" above. `health_meta.instance_id` still names the
   database and survives restores; the sync `generation` is what changes on a restore. No service worker yet; C2b adds it.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
