@@ -7,35 +7,54 @@ import {
   CONTACT_CHANNELS, CONSENT_KINDS, consentExpiresOn,
 } from '@suite/shared/crm';
 import { TextField, SelectField, TextAreaField, CheckboxField, Segmented } from '../../ui/index.js';
-import { localDate, toDateTimeInput, fromDateTimeInput } from '../../ui/format.js';
+import { localDate, toDateTimeInput } from '../../ui/format.js';
 import { store } from '../../sync/index.js';
 import { FormSheet, useAction } from './parts.jsx';
 import {
   KIND_LABELS, ACTIVITY_LABELS, MANUAL_ACTIVITY_TYPES, CHANNEL_LABELS, PERIOD_LABELS, BILLING_LABELS, CONSENT_KIND_LABELS,
-  titleCase, pickableBusinesses, defaultKindFor, parseDollars, centsToInput, textOrNull,
+  titleCase, pickableBusinesses, defaultKindFor, textOrNull,
 } from './logic.js';
+import {
+  valuesFrom, editChanges, isDirty, activityAt, clientForm, accountForm, contactForm, relationshipForm, serviceForm,
+} from './formFields.js';
 
 const row = { display: 'grid', gap: 'var(--space-3)', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' };
 const opts = (values, labels = {}) => values.map((v) => ({ value: v, label: labels[v] ?? titleCase(v) }));
 const none = (label = '—') => [{ value: '', label }];
 
-/** Field values from a record (or defaults), as form strings. */
-function useValues(record, defaults) {
-  return useState(() => {
-    const out = { ...defaults };
-    for (const k of Object.keys(defaults)) if (record && record[k] !== null && record[k] !== undefined) out[k] = record[k];
-    return out;
-  });
-}
-
-/** Save: create or update (only changed fields go out), then close. */
-async function save(run, entity, record, fields, onDone) {
-  let id = record?.id ?? null;
-  const ok = await run(async () => {
-    if (record) await store.update(entity, record.id, fields);
-    else id = await store.create(entity, fields);
-  });
-  if (ok) onDone(id);
+/**
+ * One add/edit form: its values (from the record when the sheet opened — that snapshot is
+ * `start`), whether anything was changed (`dirty`), input problems, and save(): a new record is
+ * created with every field (+ `parent`, e.g. its client_id); an edit sends only the fields changed
+ * since the sheet opened (formFields.js), so the other person's changes that arrive meanwhile stay.
+ */
+function useForm(form, record, { entity, parent = {}, onDone, initial = null }) {
+  const [start] = useState(() => ({ ...valuesFrom(form, record), ...initial }));
+  const [v, setV] = useState(start);
+  const [problems, setProblems] = useState({});
+  const action = useAction();
+  const set = (k) => (e) => setV((cur) => ({ ...cur, [k]: e?.target ? e.target.value : e }));
+  const save = async () => {
+    let id = record?.id ?? null;
+    let fields;
+    if (record) {
+      const r = editChanges(form, start, v);
+      setProblems(r.problems);
+      if (Object.keys(r.problems).length) return;
+      fields = r.fields;
+    } else {
+      const r = form.toFields(v);
+      setProblems(r.problems ?? {});
+      if (Object.keys(r.problems ?? {}).length) return;
+      fields = { ...parent, ...r.fields };
+    }
+    const ok = await action.run(async () => {
+      if (!record) id = await store.create(entity, fields);
+      else if (Object.keys(fields).length) await store.update(entity, record.id, fields);
+    });
+    if (ok) onDone(id);
+  };
+  return { v, setV, set, save, problems, dirty: isDirty(start, v), ...action };
 }
 
 function deleter(run, entity, record, onDeleted) {
@@ -48,19 +67,16 @@ function deleter(run, entity, record, onDeleted) {
 // ---- client ---------------------------------------------------------------------------------
 
 export function ClientForm({ record, onClose, onDone, onDeleted }) {
-  const [v, setV] = useValues(record, { name: '', status: 'active', tags: '', notes: '' });
-  const { busy, error, run } = useAction();
-  const set = (k) => (e) => setV({ ...v, [k]: e?.target ? e.target.value : e });
+  const { v, set, save, dirty, busy, error, run } = useForm(clientForm, record, { entity: 'client', onDone });
   return (
     <FormSheet
       title={record ? 'Edit client' : 'New client'}
       testId="client-form"
       onClose={onClose}
+      dirty={dirty}
       busy={busy}
       error={error}
-      onSave={() => save(run, 'client', record, {
-        name: textOrNull(v.name), status: v.status, tags: textOrNull(v.tags), notes: textOrNull(v.notes),
-      }, onDone)}
+      onSave={save}
       onDelete={deleter(run, 'client', record, onDeleted)}
       deleteWarning="Delete this client? Only for a mistake: to stop working with them, close the client instead. Their accounts, contacts and timeline are hidden with it (not deleted) and come back if the delete is undone."
     >
@@ -75,24 +91,16 @@ export function ClientForm({ record, onClose, onDone, onDeleted }) {
 // ---- account --------------------------------------------------------------------------------
 
 export function AccountForm({ record, clientId, onClose, onDone, onDeleted }) {
-  const [v, setV] = useValues(record, {
-    name: '', street: '', city: '', region: '', postal_code: '', country: '', website: '', tags: '', notes: '', age_restricted: false,
-  });
-  const { busy, error, run } = useAction();
-  const set = (k) => (e) => setV({ ...v, [k]: e?.target ? e.target.value : e });
+  const { v, set, save, dirty, busy, error, run } = useForm(accountForm, record, { entity: 'account', parent: { client_id: clientId }, onDone });
   return (
     <FormSheet
       title={record ? 'Edit account' : 'New account'}
       testId="account-form"
       onClose={onClose}
+      dirty={dirty}
       busy={busy}
       error={error}
-      onSave={() => save(run, 'account', record, {
-        ...(record ? {} : { client_id: clientId }),
-        name: textOrNull(v.name), street: textOrNull(v.street), city: textOrNull(v.city), region: textOrNull(v.region),
-        postal_code: textOrNull(v.postal_code), country: textOrNull(v.country), website: textOrNull(v.website),
-        tags: textOrNull(v.tags), notes: textOrNull(v.notes), age_restricted: Boolean(v.age_restricted),
-      }, onDone)}
+      onSave={save}
       onDelete={deleter(run, 'account', record, onDeleted)}
       deleteWarning="Delete this account? Only for a mistake. Its relationships and services are hidden with it (not deleted); notes logged on it stay on the client’s timeline."
     >
@@ -121,21 +129,16 @@ export function AccountForm({ record, clientId, onClose, onDone, onDeleted }) {
 // ---- contact --------------------------------------------------------------------------------
 
 export function ContactForm({ record, clientId, accounts, onClose, onDone, onDeleted }) {
-  const [v, setV] = useValues(record, { name: '', role: '', account_id: '', email: '', phone: '', preferred_channel: '', notes: '' });
-  const { busy, error, run } = useAction();
-  const set = (k) => (e) => setV({ ...v, [k]: e?.target ? e.target.value : e });
+  const { v, set, save, dirty, busy, error, run } = useForm(contactForm, record, { entity: 'contact', parent: { client_id: clientId }, onDone });
   return (
     <FormSheet
       title={record ? 'Edit contact' : 'New contact'}
       testId="contact-form"
       onClose={onClose}
+      dirty={dirty}
       busy={busy}
       error={error}
-      onSave={() => save(run, 'contact', record, {
-        ...(record ? {} : { client_id: clientId }),
-        name: textOrNull(v.name), role: textOrNull(v.role), account_id: v.account_id || null,
-        email: textOrNull(v.email), phone: textOrNull(v.phone), preferred_channel: v.preferred_channel || null, notes: textOrNull(v.notes),
-      }, onDone)}
+      onSave={save}
       onDelete={deleter(run, 'contact', record, onDeleted)}
       deleteWarning="Delete this contact? Only for a mistake. Their consent records are hidden with them (not deleted)."
     >
@@ -159,23 +162,19 @@ export function ContactForm({ record, clientId, accounts, onClose, onDone, onDel
 // ---- relationship -----------------------------------------------------------------------------
 
 export function RelationshipForm({ record, accountId, accounts, businesses, onClose, onDone, onDeleted }) {
-  const [v, setV] = useValues(record, {
-    account_id: accountId ?? '', business_id: '', kind: '', status: 'active', start_date: '', notes: '',
+  const { v, setV, set, save, dirty, busy, error, run } = useForm(relationshipForm, record, {
+    entity: 'relationship', onDone, initial: record ? null : { account_id: accountId ?? '' },
   });
-  const { busy, error, run } = useAction();
-  const set = (k) => (e) => setV({ ...v, [k]: e?.target ? e.target.value : e });
-  const pickBusiness = (id) => setV({ ...v, business_id: id, kind: v.kind || defaultKindFor(id) });
+  const pickBusiness = (id) => setV((cur) => ({ ...cur, business_id: id, kind: cur.kind || defaultKindFor(id) }));
   return (
     <FormSheet
       title={record ? 'Edit relationship' : 'New relationship'}
       testId="relationship-form"
       onClose={onClose}
+      dirty={dirty}
       busy={busy}
       error={error}
-      onSave={() => save(run, 'relationship', record, {
-        account_id: v.account_id || null, business_id: v.business_id || null, kind: v.kind || null, status: v.status,
-        start_date: v.start_date || null, notes: textOrNull(v.notes),
-      }, onDone)}
+      onSave={save}
       onDelete={deleter(run, 'relationship', record, onDeleted)}
       deleteWarning="Delete this relationship? Only for a mistake: when the work stops, set its status to Ended. Its services are hidden with it (not deleted)."
     >
@@ -206,39 +205,18 @@ export function RelationshipForm({ record, accountId, accounts, businesses, onCl
 // ---- service ----------------------------------------------------------------------------------
 
 export function ServiceForm({ record, relationshipId, onClose, onDone, onDeleted }) {
-  const [v, setV] = useValues(record, {
-    name: '', status: 'active', stage: '', billing: '', period: '', sessions: '', start_date: '', renewal_date: '', scope: '', notes: '',
+  const { v, set, save, dirty, problems, busy, error, run } = useForm(serviceForm, record, {
+    entity: 'service', parent: { relationship_id: relationshipId }, onDone,
   });
-  const [amount, setAmount] = useState(centsToInput(record?.amount_cents));
-  const [rate, setRate] = useState(centsToInput(record?.rate_cents));
-  const [moneyError, setMoneyError] = useState({});
-  const { busy, error, run } = useAction();
-  const set = (k) => (e) => setV({ ...v, [k]: e?.target ? e.target.value : e });
-  const onSave = () => {
-    const amountCents = parseDollars(amount);
-    const rateCents = v.billing === 'hourly' ? parseDollars(rate) : (record?.rate_cents ?? null);
-    const sessions = String(v.sessions).trim() === '' ? null : Number(v.sessions);
-    const problems = {};
-    if (Number.isNaN(amountCents)) problems.amount = 'Enter dollars, like 1500 or 1,500.00';
-    if (Number.isNaN(rateCents)) problems.rate = 'Enter dollars, like 95 or 95.50';
-    if (sessions !== null && !(Number.isSafeInteger(sessions) && sessions >= 0)) problems.sessions = 'Enter a whole number';
-    setMoneyError(problems);
-    if (Object.keys(problems).length) return;
-    save(run, 'service', record, {
-      ...(record ? {} : { relationship_id: relationshipId }),
-      name: textOrNull(v.name), status: v.status, stage: textOrNull(v.stage), billing: v.billing || null,
-      amount_cents: amountCents, rate_cents: rateCents, period: v.period || null, sessions,
-      start_date: v.start_date || null, renewal_date: v.renewal_date || null, scope: textOrNull(v.scope), notes: textOrNull(v.notes),
-    }, onDone);
-  };
   return (
     <FormSheet
       title={record ? 'Edit service' : 'New service'}
       testId="service-form"
       onClose={onClose}
+      dirty={dirty}
       busy={busy}
       error={error}
-      onSave={onSave}
+      onSave={save}
       onDelete={deleter(run, 'service', record, onDeleted)}
       deleteWarning="Delete this service? Only for a mistake: when it’s finished, set its status to Done (or Cancelled)."
     >
@@ -256,15 +234,15 @@ export function ServiceForm({ record, relationshipId, onClose, onDone, onDeleted
           id="svc-amount"
           label={v.billing === 'hourly' ? 'Retainer $ (optional)' : 'Amount $ (optional)'}
           inputMode="decimal"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          error={moneyError.amount}
+          value={v.amount}
+          onChange={set('amount')}
+          error={problems.amount}
           hint="Fee, or per period for a retainer"
         />
         {v.billing === 'hourly' ? (
-          <TextField id="svc-rate" label="Hourly rate $" inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} error={moneyError.rate} />
+          <TextField id="svc-rate" label="Hourly rate $" inputMode="decimal" value={v.rate} onChange={set('rate')} error={problems.rate} />
         ) : null}
-        <TextField id="svc-sessions" label="Sessions (optional)" inputMode="numeric" value={v.sessions} onChange={set('sessions')} error={moneyError.sessions} />
+        <TextField id="svc-sessions" label="Sessions (optional)" inputMode="numeric" value={v.sessions} onChange={set('sessions')} error={problems.sessions} />
       </div>
       <div style={row}>
         <TextField id="svc-start" label="Started (optional)" type="date" value={v.start_date} onChange={set('start_date')} />
@@ -292,6 +270,7 @@ export function ConsentForm({ contact, businesses, businessId, onClose, onDone }
       title={`Consent · ${contact.name}`}
       testId="consent-form"
       onClose={onClose}
+      dirty={v.business_id !== (businessId ?? '') || Boolean(textOrNull(v.source)) || v.withdrawn || v.kind !== 'express' || v.date !== today || expires !== null}
       busy={busy}
       error={error}
       saveLabel="Record"
@@ -308,7 +287,7 @@ export function ConsentForm({ contact, businesses, businessId, onClose, onDone }
         label="Our business"
         value={v.business_id}
         onChange={set('business_id')}
-        options={[...none('Choose…'), ...pickableBusinesses(businesses).map((b) => ({ value: b.id, label: b.name }))]}
+        options={[...none('Choose…'), ...pickableBusinesses(businesses, businessId ?? null).map((b) => ({ value: b.id, label: b.archived ? `${b.name} (archived)` : b.name }))]}
         hint="Consent is per business: a yes to one isn’t a yes to the others."
       />
       <Segmented
@@ -351,7 +330,8 @@ export function activityTitle(type) {
 }
 
 export function ActivityForm({ clientId, type: initialType = 'note', accountId = '', businessId = '', accounts, businesses, onClose, onDone }) {
-  const [v, setV] = useState({ type: initialType, body: '', account_id: accountId, business_id: businessId, at: toDateTimeInput() });
+  const [start] = useState(() => ({ type: initialType, body: '', account_id: accountId, business_id: businessId, at: toDateTimeInput() }));
+  const [v, setV] = useState(start);
   const [whenError, setWhenError] = useState(null);
   const { busy, error, run } = useAction();
   const set = (k) => (e) => setV({ ...v, [k]: e?.target ? e.target.value : e });
@@ -360,10 +340,11 @@ export function ActivityForm({ clientId, type: initialType = 'note', accountId =
       title={activityTitle(v.type)}
       testId="activity-form"
       onClose={onClose}
+      dirty={Boolean(textOrNull(v.body)) || isDirty({ ...start, body: '' }, { ...v, body: '' })}
       busy={busy}
       error={error}
       onSave={async () => {
-        const at = fromDateTimeInput(v.at);
+        const at = activityAt(start.at, v.at);
         setWhenError(at ? null : 'Pick a date and time');
         if (!at) return;
         const ok = await run(() => store.create('activity', {
