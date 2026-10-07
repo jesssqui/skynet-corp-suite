@@ -301,6 +301,7 @@ gets 401 `device_signed_out`):
   whose subtree has a create/update by another device after the deleter's `seen` is kept and flagged. Such a clash's
   `winner.value` is `{ _child: { entity, id } }` (what kept it). An ancestor the device knew was deleted → the step is
   refused `deleted`. Non-parent refs only have to exist (they may name a deleted record: read it as none).
+  Devices hide such records the same way (engine `list`/`get`, see C2b "Hidden under a deleted parent").
 - **Restore generation**: `restore.js` marks the restored file; on the next start sync gives the database a new
   `generation` and remembers the replaced one with its last seq (`sync_meta.previous_generations`). A pull with a cursor
   from another generation (or ahead of the server) gets `reset: true` and starts from the beginning (the device may
@@ -324,12 +325,17 @@ gets 401 `device_signed_out`):
      refused `not_found`, which devices park and retry after each pull (it may still be on its way: made on the other
      device, re-sent after a restore). With SQL FKs it would be `constraint` → Needs attention instead.
    - `parent: true` (with `ref`): what the record **belongs to**. See "Belonging" below.
+   A `not_found` rejection says what is missing: `missing: { field, entity, id }` (`field` null = the record itself).
+   Also on registerEntity: `check({ op, recordId, fields, current })` — the module's own rule, run inside the step's
+   transaction after the field and reference checks (reads only); return `{ code, reason }` to refuse the step
+   (devices show it in Needs attention). The CRM uses it for "one live link per outside record".
    **Column types must match field types** or registration fails: `text`/`date`/`datetime`/`id`/`enum` → `TEXT`,
    `integer`/`boolean` → `INTEGER`, `number` → `REAL` (`id`, `deleted_at`, `created_*`/`updated_*` TEXT, `flagged`
    INTEGER). A boolean in a TEXT column would come back as '1.0'; "0123" in an INTEGER column as 123.
 3. The module comes **after `sync`** in `modules/index.js`.
 4. **All writes go through sync**: devices push steps; server code calls `ctx.services.sync.applyLocal({ actor, entity,
-   op, recordId?, fields })` (imports, automations — same rules and log, server's own device id). TEMP triggers make
+   op, recordId?, fields, stampMs? })` (imports, automations — same rules and log, server's own device id; `stampMs` =
+   stamp it at a fixed past time, for seeds: any real edit is later and wins a clash). TEMP triggers make
    any other write to a registered table fail on the app's connection. Reads are the module's own SQL — always filter
    `deleted_at IS NULL`; `sync.recordState(entity, id)` gives flag + open clashes for a record page.
 5. Plan new fields as nullable or with defaults; renaming/removing a synced field breaks old outbox steps (`unknown_field`).
@@ -370,9 +376,16 @@ await store.update('task', id, { done: true });     // sends only fields that ch
 await store.remove('task', id);
 await store.list('task', { where: { done: false } /* or (rec) => bool */, sort: 'due' /* '-due', or (a, b) => n */ });
 await store.get('task', id);                         // null when this device doesn't have it
+await store.liveCounts(['client', 'contact']);       // { client: n, … } as people see them
 const { records, loading } = useRecords('task', { where, sort }, deps);   // live; `deps` = state where/sort depend on
 const { record } = useRecord('client', clientId);
 ```
+**Hidden under a deleted parent**: `list`, `get`, `liveCounts` and the hooks leave out records whose `parent` chain
+isn't on the device (deleted — deletes don't cascade — or a create that was refused): a contact of a deleted client,
+a service of a relationship of a deleted account. `{ orphans: true }` (list/get, `useRecords`) includes them (what the
+device holds; `counts()` is raw too). Such a record can't be updated or removed (`not_found`). `engine.ancestorsOf(entity)`
+names the types it belongs to; the hooks re-read on changes to those too. Every CRM list (C3b) gets this for free;
+custom `useSyncData` reads should pass `entities: () => [entity, ...engine.ancestorsOf(entity)]`.
 A record is `{ id, ...fields, _sync: { entity, pending, local, flagged, clashes } }` (`pending`: a change is waiting to
 be sent; `local`: made here, not in the pulled copy yet). Record pages show `<SyncBadges record={r} />` and
 `<ClashPanel record={r} definition={engine.definition(entity)} />` (both cheap per row: ClashPanel subscribes to
@@ -412,10 +425,14 @@ sent), `suite.theme`.
   a 413 halves the batch) → pull pages until `hasMore` is false → push the parked steps once more → drop sent steps
   older than 30 days. Tabs tell each other about changes over a BroadcastChannel (`suite-sync`).
 - **Results**: `applied`/`duplicate`/`clash` → out of the outbox into `sent`; `stale` fields are just done; rejected
-  `not_found` → parked in the outbox and retried after every pull (and after a reset); any other rejection →
+  `not_found` → parked in the outbox and retried after every pull (and after a reset) — `parked: { code, reason,
+  missing, at, triedAt }`, `at` = when it started waiting (kept across retries), `missing` = what it waits for (shown as
+  "Waiting for its client “Lefty’s”"); any other rejection →
   `attention`: **Try again** re-sends the same step (same key — the server never recorded it), **Fix…** makes a new
   step (new key and stamp) with corrected fields, **Discard** drops it (a refused create also drops later changes to
-  that record). The Fix form starts from the latest values (the refused step with the record's later waiting edits on
+  that record, and every waiting change that points to it moves to Needs attention as `parent_discarded` — it could
+  never be sent; fix it to point elsewhere or discard it, which cascades the same way; discarding a waiting create
+  does the same). The Fix form starts from the latest values (the refused step with the record's later waiting edits on
   top); fixing a refused create **folds those later edits into the new create** and takes them out of the outbox in
   the same transaction — left alone they would be older than the fix and the server would drop them as stale.
   Parked steps are listed there too ("Waiting for their record") and can be discarded.
@@ -517,14 +534,16 @@ client `client/src/modules/crm/`; tests `server/test/crm.test.js`, `client/test/
 
 **Record types** (entity → table `crm_<plural>`; every one synced, UUIDv7 id, `created_*`/`updated_*` who and when,
 `flagged`; ⇧ = `parent` ref, → = plain ref, * = required; text lengths in `entities.js`):
-- `business`: name*, color ("#rrggbb"), logo (URL/path; a file id once files exist), default_owner* (`owner|partner|shared`), position.
+- `business` (create/update only — never deleted: relationships, consent and code via `BUSINESS_IDS` depend on it;
+  `archived` hides one from pickers and lists): name*, color ("#rrggbb"), logo (URL/path; a file id once files exist),
+  default_owner* (`owner|partner|shared`), position, archived (boolean).
 - `client`: name*, status* (`active|closed`), tags (format tags), notes.
 - `account`: client_id*⇧, name*, street, city, region, postal_code (format postal), country, website, tags, notes,
   age_restricted (boolean).
 - `contact`: client_id*⇧, account_id→ (optional: which of their businesses), name*, role, email (format email),
   phone (format phone), preferred_channel (`email|call|text|social|in_person`), notes.
 - `consent` (append-only): contact_id*⇧, business_id*⇧, withdrawn* (boolean), date* (given / withdrawn), kind
-  (`express|implied`, CASL), source (how it was given).
+  (`express|implied_purchase|implied_inquiry`, CASL; none = express), expires_on (date it lapses), source (how it was given).
 - `relationship`: account_id*⇧, business_id*⇧, kind* (`wholesale|website|social|consulting`), status* (`active|paused|ended`),
   start_date, notes.
 - `service`: relationship_id*⇧, name*, status* (`active|paused|done|cancelled`), stage (free text until Projects),
@@ -533,9 +552,13 @@ client `client/src/modules/crm/`; tests `server/test/crm.test.js`, `client/test/
 - `activity` (append-only): client_id*⇧, account_id→, business_id→ (ours), type* (`note|call|email|meeting|order|milestone`),
   body*, at* (datetime it happened; `created_by` = who logged it). A correction is a new activity.
 - `link` (create/delete only; undo = delete): account_id⇧ **or** contact_id⇧ (exactly one: SQL CHECK → `constraint`),
-  app* (`wom`; add values as apps join), external_id*, matched_by* (`auto|approved`). One live link per (app,
-  external_id) per kind of target (partial UNIQUE indexes → `constraint`): an Order Manager customer can be an account
-  and its contact person.
+  app* (`wom`; add values as apps join), external_id*, matched_by* (`auto|approved`). **One live link per (app,
+  external_id) and kind of target**, checked in code (the `check` hook; refused `already_linked`), counting only links
+  whose account/contact **and its client** are live — not a UNIQUE index: deletes don't cascade, so a link under a
+  deleted account stays in the table (an orphan), and an index would refuse re-linking that Order Manager customer
+  forever, invisibly. An Order Manager customer can be an account and its contact person (one link of each kind).
+  **For D2**: read links with `crm.liveLinks(app, externalId)` (live ones only); if a deleted record comes back through
+  a clash, its old link is live again — more than one live link of a kind means "review", never pick one silently.
 Value lists live in `@suite/shared/crm` (use them for labels/pickers). New fields: nullable, never renamed (rule 5).
 
 **Rules for C3b, C4a and the D packages**
@@ -544,8 +567,9 @@ Value lists live in `@suite/shared/crm` (use them for labels/pickers). New field
 - **Our businesses** are seeded at first start through `applyLocal` (actor `system`) with **fixed ids**
   (`OUR_BUSINESSES` / `BUSINESS_IDS` in `@suite/shared/crm`: wholesale, agency = Great White North Design, consulting,
   save_point, retail, personal), only when that id has never existed — no duplicates on restart or restore, and a
-  rename/delete in the app sticks. A restore from before C3a gets them back with the same ids, so devices' kept steps
-  still point at them. Default owners: owner for wholesale/agency/consulting, partner for Save Point Shop, shared for
+  rename/archive in the app sticks. They are stamped at an old fixed time (`SEED_STAMP_MS`, 2026-01-01): after a
+  restore from before C3a they come back with the same ids, and edits re-sent from devices (a rename) are later than
+  the re-made seed, so they win (a field clash is kept for review with the seed value as the loser). Default owners: owner for wholesale/agency/consulting, partner for Save Point Shop, shared for
   the retail stores **and Personal** (proposal: household renewals and bills land on the shared list; a task made by
   hand should default to its maker — C4a).
 - **"Shared"** is `SHARED = 'shared'` in `@suite/shared/actors` (`OWNERS = ['owner', 'partner', 'shared']`): a list
@@ -555,9 +579,20 @@ Value lists live in `@suite/shared/crm` (use them for labels/pickers). New field
   tags "a, b" without repeats). Matching (D2) compares stored values with `=`. The Order Manager's phase-2 groundwork
   should copy `normalizePhone`/`normalizeEmail` exactly. `formatPhone` shows a stored phone as "(519) 555-0100"
   (the generic views' `formatValue` uses it).
+  **Stored formats (settled — changing them later needs a backfill and strands outbox steps)**: email = NFC, invisible
+  characters (zero-width, BOM, soft hyphen) removed, trimmed, lowercase. Phone = exactly one of two shapes:
+  North American `[2-9]XX[2-9]XXXXXX` (10 digits, no +1; typed with or without +1/1) or `+<country code><number>`
+  (7–15 digits, country code not 1; typed with +, 00 or 011). Nothing is guessed: a 7-digit local number is refused
+  (it exists in every area code — D2 would link strangers), and so is a foreign number without its country code
+  ("138 0013 8000"), so "(431) 234-5678" and "+43 1 2345678" stay different. D2 matches phones with `=` on this form.
 - **Consent** is append-only; withdrawing adds a row with `withdrawn: true`. The one that counts per (contact,
-  business) is the latest by `date`, then by `id` (UUIDv7: recorded later wins a same-day tie) — `latestConsents()` /
-  `hasConsent()` in `@suite/shared/crm`, used by the read API; use the same on devices. No consent row = no consent.
+  business) is the latest by `date`; on the same day a **withdrawal wins** (a same-day sign-up recorded later doesn't
+  undo an unsubscribe); then the later `id`. CASL implied consent **lapses**: `implied_purchase` 2 years after `date`,
+  `implied_inquiry` 6 months after (`consentExpiresOn({ kind, date })`; writers store it in `expires_on`, editable
+  for other implied grounds; readers fall back to it when a row has none, so implied consent always lapses; it counts
+  on the days before `expires_on`). `consentStatus(rows, businessId, today)` → `{ given, withdrawn, expired,
+  expiresOn, row }` and `hasConsent()` in `@suite/shared/crm` — used by the read API (server's local date); use the
+  same on devices with the device's local date. No consent row = no consent.
 - **Age-restricted**: `account.age_restricted` (not contact): purchases are made by a business (the Order Manager
   customer links to an account; order activities carry account_id), and one flag per buyer doesn't drift as people
   change roles. Set by hand now, by the wholesale connection later (D). Rule for any marketing list (D packages): an
@@ -572,13 +607,17 @@ Value lists live in `@suite/shared/crm` (use them for labels/pickers). New field
   move them together.
 - **Deleting**: delete only the record itself (e.g. a client) — never its children; they are hidden with it and come
   back if the delete is undone through a clash. Prefer `status: closed` / `ended` for normal use; delete is for mistakes.
-  Reads (server SQL and device lists) must show a record only while its whole parent chain is live, and treat a
-  non-parent ref to a deleted record (contact.account_id, activity.account_id/business_id) as none.
+  Reads show a record only while its whole parent chain is live — server SQL joins up the chain; devices get it from
+  the engine (`list`/`get`/`liveCounts`, "Hidden under a deleted parent"; `/crm` counts and `/sync/data` lists use
+  it, with "N hidden · Show them" there) — and treat a non-parent ref to a deleted record (contact.account_id,
+  activity.account_id/business_id) as none. Orphans stay in the tables (links included — see `link`).
 - **Read API** (`/api/crm`, signed in, GET only): `/businesses`; `/clients?q=&business=&status=&limit=&offset=` (q:
   part of a client/account/contact name or an email, or a phone typed any way; business: clients with a live
-  relationship with it; `{ clients: [{ …client, accountCount, contactCount, businessIds, lastActivityAt }], total }`);
+  relationship with it; `{ clients: [{ …client, accountCount, contactCount, businessIds, lastActivityAt }], total }`;
+  each filter is one `c.id IN (…)` set and only the page's rows get counts — keep it that way: a per-client subquery
+  took 5–7 s at 5,000 clients, now ~10 ms; `crm.test.js` times it);
   `/clients/:id` → `{ client, accounts: [{ …, relationships: [{ …, services }], links }], contacts: [{ …, consent:
-  { [businessId]: { given, date, kind, source, id, recordedAt, recordedBy } }, links }], activities (latest 20),
+  { [businessId]: { given, withdrawn, expired, expiresOn, date, kind, source, id, recordedAt, recordedBy } }, links }], activities (latest 20),
   activityCount }`; the client, accounts, relationships, services, contacts and links carry `_sync: { flagged, clashes }`
   (from `sync.recordState`; append-only activities and consent can't clash);
   `/clients/:id/activities?business=&account=&type=&limit=&offset=` (newest first). Screens can read the device's offline copy
