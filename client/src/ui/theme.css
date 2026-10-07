@@ -1,0 +1,144 @@
+/* Theme tokens: the one place colours, spacing, type and radii are defined.
+   Components use them as var(--token) in inline styles. Light is the default,
+   dark follows the system unless the user picked one (data-theme on <html>). */
+
+:root {
+  --bg: #f6f5f2;
+  --surface: #ffffff;
+  --surface-2: #efede8;
+  --border: #e1ded7;
+  --text: #1c1d1f;
+  --text-muted: #686b72;
+  --accent: #1d5f78;
+  --accent-hover: #174d62;
+  --accent-soft: #dcebf0;
+  --on-accent: #ffffff;
+  --ok: #2f7d4f;
+  --ok-soft: #e1f1e7;
+  --warn: #9a6200;
+  --warn-soft: #fbefd6;
+  --danger: #b3261e;
+  --danger-soft: #fbe2e0;
+  --focus: #2b8ab0;
+  --shadow: 0 1px 2px rgba(20, 20, 20, 0.05), 0 2px 8px rgba(20, 20, 20, 0.04);
+
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 24px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+
+  --sidebar-width: 220px;
+  --tabbar-height: 58px;
+  --tap: 44px; /* minimum touch target */
+
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #121416;
+  --surface: #1a1d20;
+  --surface-2: #23272b;
+  --border: #2d3236;
+  --text: #e8e9ea;
+  --text-muted: #9ba1a7;
+  --accent: #5fb0cf;
+  --accent-hover: #7cc0db;
+  --accent-soft: #1d3540;
+  --on-accent: #0d1a20;
+  --ok: #6cc28f;
+  --ok-soft: #183324;
+  --warn: #e3ad4f;
+  --warn-soft: #3a2c12;
+  --danger: #f08a82;
+  --danger-soft: #3d1c1a;
+  --focus: #7cc0db;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121416;
+    --surface: #1a1d20;
+    --surface-2: #23272b;
+    --border: #2d3236;
+    --text: #e8e9ea;
+    --text-muted: #9ba1a7;
+    --accent: #5fb0cf;
+    --accent-hover: #7cc0db;
+    --accent-soft: #1d3540;
+    --on-accent: #0d1a20;
+    --ok: #6cc28f;
+    --ok-soft: #183324;
+    --warn: #e3ad4f;
+    --warn-soft: #3a2c12;
+    --danger: #f08a82;
+    --danger-soft: #3d1c1a;
+    --focus: #7cc0db;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    color-scheme: dark;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--text-md);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+a {
+  color: var(--accent);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  line-height: 1.2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
