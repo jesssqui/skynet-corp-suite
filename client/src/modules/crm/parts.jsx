@@ -88,15 +88,27 @@ export function StatusBadge({ status }) {
  * A form in a Sheet: Save / Cancel, an inline error, and (for an existing record) "Delete…" with
  * a confirm that says what deleting does. Deleting is for mistakes; normal use is a status.
  */
-export function FormSheet({ title, onClose, onSave, busy, error, children, onDelete, deleteWarning, testId, saveLabel = 'Save' }) {
+export function FormSheet({ title, onClose, onSave, busy, error, children, onDelete, deleteWarning, testId, saveLabel = 'Save', dirty = false }) {
   const [confirming, setConfirming] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
+  // Tapping outside, Escape or the close button never throws away what was typed without asking
+  // (Cancel is the explicit way out).
+  const requestClose = () => (dirty ? setDiscarding(true) : onClose());
   return (
     <Sheet
       title={title}
-      onClose={onClose}
+      onClose={requestClose}
       onSubmit={() => !busy && onSave()}
       testId={testId}
-      footer={confirming ? (
+      footer={discarding ? (
+        <div style={{ display: 'grid', gap: 'var(--space-2)', width: '100%' }} data-testid="discard-confirm">
+          <Notice tone="warn">Discard what you typed? It hasn’t been saved.</Notice>
+          <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+            <Button variant="primary" onClick={() => setDiscarding(false)}>Keep editing</Button>
+            <Button variant="ghost" style={{ color: 'var(--danger)' }} onClick={onClose}>Discard</Button>
+          </div>
+        </div>
+      ) : confirming ? (
         <div style={{ display: 'grid', gap: 'var(--space-2)', width: '100%' }}>
           <Notice tone="warn">{deleteWarning}</Notice>
           <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>

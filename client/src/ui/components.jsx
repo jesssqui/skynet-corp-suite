@@ -1,7 +1,7 @@
 // Shared building blocks. Every module uses these instead of styling its own,
 // so the suite looks like one app. Styles are inline and use the theme tokens
 // (ui.css only for what needs media queries: the Sheet).
-import { useEffect, useId } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { Icon } from './icons.jsx';
 import './ui.css';
 
@@ -335,14 +335,16 @@ export function CheckboxField({ label, id, checked, onChange, hint }) {
 
 /**
  * A dialog for a short form: a sheet from the bottom on phones, a centred panel on wider
- * screens (ui.css). Escape or the close button calls onClose; the page behind doesn't scroll
+ * screens (ui.css). Escape, a tap outside or the close button call onClose (which may ask first); the page behind doesn't scroll
  * while it is open. `footer` (the buttons) stays visible at the bottom while the body scrolls.
  * Wrap body + footer in a <form> by passing `onSubmit`.
  */
 export function Sheet({ title, onClose, onSubmit, children, footer, testId }) {
   const titleId = useId();
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose?.();
+    const onKey = (e) => e.key === 'Escape' && close.current?.();
     document.addEventListener('keydown', onKey);
     const body = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -350,7 +352,7 @@ export function Sheet({ title, onClose, onSubmit, children, footer, testId }) {
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = body;
     };
-  }, [onClose]);
+  }, []);
   const Inner = onSubmit ? 'form' : 'div';
   return (
     <div className="ui-sheet-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose?.()}>
