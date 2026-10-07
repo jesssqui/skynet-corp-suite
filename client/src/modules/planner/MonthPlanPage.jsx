@@ -91,7 +91,7 @@ export default function MonthPlanPage() {
                   <Card key={b.id}>
                     <div className="planner-business-head" data-business={b.id}>
                       <BusinessChip business={b} />
-                      <span style={muted}>{priorities.length} of {MONTH_PRIORITY_LIMIT}</span>
+                      <span style={muted} data-testid="priority-count">{priorities.length} of {MONTH_PRIORITY_LIMIT} priorities</span>
                       <TextButton style={{ marginLeft: 'auto' }} onClick={() => setSheet({ kind: 'goal', initial: { kind: 'month', period: first, business_id: b.id } })} aria-label={`Add a priority for ${b.name}`}>
                         <Icon name="plus" size={14} />Priority
                       </TextButton>

@@ -7,7 +7,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PageHeader, Card, Button, Icon, Segmented, Badge } from '../../ui/index.js';
-import { formatDate } from '../../ui/format.js';
+import { formatDate, formatDay } from '../../ui/format.js';
 import { store } from '../../sync/index.js';
 import { useAuth } from '../../auth/session.jsx';
 import { BusinessChip, TextButton, useAction } from '../crm/parts.jsx';
@@ -180,7 +180,7 @@ export default function ReviewPage() {
                 render={({ client, last }) => (
                   <li key={client.id} data-client-id={client.id} className="planner-review-row">
                     <Link to={`/crm/clients/${client.id}`} style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{client.name}</Link>
-                    <span style={muted}>{last ? `Last: ${formatDate(last.slice(0, 10))}` : 'No activity yet'}</span>
+                    <span style={muted}>{last ? `Last: ${formatDay(last)}` : 'No activity yet'}</span>
                   </li>
                 )}
               />

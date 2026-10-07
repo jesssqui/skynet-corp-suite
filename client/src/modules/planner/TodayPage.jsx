@@ -22,6 +22,8 @@ import { TaskSheet, newTaskInitial } from './forms.jsx';
 import PlanSheet from './PlanSheet.jsx';
 
 const SHOWN_FLAGS = 5;
+// Three header buttons fit one row on a 390px phone.
+const tight = { paddingLeft: 'var(--space-3)', paddingRight: 'var(--space-3)' };
 
 function Section({ title, tone, count, children, testId }) {
   return (
@@ -111,9 +113,9 @@ export default function TodayPage() {
         subtitle={formatDate(today, { weekday: true })}
         actions={(
           <>
-            <Button variant="primary" onClick={() => setSheet({ kind: 'plan' })} disabled={!data}><Icon name="star" size={18} />Plan my day</Button>
-            <Button onClick={() => navigate('/focus')} disabled={!data || !view?.total}><Icon name="focus" size={18} />Focus</Button>
-            <Button onClick={addTask} disabled={!data}><Icon name="plus" size={18} />Task</Button>
+            <Button variant="primary" style={tight} onClick={() => setSheet({ kind: 'plan' })} disabled={!data}><Icon name="star" size={18} />Plan my day</Button>
+            <Button style={tight} onClick={() => navigate('/focus')} disabled={!data || !view?.total}><Icon name="focus" size={18} />Focus</Button>
+            <Button style={tight} onClick={addTask} disabled={!data}><Icon name="plus" size={18} />Task</Button>
           </>
         )}
       />

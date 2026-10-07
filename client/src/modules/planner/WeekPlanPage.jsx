@@ -42,10 +42,10 @@ function WeekDays({ data, me, today, monday, dayMinutes, open, setOpen }) {
           <div className="planner-week-day-row">
             <span style={{ fontWeight: d.today ? 700 : 600, minWidth: 64 }}>{d.today ? 'Today' : dayShort(d.day)}</span>
             <div style={{ flex: 1, minWidth: 60 }}>
-              {d.past ? <span style={muted}>Past</span> : <Meter value={d.minutes} max={dayMinutes} over={d.over} label={`${dayShort(d.day)} planned`} />}
+              {d.past ? null : <Meter value={d.minutes} max={dayMinutes} over={d.over} label={`${dayShort(d.day)} planned`} />}
             </div>
-            <span style={{ ...muted, minWidth: 92, textAlign: 'right', color: d.over ? 'var(--warn)' : undefined, fontWeight: d.over ? 600 : 400 }}>
-              {d.past ? `${d.count || 'No'} ${d.count === 1 ? 'task' : 'tasks'}` : `${formatMinutes(d.minutes)} · ${d.count}`}
+            <span style={{ ...muted, minWidth: 72, textAlign: 'right', color: d.over ? 'var(--warn)' : undefined, fontWeight: d.over ? 600 : 400 }}>
+              {d.past ? 'Past' : d.count ? `${formatMinutes(d.minutes)} · ${d.count} ${d.count === 1 ? 'task' : 'tasks'}` : 'Free'}
             </span>
             {d.over ? (
               <TextButton onClick={() => setOpen(open === d.day ? null : d.day)} aria-expanded={open === d.day} aria-label={`What to push off ${dayShort(d.day)}`}>
