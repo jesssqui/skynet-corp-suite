@@ -1,0 +1,40 @@
+# The suite on the Mac mini. See DEPLOY.md for the full steps.
+#   docker compose up -d --build
+# Reachable only at http://127.0.0.1:3100 on the Mac itself; Tailscale Serve
+# puts HTTPS in front of it for your tailnet. Nothing is exposed to the LAN or
+# the internet (there is no sign-in until package C1).
+name: suite
+
+services:
+  suite:
+    build:
+      context: .
+      args:
+        APP_COMMIT: ${APP_COMMIT:-}
+    image: suite:local
+    container_name: suite
+    restart: unless-stopped
+    ports:
+      # Host loopback only. Do not change to "3100:3100" — that would publish
+      # the port on every network interface of the Mac.
+      - "127.0.0.1:${SUITE_PORT:-3100}:3100"
+    environment:
+      TZ: ${TZ:-America/Toronto}
+      BACKUP_TIME: ${BACKUP_TIME:-03:15}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      # Live database: a Docker named volume (inside Docker's Linux VM), which is
+      # where SQLite's WAL locking is reliable. Not a folder on the Mac.
+      - suite-data:/app/data
+      # Off-machine backup folder on the Mac (cloud-synced folder or mounted
+      # network share). Must contain the .suite-backup-target marker file.
+      - ${SUITE_OFFSITE_DIR:?Set SUITE_OFFSITE_DIR in .env - see DEPLOY.md}:/offsite
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  suite-data:
