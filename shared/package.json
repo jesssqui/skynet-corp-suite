@@ -1,0 +1,14 @@
+{
+  "name": "@suite/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Code shared by the server and the client (runs in Node and the browser)",
+  "type": "module",
+  "exports": {
+    "./ids": "./ids.js",
+    "./time": "./time.js"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  }
+}
