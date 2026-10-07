@@ -57,6 +57,10 @@ test('the index: account names, the businesses they work with (any status), last
   assert.deepEqual(new Set(c1.businessIds), new Set([A, W, C]), 'an ended relationship still counts, as on the server');
   assert.equal(c1.lastActivityAt, '2026-10-03T10:00:00.000Z');
   assert.equal(index.find((r) => r.client.id === 'c3').lastActivityAt, null);
+  // The list passes a precomputed last-activity map instead of every activity.
+  const { activities, ...rest } = example();
+  const last = new Map([['c1', '2026-10-03T10:00:00.000Z'], ['c2', '2026-09-01T10:00:00.000Z']]);
+  assert.deepEqual(buildClientIndex({ ...rest, lastActivity: last }).map((r) => r.lastActivityAt), index.map((r) => r.lastActivityAt));
 });
 
 test('search: client, account and contact names, emails, any word order, accents and apostrophes ignored', () => {
@@ -82,9 +86,12 @@ test('search: a phone typed any way, in part or in full', () => {
   }
   assert.deepEqual(find('+44 1234'), ['c2'], 'international, with its country code');
   assert.deepEqual(find('0044 12345678'), ['c2']);
-  assert.equal(parseQuery('51').phone, null, 'fewer than 3 digits is not a phone search');
-  assert.equal(parseQuery('robin').phone, null);
-  assert.equal(parseQuery('(519) 555').phone, '519555');
+  for (const q of ['1-519-555', '1 (519) 555-01', '+1 519 555', '15195550']) assert.deepEqual(find(q), ['c1'], `${q}: the leading 1 is the +1 country code`);
+  assert.deepEqual(parseQuery('51').phones, [], 'fewer than 3 digits is not a phone search');
+  assert.deepEqual(parseQuery('robin').phones, []);
+  assert.deepEqual(parseQuery('(519) 555').phones, ['519555']);
+  assert.deepEqual(parseQuery('1-519-555').phones, ['1519555', '519555']);
+  assert.deepEqual(parseQuery('1234').phones, ['1234'], 'a short run of digits starting with 1 isn’t read as +1');
 });
 
 test('filters: our business (any relationship) and status (active by default)', () => {

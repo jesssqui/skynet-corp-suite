@@ -181,6 +181,7 @@ test('iPhone: the plan’s example entered and filtered; search by phone; a note
   const box = await bar.getByRole('button', { name: 'Add note' }).boundingBox();
   const tabbar = await page.locator('.shell-tabbar').boundingBox();
   assert.ok(box.height >= 44 && box.y + box.height <= tabbar.y + 1 && box.y > 0, `capture bar placed ${JSON.stringify(box)} above ${JSON.stringify(tabbar)}`);
+  assert.ok((await page.locator('main a[href="/crm"]').first().boundingBox()).height >= 44, 'the back link is a full tap target');
   await page.evaluate(() => window.scrollTo(0, 0));
   await shot(page, 'c3b-client-phone');
   await shot(page, 'c3b-client-phone-screen', { fullPage: false }); // as it looks: the capture bar above the tab bar
@@ -238,6 +239,35 @@ test('Mac: the example entered on a wide screen (records left, timeline right); 
   await checkList(page);
   await shot(page, 'c3b-list-mac');
 
+  // Typed text is never thrown away by a stray Escape or tap outside: it asks first.
+  await page.locator('[data-client-row]', { hasText: 'Northwind Holdings' }).getByRole('link').click();
+  await page.getByRole('button', { name: 'Add note' }).first().click();
+  const sheet = page.getByRole('dialog');
+  await sheet.locator('#act-body').fill('Half-typed thought');
+  await page.keyboard.press('Escape');
+  await sheet.getByTestId('discard-confirm').waitFor(WAIT);
+  await sheet.getByRole('button', { name: 'Keep editing' }).click();
+  assert.equal(await sheet.locator('#act-body').inputValue(), 'Half-typed thought');
+  await page.mouse.click(5, 5); // the backdrop
+  await sheet.getByRole('button', { name: 'Discard' }).click();
+  await sheet.waitFor({ state: 'detached', ...WAIT });
+  await page.getByRole('button', { name: 'Add note' }).first().click();
+  await page.keyboard.press('Escape'); // nothing typed: closes at once
+  await sheet.waitFor({ state: 'detached', ...WAIT });
+
+  // Implied consent says when it lapses; an archived business's row still opens on that business.
+  const robin = page.locator('[data-contact-id]', { hasText: 'Robin Ortega' });
+  await robin.getByRole('button', { name: `Change consent for ${AGENCY}` }).click();
+  await fillSheet(page, [['#consent-kind', 'Implied — they asked (6 months)']], 'Record');
+  await robin.locator(`[data-consent-business="${BUSINESS_IDS.agency}"][data-consent-state="given"]`).getByText(/Implied · inquiry · lapses /).waitFor(WAIT);
+  await page.goto(`${base}/crm/businesses`);
+  await page.getByRole('listitem').filter({ hasText: 'Business consulting' }).getByLabel('Archived').check();
+  await page.goBack();
+  await robin.getByRole('button', { name: 'Change consent for Business consulting' }).click();
+  assert.equal(await page.getByRole('dialog').locator('#consent-business').inputValue(), BUSINESS_IDS.consulting);
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('link', { name: 'Clients', exact: true }).first().click();
+
   // Close the client: it leaves the active list and is found under Closed.
   await page.locator('[data-client-row]', { hasText: 'Northwind Holdings' }).getByRole('link').click();
   await page.getByRole('button', { name: 'Close client' }).click();
@@ -257,12 +287,17 @@ test('Mac: the example entered on a wide screen (records left, timeline right); 
 
   // A mistake deleted (behind a confirm): only that record goes; nothing under it is deleted.
   await page.locator('[data-client-row]', { hasText: 'Northwind Holdings' }).getByRole('link').click();
+  // The timeline is filtered to the account about to be deleted: the filter goes back to All.
+  await page.locator('#tl-account').selectOption({ label: 'Northwind Holdings Inc' });
+  await page.getByTestId('timeline-count').filter({ hasText: '1 of 4' }).waitFor(WAIT);
   await account(page, 'Northwind Holdings Inc').getByRole('button', { name: 'Edit account Northwind Holdings Inc' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('button', { name: 'Delete…' }).click();
   await dialog.getByText('Only for a mistake').waitFor(WAIT);
   await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
   await account(page, 'Northwind Holdings Inc').waitFor({ state: 'detached', ...WAIT });
+  await page.getByTestId('timeline-count').filter({ hasText: /^4$/ }).waitFor(WAIT);
+  assert.equal(await page.locator('#tl-account').inputValue(), 'all');
   await barSays(page, 'All changes saved');
   assert.equal(db.prepare("SELECT count(*) AS n FROM crm_accounts WHERE deleted_at IS NOT NULL").get().n, 1);
   assert.equal(db.prepare("SELECT count(*) AS n FROM crm_relationships WHERE deleted_at IS NULL AND kind = 'consulting'").get().n, 1, 'its relationship is hidden, not deleted');

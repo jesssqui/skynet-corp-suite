@@ -46,6 +46,30 @@ function ColorPicker({ business, onError }) {
   );
 }
 
+/** Archived (hidden from pickers): shows the tick at once; the saved record catches up a moment later. */
+function ArchivedToggle({ business, onError }) {
+  const [checked, setChecked] = useState(Boolean(business.archived));
+  useEffect(() => setChecked(Boolean(business.archived)), [business.archived]);
+  return (
+    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: 'var(--tap)', fontSize: 'var(--text-sm)', cursor: 'pointer' }}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => {
+          const archived = e.target.checked;
+          setChecked(archived);
+          store.update('business', business.id, { archived }).catch((err) => {
+            setChecked(Boolean(business.archived));
+            onError(errorText(err));
+          });
+        }}
+        style={{ width: 20, height: 20, margin: 0 }}
+      />
+      Archived
+    </label>
+  );
+}
+
 export default function BusinessesPage() {
   const { businesses, loading } = useBusinesses();
   // As people see them: records under a deleted client (and so on) aren't counted.
@@ -68,15 +92,7 @@ export default function BusinessesPage() {
                   <ColorPicker business={b} onError={setError} />
                   <span style={{ flex: '1 1 120px', minWidth: 0, overflowWrap: 'anywhere', color: b.archived ? 'var(--text-muted)' : 'inherit' }}>{b.name}</span>
                   <Badge tone="neutral">{ownerLabel(b.default_owner, me)}</Badge>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: 'var(--tap)', fontSize: 'var(--text-sm)', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(b.archived)}
-                      onChange={(e) => store.update('business', b.id, { archived: e.target.checked }).catch((err) => setError(errorText(err)))}
-                      style={{ width: 20, height: 20, margin: 0 }}
-                    />
-                    Archived
-                  </label>
+                  <ArchivedToggle business={b} onError={setError} />
                 </li>
               ))}
             </ul>

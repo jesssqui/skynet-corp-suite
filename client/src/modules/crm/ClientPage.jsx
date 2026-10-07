@@ -55,7 +55,7 @@ function Header({ client, onEdit, onStatus }) {
   return (
     <Card>
       <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
-        <Link to="/crm" style={{ ...muted, display: 'inline-flex', alignItems: 'center', gap: 2, textDecoration: 'none', minHeight: 32, width: 'fit-content' }}>
+        <Link to="/crm" style={{ ...muted, display: 'inline-flex', alignItems: 'center', gap: 2, textDecoration: 'none', minHeight: 'var(--tap)', width: 'fit-content' }}>
           <Icon name="back" size={16} /> Clients
         </Link>
         <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -181,7 +181,7 @@ function ConsentRows({ contact, consents, businessIds, businessesById, today, on
         const c = consentView(consents, id, today);
         const detail = [
           c.kind,
-          c.state === 'given' && c.until ? `until ${formatDate(c.until)}` : null,
+          c.state === 'given' && c.until ? `lapses ${formatDate(c.until)}` : null,
           c.state === 'given' && !c.until ? `since ${formatDate(c.date)}` : null,
           c.state === 'expired' ? `lapsed ${formatDate(c.until)}` : null,
           c.state === 'withdrawn' ? formatDate(c.date) : null,
@@ -331,6 +331,20 @@ function ClientScreen({ clientId }) {
   const [filter, setFilter] = useState({ business: 'all', account: 'all', type: 'all' });
   const [statusError, setStatusError] = useState(null);
   const today = localDate();
+
+  // A filter whose account or business is gone (deleted, maybe on the other device) goes back to All:
+  // the select can't show it, so it would hide everything with nothing on screen to say why.
+  useEffect(() => {
+    if (!data?.client) return;
+    const gone = (value, list) => value !== 'all' && !list.some((x) => x.id === value);
+    if (gone(filter.account, data.accounts) || gone(filter.business, data.businesses)) {
+      setFilter((f) => ({
+        ...f,
+        account: gone(f.account, data.accounts) ? 'all' : f.account,
+        business: gone(f.business, data.businesses) ? 'all' : f.business,
+      }));
+    }
+  }, [data, filter]);
 
   const maps = useMemo(() => {
     if (!data?.client) return null;

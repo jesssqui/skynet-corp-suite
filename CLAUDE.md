@@ -82,11 +82,12 @@ client/src/
   modules/sync/            /sync (Offline data), /sync/attention (Needs attention), /sync/data/:entity (plain records view)
   modules/crm/             C3b screens: ClientListPage (/crm), ClientPage (/crm/clients/:id), BusinessesPage
                            (/crm/businesses), forms.jsx (add/edit sheets), parts.jsx (chips, RecordSync, FormSheet),
-                           data.js (the offline reads), logic.js (search, timeline filters, money, consent, errors — no
+                           data.js (cached offline reads), formFields.js (form values -> changed fields), logic.js (search, timeline filters, money, consent, errors — no
                            React, tested in client/test/clients.test.js), crm.css (layout media queries)
 client/public/             manifest.webmanifest, icons (placeholders)
 client/test/               node --test: the engine against a real server with syncdemo + fixtures/chk (a UNIQUE column),
-                           overlay; fake-indexeddb
+                           overlay, the CRM screens' logic (clients.test.js) and forms with two devices
+                           (clients-forms.test.js); fake-indexeddb
 test/e2e/                  Playwright end-to-end tests (npm run test:e2e); proxy.js cuts the server off for real outages
 ```
 
@@ -389,6 +390,7 @@ await store.update('task', id, { done: true });     // sends only fields that ch
 await store.remove('task', id);
 await store.list('task', { where: { done: false } /* or (rec) => bool */, sort: 'due' /* '-due', or (a, b) => n */ });
 await store.get('task', id);                         // null when this device doesn't have it
+await store.listMany(['client', 'account']);         // { client: [...], account: [...] }: each type and its parents read once
 await store.liveCounts(['client', 'contact']);       // { client: n, … } as people see them
 const { records, loading } = useRecords('task', { where, sort }, deps);   // live; `deps` = state where/sort depend on
 const { record } = useRecord('client', clientId);
@@ -402,7 +404,8 @@ custom `useSyncData` reads should pass `entities: () => [entity, ...engine.ances
 A record is `{ id, ...fields, _sync: { entity, pending, local, flagged, clashes, createdBy, createdAt, updatedBy, updatedAt } }`
 (`pending`: a change is waiting to be sent; `local`: made here, not in the pulled copy yet — so by this device's person;
 the who/when come from the pull's `meta`: null for local records, and for records pulled before C3b until they change
-or "Download everything again"). Record pages show `<SyncBadges record={r} />` and
+or are downloaded again — **after deploying C3b, use Offline data → "Download everything again" once on each device**;
+there is no automatic refetch). Record pages show `<SyncBadges record={r} />` and
 `<ClashPanel record={r} definition={engine.definition(entity)} />` (both cheap per row: ClashPanel subscribes to
 nothing unless the record has clashes). Every write is checked first against the entity's definition with
 `@suite/shared/fields` (the server's own rules); everything the store throws is a `SyncError` with a `code`:
@@ -643,22 +646,30 @@ Value lists live in `@suite/shared/crm` (use them for labels/pickers). New field
   (`useRecords`) instead; the API is for search across everything, records a device may not hold once the pull scope
   exists, and server-side consumers.
 - **Not in C3a/C3b**: tasks (C4a), lead stages (D8), the matching itself (D2: the link record exists; C3b only shows
-  links), the pull scope (see Offline sync C2b, "Scope").
+  links), the pull scope (see Offline sync C2b, "Scope"). **Open**: the server's search (`?q=`) doesn't find a
+  partial phone typed with a leading +1 ("1-519-555"); the devices' search does (`parseQuery` also tries it without
+  the 1) — make `listClients` do the same if the API search is used by a screen.
 
 ## CRM screens (C3b)
 Code `client/src/modules/crm/`; tests `client/test/clients.test.js` (logic) and `test/e2e/clients.e2e.test.js` (the plan's
 one-owner, three-business example entered and filtered on iPhone and desktop, phone search, a note made in an outage).
-- **Offline only**: pages read through `data.js` (`useSyncData` over `engine.list/get`, one subscription per page,
-  watching the CRM entities) and write with `store.create/update/remove` — never `/api/crm`. Lookup structures are
-  built once per data change (`useMemo` on the loaded lists: `buildClientIndex`, the client page's maps); filtering is
-  per keystroke over them; lists show 50 at a time ("Show more"). `logic.js` tests 5,000 clients (index < 1 s,
-  keystroke < 50 ms in Node).
+- **Offline only**: pages read through `data.js` and write with `store.create/update/remove` — never `/api/crm`.
+  `data.js` keeps each CRM type's list per engine (`cachedLists`: types not cached are read together with
+  `engine.listMany`) until a data event names that type or one it belongs to; lookups by field (`entry.where('client_id',
+  id)`) and derived maps (last activity per client) are built once per such change. So saving a note re-reads only
+  activities, and the list reads the client page's types in the background, so opening a client is quick. Pages build
+  their own structures with `useMemo` (`buildClientIndex`, the client page's maps); filtering is per keystroke; lists
+  show 50 at a time. Measured (`test/e2e/clients-scale.e2e.test.js`, 3,000 clients ≈ 33,000 records, iPhone emulation
+  here): list cold ~0.9 s, search ~50 ms, client page ~0.8 s right after the list opens (~70 ms once its background read
+  is done), saving a note until it shows ~0.3 s, back to the list ~0.2 s, client page after a reload ~1.5 s; the first
+  download of 33,000 records takes ~37 s (engine, pull pages of 500).
 - **`/crm` client list**: search (`parseQuery`/`matchesQuery`: every word must appear in the client's, an account's or a
   contact's name or an email — accents and apostrophes folded; a query of phone characters with 3+ digits is also
   normalised with `normalizePhone` and matched as part of a stored phone, the server's rule), business filter (any live
   relationship with it, any status — as `GET /api/crm/clients?business=`), status (Active default / Closed / All).
   Filters live in the URL (`?q=&business=&status=`) so Back restores them. Rows: name, account names, business chips
-  (short names, `businessColor`), last activity day. Links to Our businesses and Offline data.
+  (short names, `businessColor`), last activity day. Links to Our businesses and Offline data. A partial phone typed
+  with the +1 ("1-519-555", "+1 519") is also tried without the 1.
 - **`/crm/clients/:id`** (keyed by id: filters reset per client): header (status, tags, notes, Edit, Close/Reopen),
   Accounts → relationships (business chip, kind, status, since) → services (status, stage, `billingSummary`, renewal),
   Contacts (mailto/tel, `formatPhone`, prefers, consent per business: rows for the businesses with a relationship on
@@ -668,6 +679,12 @@ one-owner, three-business example entered and filtered on iPhone and desktop, ph
   (≥ 1100 px): records left, timeline right; phones: one column plus a fixed **capture bar** (Add note / Log call)
   above the tab bar. Quick capture pre-selects the timeline's current business/account filter; `at` defaults to now
   (datetime-local, local time) for back-dating; types note/call/email/meeting/milestone (`order` is for automations).
+- **Edits send only what the person changed** since the sheet opened (`formFields.js`: `valuesFrom` snapshot,
+  `editChanges` diff), never the whole form: a change by the other person that arrives while the sheet is open (a new
+  phone, a client closed) must survive — sending every field would put the old values back as a normal later edit,
+  with no clash. Tested with two devices in `client/test/clients-forms.test.js`. A sheet with unsaved input asks
+  before Escape / a tap outside / ✕ discards it (Cancel discards). Quick capture's "When" left untouched means the
+  moment of saving (`activityAt`). Timeline filters whose account/business is gone go back to All.
 - **Forms** (`forms.jsx`, in a `Sheet`): business pickers hide archived businesses (`pickableBusinesses` keeps the
   record's own); relationship kind is pre-filled from the business (wholesale/consulting/agency → website); services
   take dollars (`parseDollars`) and store cents; consent is a new row each time (given: kind + date, `expires_on`
