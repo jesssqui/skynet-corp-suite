@@ -67,7 +67,9 @@ export default function ClientListPage() {
   useEffect(() => setShown(PAGE), [q, business, status]);
 
   const setParam = (key, value, fallback = '') => {
-    const next = new URLSearchParams(params);
+    // From the address bar, not this render's params: two quick changes (a pick, then a tap) must
+    // not undo each other while the router re-renders.
+    const next = new URLSearchParams(window.location.search);
     if (!value || value === fallback) next.delete(key);
     else next.set(key, value);
     setParams(next, { replace: true });

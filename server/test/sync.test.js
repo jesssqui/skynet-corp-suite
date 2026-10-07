@@ -18,7 +18,7 @@ const apps = new Map();
 async function startApp(t, config) {
   // The sync rules, proven with the test-only syncdemo module. The CRM (its seeded businesses
   // would shift every count and seq here) is tested with sync in crm.test.js.
-  const env = await startTestApp(t, config, { modules: [...modules.filter((m) => m.name !== 'crm'), syncdemo] });
+  const env = await startTestApp(t, config, { modules: [...modules.filter((m) => !['crm', 'planner'].includes(m.name)), syncdemo] });
   const users = await ensureTestUsers(env.ctx);
   // A separate signed-in browser for requests that aren't about a particular device (clash lists, info).
   const observer = sessionFor(env.ctx, users.owner);

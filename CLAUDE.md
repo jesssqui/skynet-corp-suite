@@ -8,7 +8,9 @@ sign-in from **C1** (module `auth`: two accounts, password + authenticator code,
 of offline sync from **C2b** (the on-device copy and outbox in IndexedDB, a service worker so the app opens with no
 signal, the sync bar and the Needs attention page), the CRM's core records from **C3a** (module `crm`: our businesses,
 clients, accounts, contacts, consent, relationships, services, activities, links — all synced) and its screens from
-**C3b** (client list and search, the client page with its timeline, quick notes and call logs — all offline).
+**C3b** (client list and search, the client page with its timeline, quick notes and call logs — all offline), and the
+planner from **C4a** (module `planner`: tasks, the shared list, the capture inbox, each person's Today with the morning
+plan, and the "No next step" flag on relationships — all synced and offline).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -42,7 +44,8 @@ Deploying, Tailscale Serve, backup scheduling and the restore drill: **DEPLOY.md
 shared/                    @suite/shared — ids.js (UUIDv7), time.js, hlc.js (sync clock stamps), actors.js (+ OWNERS),
                            fields.js (synced field types + value checks, used by the server and devices),
                            normalize.js (clean emails/phones/postal codes/tags), crm.js (CRM value lists, our
-                           businesses' fixed ids, the consent rule); tests in shared/test
+                           businesses' fixed ids, the consent rule), planner.js (task/inbox value lists, "HH:MM"
+                           times, automatedTaskOwner, the "no next step" rule); tests in shared/test
 server/src/
   index.js                 start: open db, createApp, listen, heartbeat, backup schedule, shutdown
   app.js                   createApp({config, db, log}) — migrations, services, routes, static client, errors
@@ -56,6 +59,8 @@ server/src/
   modules/sync/            offline sync: registry.js, service.js, routes.js, identity.js (session -> actor + device)
   modules/crm/             CRM core records: entities.js (the record types), service.js (registration, seeds, reads),
                            routes.js (read API), migrations/001_create_crm.sql
+  modules/planner/         C4a tasks + inbox: entities.js, service.js (registration, checkTask, automatedOwnerFor),
+                           migrations/001_create_planner.sql; no routes
   backup/                  backup.js, restore.js, schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file)
 server/scripts/            backup.js, restore.js, users.js (CLIs)
@@ -75,7 +80,7 @@ client/src/
   ui/                      the shared look: theme.css (tokens, light/dark), theme.jsx, components.jsx (incl. Sheet, SelectField,
                            TextAreaField, CheckboxField), ui.css (the Sheet's media queries), icons.jsx; import from ui/index.js.
                            ui/format.js: formatDate/formatDateTime/formatDay (local time), toDateTimeInput/fromDateTimeInput
-  modules/index.js         client module registration list -> nav + routes
+  modules/index.js         client module registration list -> nav + routes (a module's `nav` may be a list; `Badge`)
   modules/<name>/          index.jsx ({ id, nav, routes }) + pages
   api/client.js            fetch wrapper (api.get/post/put/del, ApiError); sends X-Suite-Device; 401 session codes
                            fire SESSION_LOST_EVENT
@@ -84,10 +89,17 @@ client/src/
                            (/crm/businesses), forms.jsx (add/edit sheets), parts.jsx (chips, RecordSync, FormSheet),
                            data.js (cached offline reads), formFields.js (form values -> changed fields), logic.js (search, timeline filters, money, consent, errors — no
                            React, tested in client/test/clients.test.js), crm.css (layout media queries)
+  modules/planner/         C4a screens: TodayPage (/), InboxPage (/inbox), TasksPage (/tasks), PlanSheet (Plan my day),
+                           ClientTasksCard.jsx (the client page's Tasks card + "No next step · Add"), forms.jsx
+                           (TaskSheet, InboxNoteSheet, newTaskInitial), parts.jsx (TaskRow, tick, CaptureBar, useToday),
+                           data.js (cached reads via crm/data.js), prefs.js (last business per person on this device,
+                           ticks kept this session), logic.js + taskForm.js (no React; client/test/planner*.test.js),
+                           planner.css
 client/public/             manifest.webmanifest, icons (placeholders)
 client/test/               node --test: the engine against a real server with syncdemo + fixtures/chk (a UNIQUE column),
                            overlay, the CRM screens' logic (clients.test.js) and forms with two devices
-                           (clients-forms.test.js); fake-indexeddb
+                           (clients-forms.test.js), the planner's logic (planner.test.js) and two devices
+                           (planner-forms.test.js); fake-indexeddb
 test/e2e/                  Playwright end-to-end tests (npm run test:e2e); proxy.js cuts the server off for real outages
 ```
 
@@ -102,6 +114,8 @@ One folder per module on each side, same name on both (`server/src/modules/healt
   `ctx.services.<other>` is how a module uses another one. **A module reads and writes only its own tables** — never
   another module's.
 - **Client shape** (`modules/<name>/index.jsx`): `{ id, nav: { label, icon, order, path? }, routes: [{ path, element }] }`.
+  `nav` may be a list of entries (each with its own `id`; the planner has Today, Inbox and Tasks) and an entry may
+  have `Badge`, a component shown beside its label (the inbox's count).
   Add it to `client/src/modules/index.js`; the shell's nav and router pick it up. Icons are named (`ui/icons.jsx`).
 - To add a module: create both folders, register in both lists, add tests in `server/test/<name>.test.js`.
 
@@ -695,17 +709,112 @@ one-owner, three-business example entered and filtered on iPhone and desktop, ph
   services, contacts; activities show "Waiting to sync" and who logged them ("by you" / "by your partner").
 - **Our businesses** (`/crm/businesses`): owner label from each person's side, a colour picker (`business.color`;
   seeded businesses have none, so `businessColor` falls back to a fixed colour per seeded id) and Archived.
-- For **C4a**: reuse `Sheet`, `FormSheet`, `useAction`/`errorText`, `BusinessChip`, `pickableBusinesses`, `actorLabel`
+- For **C4a** (done, see "Planner"): reuse `Sheet`, `FormSheet`, `useAction`/`errorText`, `BusinessChip`, `pickableBusinesses`, `actorLabel`
   and `ui/format.js`. The client page has room for a Tasks card in the left column (or above the timeline); the timeline
   filter state is the natural default for a new task's business/account, as quick capture does.
+
+## Planner (planner module, C4a)
+Code `server/src/modules/planner/` (record types in `entities.js`), shared facts `shared/planner.js`, client
+`client/src/modules/planner/`; tests `server/test/planner.test.js`, `client/test/planner.test.js` (logic),
+`client/test/planner-forms.test.js` (two devices), `test/e2e/planner.e2e.test.js` (iPhone and Mac).
+Registered after `sync` and `crm` (its refs name CRM entities; the service refuses to start without crm). It reads
+only its own tables and has **no HTTP routes**: devices use their offline copy, server code `sync.applyLocal`.
+
+**Record types** (synced, UUIDv7 ids, `created_*`/`updated_*`, `flagged`; ⇧ parent, → plain ref, * required):
+- `task` (`planner_tasks`; create/update/delete — delete is for mistakes, finishing sets `done_at`): title* (≤ 300),
+  notes, owner* (`OWNERS`: owner | partner | shared), business_id*⇧ (one of ours, Personal included; businesses are
+  never deleted), client_id→, account_id→, relationship_id→ (plain refs, **not** parents: deleting a client must not
+  hide the person's tasks — they stay, shown with "Deleted client"), due_date (date), due_time (text "HH:MM", local,
+  only with a date), estimate_minutes (integer), done_at (datetime; null = open), top_on_owner / top_on_partner
+  (date: "one of that day's three most important" **for that person**, set by the morning plan; `TOP_FIELDS` /
+  `topField(actor)` in `@suite/shared/planner`; a pick from another day is simply stale).
+- `inbox_item` (`planner_inbox_items`; create/update/delete): text* (≤ 5000), source (`typed|phone|siri|share`;
+  Siri and share arrive in C5), captured_at* (datetime), cleared_at (datetime; null = still in the inbox),
+  became_entity (text: `task` | `activity`; null when dismissed — free text so D8 can add `lead`), became_id (id, no
+  ref: what it became may be deleted later).
+
+**Rules**
+- **checkTask** (the sync `check`): "HH:MM" times; a create with a time and no date, or an update that sets a time and
+  clears the date in the same step, is refused; estimates 1 minute – a week. Only the step's own values are looked at
+  (right in any arrival order); a time left behind when the other device clears the date concurrently is possible,
+  so **readers ignore a time without a date** (`dueTimeOf`), and the screens always clear both together.
+- **"Today"** is the device's local date (`localDate()`, kept current by `useToday`: foreground + every minute).
+  Dates are compared as text; date arithmetic is `addDays` on the calendar; weeks run Monday–Sunday (`weekBounds`).
+- **Today** (`buildToday`): the signed-in person's own tasks and the shared list (marked "Shared"), never the other
+  person's own. Overdue first (oldest first), then due today (timed ones in time order, then the rest with top picks
+  first), then "Also in today's top 3" (picks with no date or due later). Each task shows once; a pick is starred
+  where it is. Each section shows 50 at a time.
+- **Top picks are per person**: a task holds each person's pick day in their own field, so a star on a shared task
+  never fills the other person's three; counts, stars, Today and the plan's load show only your own picks, and
+  moving a task clears only your own pick. Changes are worked out from the latest record (`store.get`), so a
+  move right after a star clears it. Ticking sets `done_at`; the row stays (ticked, with undo) for the rest of the app session
+  (`keepFinished`, in memory). Today's calendar (Apple Calendar) is a later package: **nothing is shown for it yet**.
+- **Morning plan** (`PlanSheet`, "Plan my day"): proposes overdue + due today on my Today (mine and the shared list's)
+  + **my** undated open tasks (the shared undated pile stays on Tasks for either person to pick). Star up to three
+  (`TOP_LIMIT`; `top_on = today`), Move → Tomorrow / another day (`due_date` changes, the time stays, a top pick stops
+  being one; Undo puts both back). The load is the estimates of open tasks on today (dated ≤ today or picked) against
+  `DAY_MINUTES` (8 h) — the real overbooking warning is C4b. Each tap is saved at once (one or two fields).
+- **No next step** (`relationshipsWithoutNextStep`, shared): an **active** relationship whose account and client are
+  live, with no **open** task naming it (`relationship_id`) that has a **due date** (overdue still counts: it shows as
+  overdue instead). Any owner's task counts. Shown on the client page's relationship rows ("No next step · Add" →
+  task sheet with the relationship, its account, the client and its business) and on Today (count + list).
+  Add note / Log call take an optional **Next step** (title + day) and create the task in the same save (two store
+  writes, activity first; a retry after a failure doesn't repeat what was saved), owner = whoever logs it, for the
+  relationship the call's account + business point at (`guessRelationship`; pickable). When the guess finds none and
+  the client has active relationships, the sheet warns that the step won't clear a "No next step" flag
+  (`nextStepWarning`); with no relationship it is filed under the call's business, else the last one used here,
+  else **Personal**.
+- **Defaults** for a task made by hand: owner = its maker; business = the one in context (client page timeline filter,
+  a relationship, the tasks page's business filter), else the last one this person used on this device
+  (`prefs.js`, localStorage `suite.planner.lastBusiness`, per actor; best effort), else Personal (`defaultBusinessId`).
+  **Automated tasks** (D packages) use the business's `default_owner`: `automatedTaskOwner(business)` in
+  `@suite/shared/planner`, or `ctx.services.planner.automatedOwnerFor(businessId)` on the server — then
+  `sync.applyLocal({ entity: 'task', op: 'create', fields: { …, owner } })`.
+- **The inbox is shared**: both people see and sort every item. Before a task or note is made from an item, its
+  latest copy is read (`inboxItemGuard` → `alreadySorted`); one already sorted (by the other person, or on another
+  device) is refused with who did it and a link to what it became (`/tasks?open=<id>` opens a task's sheet). Two
+  devices sorting the same item offline still make two tasks: the item then has clashes on `cleared_at` /
+  `became_id` and shows under **Sorted twice** with every outcome (`inboxOutcomes`) and its ClashPanel — delete
+  the extra task, then settle. The capture field is cleared before the save and restored only if saving fails
+  (`saveCapture`), so typing the next thought meanwhile is kept.
+- **Inbox**: the capture field (`CaptureBar`) is on Today and Inbox, fixed above the tab bar on phones; one tap (Add)
+  saves an `inbox_item` offline (source `phone` on a phone, else `typed`). Each item: **Task** (sheet pre-filled: title =
+  its first line, the rest in notes; owner me; business per the defaults; no date) → **Save** = two taps; the item is
+  cleared (`cleared_at`, `became_entity: 'task'`, `became_id`) right after the task is created. **Note on a client…**
+  (pick a client → an `activity` of type note, `at` = when it was captured). **Dismiss** (with Undo). The nav shows
+  the open count (`useInboxCount`; nav entries take a `Badge`).
+- **Tasks page** (`/tasks`): whose (Mine / Partner's / Shared / All), business, client (those with tasks), due
+  (all open / overdue / today / this week / no date / done) in the URL (read from `window.location` when changed, so two
+  quick changes don't undo each other), 50 at a time. The sheet has every field; reassigning the owner (the handoff)
+  is one field. The sheet shows a task's flag and clashes (`RecordSync`), rows their badges. **Edits send only what changed** (`taskForm.js` with the CRM's `editChanges`) — tested with two
+  devices: the partner's reassignment or finish arriving while the Mac's sheet is open survives.
+- **Reads**: `usePlannerData` / `useInboxCount` go through `crm/data.js`'s cached lists (`task` belongs to `business`;
+  `inbox_item` to nothing), so Today, Tasks, Inbox and the client page share one read; indexes (`byId`, tasks by
+  relationship) are built once per change, lists are paged. The client page reads `tasks` (by client) and
+  `relationshipTasks` (by relationship) from `useClientPageData`.
+
+**For C4b / C5 / D3**
+- **C4b** (week goals, month priorities, overbooking): add `goal` / `priority` entities here (`planner_` tables) and a
+  nullable `goal_id` ref on `task` (a new field, never a rename). Replace `DAY_MINUTES` in `planLoad` with the real
+  day length and warning; Plan my day already shows the load and moves work to a named day.
+- **C5** (Siri, share sheet): create `inbox_item`s with `source: 'siri' | 'share'` — through a device (a Shortcut
+  opening a capture URL that calls `store.create`) or, if a server route is added, `sync.applyLocal({ actor, … })`.
+- **D3 / automations**: tasks from automations use `automatedOwnerFor` and `applyLocal`; a reminder or notification
+  for "No next step" can reuse `relationshipsWithoutNextStep` on server reads (pass live rows only). Calendar feeds
+  (tasks with a date/time) read `planner_tasks` with `deleted_at IS NULL AND done_at IS NULL`, ignoring a time without
+  a date.
+- Open: the pull scope (open tasks only) is still TODO (see C2b "Scope"); done tasks accumulate.
 
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
   sections). `health_meta.instance_id` still names the database and survives restores; the sync `generation` is what
   changes on a restore.
-- **C3a (core records)**: done — see "CRM". **C3b (screens)**: done — see "CRM screens". Next: C4a tasks (`OWNERS` for the owner, `business_id`⇧ + optional client/account refs, the
-  business's `default_owner` for automated tasks), D2 matching (links), the pull scope when volumes need it.
+- **C3a (core records)**: done — see "CRM". **C3b (screens)**: done — see "CRM screens".
+- **C4a (tasks, inbox, Today)**: done — see "Planner". Tasks belong to a business (Personal included) and only point at
+  a client/account/relationship; the shared list is `owner: 'shared'`; hand-made tasks default to their maker,
+  automated ones to the business's `default_owner`. Next: C4b goals and priorities (same module), C5 capture by Siri
+  and the share sheet (`inbox_item.source`), D2 matching (links), the pull scope when volumes need it.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -715,7 +824,8 @@ one-owner, three-business example entered and filtered on iPhone and desktop, ph
 (`createApp` + `listen(0)`) — no mocks of the database. Client tests (`client/test`) run the sync engine in Node with
 fake-indexeddb against such a server (helpers.js: `startServer`, `makeDevice` with an on/off connection switch); the
 client build must succeed. The sync engine tests (`server/test/sync.test.js`, `client/test/engine.test.js`) run without
-the crm module so its seeded businesses don't shift their counts; `startServer(t, config, { crm: true })` includes it. `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
+the crm module (nor the planner, which needs it) so its seeded businesses don't shift their counts;
+`startServer(t, config, { crm: true })` includes both. `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
 touching the engine, the service worker or the sync UI. Write a test with every module and every bug fix.
 
 ## Git

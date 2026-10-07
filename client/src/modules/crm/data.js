@@ -20,6 +20,10 @@ const BELONGS_TO = {
   service: ['relationship', 'account', 'client', 'business'],
   activity: ['client'],
   link: ['account', 'contact', 'client'],
+  // The planner's (C4a): a task belongs to one of our businesses; its client/account/relationship
+  // are plain refs (a task outlives a deleted client).
+  task: ['business'],
+  inbox_item: [],
 };
 
 const caches = new WeakMap(); // engine -> { entries: Map<entity, Promise<Entry>>, off }
@@ -109,7 +113,7 @@ export async function cachedList(engine, entity) {
 }
 
 const LIST_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'activity'];
-const PAGE_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'service', 'consent', 'activity', 'link'];
+const PAGE_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'service', 'consent', 'activity', 'link', 'task'];
 
 /** Last activity per client: Map<client_id, at>. */
 function lastActivityByClient(activities) {
@@ -147,7 +151,7 @@ const byName = (a, b) => String(a.name).localeCompare(String(b.name)) || (a.id <
  */
 export function useClientPageData(clientId) {
   const { data, loading, error } = useSyncData(async (e) => {
-    const [businesses, clients, accounts, contacts, relationships, services, consents, activities, links] = await cachedLists(e, PAGE_ENTITIES);
+    const [businesses, clients, accounts, contacts, relationships, services, consents, activities, links, tasks] = await cachedLists(e, PAGE_ENTITIES);
     const client = clients.byId().get(clientId) ?? null;
     if (!client) return { client: null };
     const myAccounts = [...accounts.where('client_id', clientId)].sort(byName);
@@ -164,6 +168,10 @@ export function useClientPageData(clientId) {
       services: myRelationships.flatMap((r) => services.where('relationship_id', r.id)).sort(byName),
       consents: myContacts.flatMap((p) => consents.where('contact_id', p.id)),
       links: [...myAccounts.flatMap((a) => links.where('account_id', a.id)), ...myContacts.flatMap((p) => links.where('contact_id', p.id))],
+      // The planner's (C4a): this client's tasks, and the tasks naming its relationships (the
+      // "No next step" flag counts those, whoever's client they were filed under).
+      tasks: tasks.where('client_id', clientId),
+      relationshipTasks: myRelationships.flatMap((r) => tasks.where('relationship_id', r.id)),
     };
   }, [clientId], { entities: PAGE_ENTITIES });
   return { data: data ?? null, loading, error };
