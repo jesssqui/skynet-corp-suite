@@ -48,7 +48,18 @@ function makeDevice(base, actor, { offsetMs = 0, wall } = {}) {
     cursor: null,
     clock,
     headers() {
-      return { 'content-type': 'application/json', cookie, origin: d.base };
+      return { 'content-type': 'application/json', cookie: d.cookie, origin: d.base };
+    },
+    /**
+     * Talk to another server process on the same database (e.g. after a restore). A restore ends every
+     * session, so the device signs in again — as the same device (it offers its id), keeping its outbox.
+     */
+    moveTo(newBase) {
+      const app2 = apps.get(newBase);
+      const again = sessionFor(app2.ctx, app2.users[actor], { deviceHint: id });
+      assert.equal(again.deviceId, id, 'signing in again keeps the device id');
+      d.base = newBase;
+      d.cookie = again.cookie;
     },
     step(op, entity, recordId, fields) {
       return {
@@ -490,7 +501,10 @@ test('restoring a backup starts a new generation: old cursors reset, resent step
 
   await restoreBackup({ from: backup.file, dbPath: config.dbPath, backupDir: config.backup.dir });
   const second = await startApp(t, config);
-  a.base = second.base;
+  // The restore ended the device's session: it is told so, then signs in again as the same device.
+  const expired = await fetch(`${second.base}/api/sync/info`, { headers: a.headers() });
+  assert.equal((await expired.json()).code, 'session_expired');
+  a.moveTo(second.base);
   const info2 = (await getJson(`${second.base}/api/sync/info`)).body;
   assert.notEqual(info2.generation, info1.generation);
   assert.ok(info2.lastRestoreAt);
@@ -714,7 +728,7 @@ async function restore(t, env, backup, devices) {
   await env.close();
   await restoreBackup({ from: backup.file, dbPath: env.config.dbPath, backupDir: env.config.backup.dir });
   const env2 = await startApp(t, env.config);
-  for (const d of devices) d.base = env2.base;
+  for (const d of devices) d.moveTo(env2.base);
   return env2;
 }
 

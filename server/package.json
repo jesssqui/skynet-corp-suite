@@ -16,6 +16,7 @@
     "@suite/shared": "*",
     "better-sqlite3": "^12.8.0",
     "express": "^5.2.1",
-    "helmet": "^8.1.0"
+    "helmet": "^8.1.0",
+    "qrcode-generator": "^2.0.4"
   }
 }

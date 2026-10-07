@@ -50,7 +50,7 @@ export function AuthProvider({ children }) {
     window.addEventListener(SESSION_LOST_EVENT, onLost);
     check();
     // Notice a sign-out from the other device soon: on coming back to the foreground, and now and then.
-    // (Not while signing in: the sign-in screen decides when it is done, e.g. after showing recovery codes.)
+    // (Not while signing in: the sign-in screen decides when it is done.)
     const recheckIfIn = () => status.current === 'signed-in' && check();
     const onVisible = () => document.visibilityState === 'visible' && recheckIfIn();
     document.addEventListener('visibilitychange', onVisible);
@@ -62,7 +62,7 @@ export function AuthProvider({ children }) {
     };
   }, [check, sessionLost]);
 
-  /** After POST /login/code or /login/enroll succeeded (the cookie is already set). */
+  /** After POST /login/code succeeded (the cookie is already set). */
   const signedIn = useCallback(async (result) => {
     const previous = getDeviceId();
     // A different device id means what this browser holds belongs to another (signed-out, or the

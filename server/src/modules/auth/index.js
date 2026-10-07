@@ -10,6 +10,7 @@ export default {
   name: 'auth',
   migrationsDir: fileURLToPath(new URL('./migrations', import.meta.url)),
   createService: createAuthService,
+  start: (_ctx, service) => service.afterStart(),
   createPublicRouter: createAuthPublicRouter,
   createRouter: createAuthRouter,
 };

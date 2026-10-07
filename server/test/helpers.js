@@ -7,6 +7,7 @@ import { createLogger } from '../src/lib/log.js';
 import { openDb } from '../src/db/open.js';
 import { createApp } from '../src/app.js';
 import { modules as registeredModules } from '../src/modules/index.js';
+import { newTotpSecret } from '../src/modules/auth/crypto.js';
 
 export function tmpDir(t, prefix = 'suite-test-') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -54,13 +55,22 @@ export async function startApp(t, config, { modules = registeredModules, now } =
 
 export const TEST_PASSWORD = 'correct horse battery staple';
 
-/** The two accounts (owner, partner), made once per database the way the CLI does. */
+/**
+ * The two accounts (owner, partner) with two-factor on, made once per database the way the CLI does.
+ * Each user row comes back with `totpSecret` (to make codes in tests).
+ */
 export async function ensureTestUsers(ctx) {
   const accounts = ctx.services.auth.accounts;
   const users = {};
   for (const [actor, username] of [['owner', 'jessy'], ['partner', 'sam']]) {
-    users[actor] = accounts.getUserByUsername(username)
-      ?? await accounts.createUser({ actor, username, displayName: username === 'jessy' ? 'Jessy' : 'Sam', password: TEST_PASSWORD });
+    let user = accounts.getUserByUsername(username);
+    if (!user) {
+      ({ user } = await accounts.createUserWithTwoFactor(
+        { actor, username, displayName: username === 'jessy' ? 'Jessy' : 'Sam', password: TEST_PASSWORD },
+        { secret: newTotpSecret(), step: 0 },
+      ));
+    }
+    users[actor] = { ...user, totpSecret: accounts.getTotp(user.id).secret };
   }
   return users;
 }

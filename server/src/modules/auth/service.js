@@ -4,7 +4,8 @@
 import { newId, isId } from '@suite/shared/ids';
 import { nowIso } from '@suite/shared/time';
 import { HttpError } from '../../lib/httpError.js';
-import { createAccounts, normalizeUsername } from './accounts.js';
+import { createAccounts } from './accounts.js';
+import { createThrottle, throttleKeys } from './throttle.js';
 import {
   verifyPassword, hashPassword, passwordProblem, newTotpSecret, matchTotp, totpStep, otpauthUrl,
   normalizeRecoveryCode, hashRecoveryCode, newToken, sha256, sameSecret, PASSWORD_MAX,
@@ -15,12 +16,8 @@ export const COOKIE_NAME = 'suite_session';
 export const ISSUER = 'Skynet Corp Suite';
 
 export const LIMITS = {
-  // Failed sign-in attempts (wrong password or code) per account, and per IP address.
-  // At `threshold` failures the key is locked for baseMs, doubling with each further failure, up to maxMs.
-  account: { threshold: 5, baseMs: 60_000, maxMs: 60 * 60_000 },
-  ip: { threshold: 20, baseMs: 60_000, maxMs: 60 * 60_000 },
-  forgetFailuresMs: 24 * 60 * 60_000, // a key with no failure for this long starts from zero
-  challengeMs: { sign_in: 5 * 60_000, enroll: 15 * 60_000, totp_reset: 15 * 60_000 },
+  // Failed attempts: see throttle.js (RULES).
+  challengeMs: { sign_in: 5 * 60_000, totp_reset: 15 * 60_000 },
   challengeAttempts: 5, // wrong codes on one challenge before it is used up (start again)
   touchMs: 60_000, // how often a session's / device's last-seen is written
   keepEndedSessionsMs: 180 * 24 * 60 * 60_000,
@@ -95,20 +92,19 @@ export function createAuthService({ db, config, log, services, now = Date.now })
   const countChallengeAttempt = db.prepare('UPDATE auth_challenges SET attempts = attempts + 1 WHERE id = ?');
   const useChallenge = db.prepare('UPDATE auth_challenges SET used_at = ? WHERE id = ? AND used_at IS NULL');
 
-  const getThrottle = db.prepare('SELECT * FROM auth_throttle WHERE key = ?');
-  const putThrottle = db.prepare(`INSERT INTO auth_throttle (key, failures, last_failure_at, locked_until)
-    VALUES (@key, @failures, @last_failure_at, @locked_until)
-    ON CONFLICT (key) DO UPDATE SET failures = excluded.failures, last_failure_at = excluded.last_failure_at,
-      locked_until = excluded.locked_until`);
-  const deleteThrottle = db.prepare('DELETE FROM auth_throttle WHERE key = ?');
+  const getMeta = db.prepare('SELECT value FROM auth_meta WHERE key = ?');
+  const setMeta = db.prepare(`INSERT INTO auth_meta (key, value) VALUES (?, ?)
+    ON CONFLICT (key) DO UPDATE SET value = excluded.value`);
+  const endAllSessions = db.prepare('UPDATE auth_sessions SET ended_at = ?, end_reason = ? WHERE ended_at IS NULL');
+
+  const throttle = createThrottle(db, { now });
 
   // ---- housekeeping -------------------------------------------------------------
   function prune() {
     const t = now();
     db.transaction(() => {
       db.prepare('DELETE FROM auth_challenges WHERE expires_at < ?').run(iso(t - 24 * 60 * 60_000));
-      db.prepare('DELETE FROM auth_throttle WHERE last_failure_at < ? AND (locked_until IS NULL OR locked_until < ?)')
-        .run(iso(t - LIMITS.forgetFailuresMs), iso(t));
+      throttle.prune(t);
       // Device rows are kept (a signed-out device must keep getting "signed out" answers).
       db.prepare('DELETE FROM auth_sessions WHERE ended_at IS NOT NULL AND ended_at < ?').run(iso(t - LIMITS.keepEndedSessionsMs));
       db.prepare('DELETE FROM auth_sessions WHERE ended_at IS NULL AND expires_at < ?').run(iso(t - LIMITS.keepEndedSessionsMs));
@@ -119,59 +115,11 @@ export function createAuthService({ db, config, log, services, now = Date.now })
     log?.warn('no accounts yet: create them with `npm run user:add` (see DEPLOY.md)');
   }
 
-  // ---- rate limiting ------------------------------------------------------------
+  // ---- rate limiting (rules in throttle.js) ----------------------------------------
   // Every sign-in or re-check attempt is charged as a failure *before* the password or code
   // is checked (so parallel guesses can't slip past the limit), then refunded if it was right.
-  const throttleKeys = (username, ip) => [
-    { key: `user:${normalizeUsername(username).slice(0, 64)}`, rule: LIMITS.account },
-    { key: `ip:${ip ?? 'unknown'}`, rule: LIMITS.ip },
-  ];
-
-  function liveRow(key, t) {
-    const row = getThrottle.get(key);
-    if (!row) return null;
-    const lockedUntil = row.locked_until ? Date.parse(row.locked_until) : 0;
-    if (t - Date.parse(row.last_failure_at) > LIMITS.forgetFailuresMs && lockedUntil <= t) return null;
-    return row;
-  }
-
-  const chargeAttempt = db.transaction((keys) => {
-    const t = now();
-    let waitMs = 0;
-    for (const { key } of keys) {
-      const row = liveRow(key, t);
-      const until = row?.locked_until ? Date.parse(row.locked_until) : 0;
-      if (until > t) waitMs = Math.max(waitMs, until - t);
-    }
-    if (waitMs > 0) return { waitMs };
-    const locksSet = {};
-    for (const { key, rule } of keys) {
-      const failures = (liveRow(key, t)?.failures ?? 0) + 1;
-      const lockMs = failures >= rule.threshold ? Math.min(rule.maxMs, rule.baseMs * 2 ** (failures - rule.threshold)) : 0;
-      const lockedUntil = lockMs ? iso(t + lockMs) : null;
-      putThrottle.run({ key, failures, last_failure_at: iso(t), locked_until: lockedUntil });
-      locksSet[key] = lockedUntil;
-    }
-    return { waitMs: 0, locksSet };
-  });
-
-  // A right answer takes back its charge, including any lock that charge set.
-  const refundAttempt = db.transaction((keys, charged) => {
-    for (const { key } of keys) {
-      const row = getThrottle.get(key);
-      if (!row) continue;
-      const ownLock = charged.locksSet[key] && row.locked_until === charged.locksSet[key];
-      putThrottle.run({ key, failures: Math.max(0, row.failures - 1), last_failure_at: row.last_failure_at,
-        locked_until: ownLock ? null : row.locked_until });
-    }
-  });
-
-  const clearAttempts = db.transaction((keys) => {
-    for (const { key } of keys) deleteThrottle.run(key);
-  });
-
   function charge(keys) {
-    const charged = chargeAttempt(keys);
+    const charged = throttle.charge(keys);
     const { waitMs } = charged;
     if (waitMs > 0) {
       const seconds = Math.ceil(waitMs / 1000);
@@ -398,22 +346,15 @@ export function createAuthService({ db, config, log, services, now = Date.now })
     const user = name ? accounts.getUserByUsername(name) : null;
     const ok = await verifyPassword(pass ?? '', user?.password_hash ?? await dummyHash);
     if (!ok || !user) throw fail(401, 'bad_credentials', 'Wrong username or password');
-    refundAttempt(keys, charged); // the code step still has to pass
-
-    const enrolled = Boolean(accounts.getTotp(user.id));
-    if (enrolled) {
-      const ch = makeChallenge({ kind: 'sign_in', userId: user.id, deviceHint: deviceId, installed });
-      return { next: 'code', challenge: ch.token, expiresAt: ch.expiresAt };
+    // Two-factor is set up by the CLI together with the account. An account without it can't sign in
+    // (same answer as a wrong password, so nothing is revealed; the log says why).
+    if (!accounts.getTotp(user.id)) {
+      log?.warn(`sign-in refused for ${user.username}: no two-factor set up (run users.js reset-2fa ${user.username})`);
+      throw fail(401, 'bad_credentials', 'Wrong username or password');
     }
-    // First sign-in: set up the authenticator app before the account can be used.
-    const secret = newTotpSecret();
-    const ch = makeChallenge({ kind: 'enroll', userId: user.id, totpSecret: secret, deviceHint: deviceId, installed });
-    return {
-      next: 'enroll',
-      challenge: ch.token,
-      expiresAt: ch.expiresAt,
-      enroll: { secret, otpauthUrl: otpauthUrl({ secret, account: user.username, issuer: ISSUER }), issuer: ISSUER, account: user.username },
-    };
+    throttle.refund(keys, charged); // the code step still has to pass
+    const ch = makeChallenge({ kind: 'sign_in', userId: user.id, deviceHint: deviceId, installed });
+    return { next: 'code', challenge: ch.token, expiresAt: ch.expiresAt };
   }
 
   /** Step 2: a code from the authenticator app, or a recovery code. */
@@ -425,30 +366,10 @@ export function createAuthService({ db, config, log, services, now = Date.now })
     countChallengeAttempt.run(ch.id);
     const method = checkCode(user, code);
     if (!method) throw fail(401, 'bad_code', 'That code didn’t work');
-    clearAttempts(keys);
+    throttle.clear(keys);
     useChallenge.run(iso(), ch.id);
     const started = startSession({ user, deviceHint: ch.device_hint, installed: ch.installed === 1, userAgent, ip, secondFactor: method });
     return { ...started, usedRecoveryCode: method === 'recovery', recoveryCodesLeft: accounts.unusedRecoveryCodes(user.id).length };
-  }
-
-  /** First sign-in: the first code from the new secret proves the app is set up. */
-  function finishEnrollment({ challenge, code, ip, userAgent }) {
-    const ch = openChallenge(challenge, ['enroll']);
-    const user = accounts.getUser(ch.user_id);
-    const keys = throttleKeys(user.username, ip);
-    charge(keys);
-    countChallengeAttempt.run(ch.id);
-    const step = matchTotp(ch.totp_secret, typeof code === 'string' ? code.replace(/\s/g, '') : '', now());
-    if (step === null) throw fail(401, 'bad_code', 'That code didn’t work. Check the time on your phone and try the next one.');
-    clearAttempts(keys);
-    return db.transaction(() => {
-      if (accounts.getTotp(user.id)) throw fail(409, 'already_enrolled', 'Two-factor is already set up. Start again.');
-      useChallenge.run(iso(), ch.id);
-      accounts.enrollTotp(user.id, ch.totp_secret, step);
-      const recoveryCodes = accounts.newRecoveryCodes(user.id);
-      const started = startSession({ user, deviceHint: ch.device_hint, installed: ch.installed === 1, userAgent, ip, secondFactor: 'enroll' });
-      return { ...started, recoveryCodes };
-    })();
   }
 
   // ---- signed-in actions ------------------------------------------------------------
@@ -497,7 +418,7 @@ export function createAuthService({ db, config, log, services, now = Date.now })
     if (!passOk || !codeOk) {
       throw fail(403, 'bad_credentials', needCode ? 'Wrong password or code' : 'Wrong password');
     }
-    clearAttempts(keys);
+    throttle.clear(keys);
     return full;
   }
 
@@ -534,7 +455,7 @@ export function createAuthService({ db, config, log, services, now = Date.now })
     countChallengeAttempt.run(ch.id);
     const step = matchTotp(ch.totp_secret, typeof code === 'string' ? code.replace(/\s/g, '') : '', now());
     if (step === null) throw fail(403, 'bad_code', 'That code didn’t work');
-    clearAttempts(keys);
+    throttle.clear(keys);
     db.transaction(() => {
       useChallenge.run(iso(), ch.id);
       accounts.replaceTotp(auth.user.id, ch.totp_secret, step);
@@ -542,6 +463,25 @@ export function createAuthService({ db, config, log, services, now = Date.now })
       accounts.endSessions(auth.user.id, 'two_factor_reset', auth.session.id);
     })();
     return { ok: true };
+  }
+
+  /**
+   * After every module's service exists (app.js calls start hooks): if the sync generation changed since
+   * the last start, the database was restored from a backup. Its sessions are from back then — including
+   * any a lost phone had before it was signed out after the backup — so end them all. Devices get
+   * session_expired (sign in again, keep their data), not device_signed_out.
+   */
+  function afterStart() {
+    const generation = services.sync?.info().generation;
+    if (!generation) return;
+    const known = getMeta.get('sync_generation')?.value;
+    db.transaction(() => {
+      if (known && known !== generation) {
+        const n = endAllSessions.run(iso(), 'restored').changes;
+        log?.warn(`database was restored: ended ${n} session(s); everyone signs in again`);
+      }
+      setMeta.run('sync_generation', generation);
+    })();
   }
 
   function accountInfo(auth) {
@@ -560,11 +500,11 @@ export function createAuthService({ db, config, log, services, now = Date.now })
   return {
     // middleware (app.js mounts these around every module's routes)
     guard,
+    afterStart,
     requireSession,
     // routes
     beginSignIn,
     finishSignIn,
-    finishEnrollment,
     signOutDevice,
     listDevices,
     renameDevice,

@@ -8,12 +8,11 @@ function sendSignedIn(req, res, service, result) {
   res.json(rest);
 }
 
-/** Reachable without a session: the two (or three, first time) sign-in steps. */
+/** Reachable without a session: the two sign-in steps. (Two-factor is set up by the CLI, not here.) */
 export function createAuthPublicRouter(_ctx, service) {
   const router = Router();
 
-  // POST /api/auth/login {username, password, deviceId?, installed?}
-  //   -> {next: 'code', challenge} | {next: 'enroll', challenge, enroll: {secret, otpauthUrl}}
+  // POST /api/auth/login {username, password, deviceId?, installed?} -> {next: 'code', challenge}
   router.post('/login', async (req, res) => {
     const b = body(req);
     res.json(await service.beginSignIn({
@@ -25,14 +24,6 @@ export function createAuthPublicRouter(_ctx, service) {
   router.post('/login/code', (req, res) => {
     const b = body(req);
     sendSignedIn(req, res, service, service.finishSignIn({
-      challenge: b.challenge, code: b.code, ip: req.ip, userAgent: req.get('user-agent'),
-    }));
-  });
-
-  // POST /api/auth/login/enroll {challenge, code} -> session cookie + {..., recoveryCodes} (shown once)
-  router.post('/login/enroll', (req, res) => {
-    const b = body(req);
-    sendSignedIn(req, res, service, service.finishEnrollment({
       challenge: b.challenge, code: b.code, ip: req.ip, userAgent: req.get('user-agent'),
     }));
   });

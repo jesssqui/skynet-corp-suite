@@ -5,6 +5,7 @@
 //   createRouter    (ctx, service) => express.Router mounted at /api/<name>, signed-in requests only
 //   createPublicRouter  optional; (ctx, service) => express.Router for the few routes that work
 //                   without a session (sign-in, this health check). Think twice before adding one.
+//   start           optional; (ctx, service) => void, run once every module's service exists
 // A module touches only its own tables; anything it needs from another module
 // goes through that module's service.
 import { fileURLToPath } from 'node:url';

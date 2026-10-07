@@ -13,8 +13,8 @@ CREATE TABLE auth_users (
   created_at          TEXT NOT NULL
 ) WITHOUT ROWID;
 
--- Authenticator-app second factor (TOTP, RFC 6238). No row = not enrolled yet:
--- the next sign-in asks for enrolment. last_step = the newest time step used (a code works once).
+-- Authenticator-app second factor (TOTP, RFC 6238), set up by the CLI with the account (users.js add /
+-- reset-2fa) after one code confirms it. No row = the account can't sign in. last_step = the newest time step used (a code works once).
 -- A passkey would be another table (auth_passkeys), not a column here.
 CREATE TABLE auth_totp (
   user_id     TEXT PRIMARY KEY REFERENCES auth_users (id) ON DELETE CASCADE,
@@ -51,8 +51,8 @@ CREATE INDEX auth_devices_user ON auth_devices (user_id);
 
 -- Sessions: the cookie holds a random token; only its SHA-256 is stored.
 -- Valid while ended_at IS NULL, last_seen_at is within the idle limit and expires_at (absolute) is ahead.
---   second_factor  how it was signed in: totp | recovery | enroll (later: passkey)
---   end_reason     signed_out | expired | replaced | password_changed | two_factor_reset | reset_by_admin
+--   second_factor  how it was signed in: totp | recovery (later: passkey)
+--   end_reason     signed_out | expired | replaced | password_changed | two_factor_reset | reset_by_admin | restored
 -- (No CHECK lists on these: adding a passkey must not need a table rebuild.)
 CREATE TABLE auth_sessions (
   id            TEXT PRIMARY KEY,
@@ -72,7 +72,6 @@ CREATE INDEX auth_sessions_user ON auth_sessions (user_id);
 -- Half-finished sign-ins and two-factor changes: a short-lived random token (hashed) that
 -- carries the password step over to the code step.
 --   sign_in     password was right, waiting for a code
---   enroll      password was right, no two-factor yet: waiting for the first code from totp_secret
 --   totp_reset  signed in, re-checked: waiting for the first code from the new totp_secret
 CREATE TABLE auth_challenges (
   id          TEXT PRIMARY KEY,
@@ -89,10 +88,22 @@ CREATE TABLE auth_challenges (
   used_at     TEXT
 ) WITHOUT ROWID;
 
--- Failed-attempt counters for rate limiting: key 'user:<username as typed>' or 'ip:<address>'.
+-- Facts about this database for auth: sync_generation = the sync generation at the last start (a change
+-- means the database was restored from a backup, so every session is ended).
+CREATE TABLE auth_meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+) WITHOUT ROWID;
+
+-- Failed-attempt counters for rate limiting (rules in throttle.js). Keys:
+--   'acct-ip:<username>@<ip>'  one account from one address (the strict one)
+--   'acct:<username>'          one account from everywhere (loose: distributed guessing)
+--   'ip:<address>'             one address, any username (spraying)
+-- failures count from first_failure_at; the count starts again once the rule's window has passed.
 CREATE TABLE auth_throttle (
-  key             TEXT PRIMARY KEY,
-  failures        INTEGER NOT NULL,
-  last_failure_at TEXT NOT NULL,
-  locked_until    TEXT
+  key              TEXT PRIMARY KEY,
+  failures         INTEGER NOT NULL,
+  first_failure_at TEXT NOT NULL,
+  last_failure_at  TEXT NOT NULL,
+  locked_until     TEXT
 ) WITHOUT ROWID;

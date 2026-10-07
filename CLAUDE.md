@@ -11,8 +11,8 @@ sign-in from **C1** (module `auth`: two accounts, password + authenticator code,
 - **Client**: React 18 + Vite 6, react-router-dom 7 (same API as the v6 the Order Manager uses), inline styles + theme tokens.
 - **Shared**: `shared/` (`@suite/shared`) holds code that runs in both Node and the browser (IDs, time helpers).
 - npm workspaces: one `npm ci` at the root installs everything; one `package-lock.json`.
-- Dependencies are kept few and mainstream; ask before adding one. Client: `qrcode-generator` (MIT, no dependencies,
-  draws the authenticator QR code at two-factor setup).
+- Dependencies are kept few and mainstream; ask before adding one. `qrcode-generator` (MIT, no dependencies) draws the
+  authenticator QR code: in the terminal for `users.js add/reset-2fa` (server) and on the Account page (client).
 
 ## Commands (repo root)
 ```bash
@@ -23,8 +23,8 @@ npm run dev:client     # Vite on http://localhost:5173, proxies /api to :3100
 npm run build && npm start   # production-style: server also serves client/dist
 npm run backup         # one backup now (same code as the nightly one)
 npm run restore -- --list | <file> [--to <path>] [--force]
-npm run user:add -- --actor owner|partner --username <name> --name "Display"   # the only way to make an account
-npm run user:list | user:password -- <username> | user:reset-2fa -- <username>
+npm run user:add -- --actor owner|partner --username <name> --name "Display"   # the only way to make an account (sets up 2FA)
+npm run user:list | user:password -- <username> | user:reset-2fa -- <username> | user:unlock -- <username>
 ```
 Deploying, Tailscale Serve, backup scheduling and the restore drill: **DEPLOY.md**.
 
@@ -39,8 +39,8 @@ server/src/
   db/migrate.js            per-module migrations, schema_migrations table
   modules/index.js         server module registration list (order = migration order)
   modules/<name>/          index.js (shape), routes.js, service.js, migrations/NNN_name.sql|js
-  modules/auth/            sign-in: crypto.js (scrypt, TOTP, codes), accounts.js (shared with the CLI), service.js
-                           (sessions, devices, rate limits, the request guard), routes.js, deviceName.js
+  modules/auth/            sign-in: crypto.js (scrypt, TOTP, codes), accounts.js + throttle.js (shared with the CLI),
+                           service.js (sessions, devices, the request guard, restore check), routes.js, deviceName.js
   modules/sync/            offline sync: registry.js, service.js, routes.js, identity.js (session -> actor + device)
   backup/                  backup.js, restore.js, schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file)
@@ -63,7 +63,8 @@ client/public/             manifest.webmanifest, icons (placeholders)
 ## Modules
 One folder per module on each side, same name on both (`server/src/modules/health`, `client/src/modules/health`).
 - **Server shape** (`modules/<name>/index.js`): `{ name, migrationsDir, createService(ctx), createRouter(ctx, service),
-  createPublicRouter? }`. Routes mount at `/api/<name>`. **Every `createRouter` route requires a signed-in session**
+  createPublicRouter?, start? }`. `start(ctx, service)` runs once every service exists (auth uses it to notice a
+  restore). Routes mount at `/api/<name>`. **Every `createRouter` route requires a signed-in session**
   (app.js puts `auth.requireSession` in front; `req.auth = { user: { id, actor, username, displayName }, device: { id,
   name }, session }`). `createPublicRouter` is only for routes that must work signed out (sign-in, the minimal health
   check) — don't add one without a reason. `ctx = { db, config, log, services, now }` (`now()` = ms clock, tests move it);
@@ -90,7 +91,7 @@ One folder per module on each side, same name on both (`server/src/modules/healt
   compose publishes it on the Mac's `127.0.0.1:3100` only, and Tailscale Serve is the only way in from other devices
   (tailnet members only). Keep it that way even with sign-in: don't publish the port on other interfaces, and don't
   enable Tailscale Funnel.
-- **Sign-in on everything**: every API route needs a session except `POST /api/auth/login|login/code|login/enroll` and
+- **Sign-in on everything**: every API route needs a session except `POST /api/auth/login|login/code` and
   `GET /api/health` (which answers anonymous callers with `{ ok, name, version, time }` only; details, backup paths
   and errors need a session). Unknown `/api` paths answer 401 to anonymous callers. The built client (HTML/JS) is public;
   it shows nothing until `GET /api/auth/session` succeeds.
@@ -102,25 +103,28 @@ One folder per module on each side, same name on both (`server/src/modules/healt
 Code `server/src/modules/auth/`, client `client/src/auth/` + `client/src/modules/auth/`, tests `server/test/auth.test.js`.
 - **Accounts**: exactly two, one per actor (`owner`, `partner` — `@suite/shared/actors`, also what sync records as
   "who"). Made only by `server/scripts/users.js` (`npm run user:add`), never over HTTP; usernames lowercase.
-  The CLI also sets a new password (`user:password`, signs the person out everywhere) and removes two-factor
-  (`user:reset-2fa`, for a lost phone *and* lost recovery codes: the next sign-in enrols again).
+  **Two-factor is set up by the CLI, with the account**: `add` validates, asks for the password, shows a terminal QR
+  code + key + otpauth link, asks for one code from the app, and only then saves the account, its TOTP secret and 10
+  recovery codes in one transaction (then prints the codes once). There is no web enrolment: an account without
+  `auth_totp` can't sign in (it gets the same `bad_credentials` as a wrong password; the server log says why).
+  `reset-2fa` (lost phone *and* lost codes) works the same way and replaces the authenticator and codes only after the
+  new code is confirmed; `password` sets a new password. Both sign the person out everywhere and unlock the account;
+  `unlock` only clears rate-limit locks.
 - **Factors**: password (scrypt N=2^16 r=8 p=1, parameters stored in each hash, at most 2 hashes at once) **and**
   an authenticator code (TOTP RFC 6238: SHA-1, 6 digits, 30 s, ±1 step, each step usable once — `auth_totp.last_step`)
   or one of 10 one-time recovery codes (60 bits, stored as SHA-256). All secret comparisons are constant-time.
-  First sign-in after the CLI made the account = enrolment: password → QR / otpauth link / key → first code →
-  recovery codes shown once. Until someone enrols, anyone with the password could enrol their own app: **enrol right
-  after creating the account.** In-app: change password (current password; other sessions end), new recovery codes
-  and "move to a new authenticator" (password + a code, which may be a recovery code; other sessions end).
+  In-app: change password (current password; other sessions end), new recovery codes and "move to a new
+  authenticator" (password + a current code, which may be a recovery code; the new app's first code confirms it;
+  other sessions end).
 - **Passkey seam** (not built): a passkey is both factors at once. Add `auth_passkeys` (credential id, public key,
   counter, user), `POST /login/passkey/options` + `/login/passkey` in the public router, verify, then call
   `service.startSession({ user, deviceHint, installed, userAgent, ip, secondFactor: 'passkey' })` — the same function the
   code steps use, so devices and cookies work unchanged. `second_factor`, `end_reason` and challenge `kind` have no
   CHECK lists so this needs no table rebuild. Registering a passkey belongs on the Account page behind `recheck()`.
 - **Sign-in endpoints** (public): `POST /api/auth/login {username, password, deviceId?, installed?}` →
-  `{ next: 'code' | 'enroll', challenge, enroll?: { secret, otpauthUrl } }`; `POST /login/code {challenge, code}` (TOTP
-  or recovery code) and `POST /login/enroll {challenge, code}` → session cookie + `{ user, device, session,
-  deviceReplaced, recoveryCodes? }`. A challenge is a random token (hashed in `auth_challenges`), 5 min (15 for
-  enrolment), 5 tries. Wrong username and wrong password give the identical 401 `bad_credentials`.
+  `{ next: 'code', challenge, expiresAt }`; `POST /login/code {challenge, code}` (TOTP or recovery code) → session
+  cookie + `{ user, device, session, deviceReplaced, usedRecoveryCode, recoveryCodesLeft }`. A challenge is a random
+  token (hashed in `auth_challenges`), 5 min, 5 tries. Wrong username and wrong password give the identical 401 `bad_credentials`.
 - **Signed-in endpoints**: `GET /session`, `POST /logout` (signs this device out), `GET /devices` (both people's),
   `PUT /devices/:id {name}`, `POST /devices/:id/sign-out` (any device, either person), `GET /account`,
   `POST /account/password {currentPassword, newPassword}`, `POST /account/recovery-codes {password, code}`,
@@ -141,11 +145,16 @@ Code `server/src/modules/auth/`, client `client/src/auth/` + `client/src/modules
   fetch can only send after a CORS preflight that the server never approves. GET routes must not change anything.
   No token is needed on top: all three would have to fail at once. (The Vite dev proxy keeps `changeOrigin: false` so
   Host matches the page's origin.)
-- **Rate limiting** (`auth_throttle`, survives restarts): every password or code attempt — sign-in and re-checks — is
-  charged to `user:<username as typed>` (unknown usernames too: no enumeration) and `ip:<req.ip>` *before* checking,
-  and refunded if right (so parallel guesses can't slip past). Account: 5 failures → locked 1 min, doubling per further
-  failure, max 1 h; IP: 20 failures, same backoff. 429 `too_many_attempts` + `Retry-After`. A full sign-in clears the
-  account's counter; failures are forgotten after 24 h without one.
+- **Rate limiting** (`throttle.js`, table `auth_throttle`, survives restarts): every password or code attempt — sign-in
+  and re-checks — is charged *before* checking (refunded if right, including any lock it set, so parallel guesses can't
+  slip past) to three keys, all keyed by the username as typed (unknown usernames too: no enumeration):
+  `acct-ip:<user>@<ip>` — 5 failures lock it 1 min, doubling to 1 h; `acct:<user>` — 30 failures within an hour lock
+  the account 15 min; `ip:<ip>` — 20 failures (any usernames) lock that address 1 min, doubling to 1 h. So someone
+  guessing from their own device locks only that device out of the account (one guess an hour keeps *them* at the
+  1-hour cap, never the account's owner on other devices), and one device can't reach the account-wide limit (~5 the
+  first hour, ~1 an hour after). 429 `too_many_attempts` + `Retry-After`. A full sign-in clears that device's keys;
+  counts start again once a key's window (24 h / 1 h) has passed. `users.js unlock|password|reset-2fa` clear an
+  account's keys from every address. Relies on `req.ip` being the device's tailnet address (trust proxy, below).
 - **Devices** (`auth_devices`): one per browser / home-screen install; its id **is** its sync device id. Default name
   from the User-Agent (+ "Home screen app" when standalone); either person can rename. At sign-in the browser sends the
   id it has: kept if it is this person's and not signed out (an expired session continues as the same device, with
@@ -161,9 +170,13 @@ Code `server/src/modules/auth/`, client `client/src/auth/` + `client/src/modules
   `api/client.js` fires `SESSION_LOST_EVENT`; `auth/session.jsx` calls `clearLocalData()` for `device_signed_out` and
   shows the sign-in screen with the reason. The session is re-checked when the app returns to the foreground and
   every 5 minutes.
-- **Backups** contain the auth tables (scrypt hashes, TOTP secrets, hashed tokens). A restore brings back the sessions
-  and device states of that moment: devices signed in after the backup must sign in again, and a device signed out
-  after the backup is signed in again — check the Devices page after any restore.
+- **Backups** contain the auth tables (scrypt hashes, TOTP secrets, hashed tokens). **A restore ends every session**:
+  at start (`start` hook) auth compares the sync generation with `auth_meta.sync_generation`; a different one means
+  the database was restored, so all open sessions end (`end_reason = 'restored'`). Every device then gets
+  `session_expired` (sign in again, keep local data) — including a lost phone that was signed out after the backup and
+  never reconnected, which would otherwise have its old session back. Its device row is not signed out in the restored
+  copy, so sign it out again on the Devices page (it can't sign back in without the password and a code). Restores by
+  hand (not `npm run restore`) aren't detected (same limit as sync).
 
 ## Backups
 Design (code in `server/src/backup/`, tests in `server/test/backup.test.js`):
@@ -292,6 +305,8 @@ they can be re-sent after a restore; move `rejected` ones to "needs attention". 
 - **Plan pruning**: `sync_steps`, `sync_field_versions`, tombstones in `sync_records`/module tables, resolved clashes and
   `sync_devices` rows all grow forever. Before it matters, add pruning (e.g. steps and tombstones older than the
   device-retention window, devices unseen for 90 days, forcing those devices to reset).
+**After a restore** every session has ended (see "Sign-in"): devices get `session_expired`, keep their outbox and kept
+steps, sign in again (keeping their device id), then see `reset: true` and re-push as above.
 **Sign-out and C2b (must do)**: a device can be signed out from the other device at any time. When any request
 (sync or not) answers **401 `device_signed_out`**, the device must delete everything it stores for the person —
 offline records (IndexedDB), the outbox **including unsent changes** (on purpose: the phone may be lost), kept sent

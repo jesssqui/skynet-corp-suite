@@ -27,6 +27,10 @@ export async function createApp({ config, db, log, modules = registeredModules, 
     }
   }
 
+  for (const mod of modules) {
+    if (mod.start) mod.start({ ...ctx, log: log.child(mod.name) }, ctx.services[mod.name]);
+  }
+
   // Every route needs a signed-in session unless its module lists it in createPublicRouter.
   const auth = ctx.services.auth;
   if (!auth?.guard || !auth?.requireSession) throw new Error('The auth module must be registered (modules/index.js)');

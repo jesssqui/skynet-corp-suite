@@ -3,10 +3,10 @@ import { api } from '../api/client.js';
 import { Button, Notice, TextField } from '../ui/index.js';
 import { getDeviceId, isInstalled } from './device.js';
 import { useAuth } from './session.jsx';
-import { TotpSetup, RecoveryCodes } from './TwoFactorParts.jsx';
 
-// Sign-in: password, then a code (or, the first time, setting up the authenticator app and
-// saving recovery codes). A passkey would add a button here that skips both steps.
+// Sign-in: password, then a code from the authenticator app (or a recovery code). Two-factor is set
+// up on the Mac mini with the account (users.js add), never here. A passkey would add a button here
+// that skips both steps.
 
 function Frame({ title, subtitle, children }) {
   return (
@@ -141,28 +141,6 @@ function CodeStep({ challenge, onDone, onRestart }) {
   );
 }
 
-function EnrollStep({ start, onDone, onRestart }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
-  const submit = async (code) => {
-    setBusy(true);
-    setError(null);
-    try {
-      onDone(await api.post('/api/auth/login/enroll', { challenge: start.challenge, code }));
-    } catch (err) {
-      if (err.code === 'challenge_expired') return onRestart(err.message);
-      setError(err.message);
-      setBusy(false);
-    }
-  };
-  return (
-    <Frame title="Set up two-factor" subtitle="Every sign-in needs your password and a code from your phone. This is a one-time setup.">
-      <TotpSetup enroll={start.enroll} onSubmit={submit} busy={busy} error={error} />
-      <Button variant="ghost" onClick={() => onRestart(null)}>Start again</Button>
-    </Frame>
-  );
-}
-
 export default function SignInScreen() {
   const { notice, signedIn } = useAuth();
   const [step, setStep] = useState({ name: 'password' });
@@ -176,20 +154,10 @@ export default function SignInScreen() {
   if (step.name === 'code') {
     return <CodeStep challenge={step.start.challenge} onDone={signedIn} onRestart={restart} />;
   }
-  if (step.name === 'enroll') {
-    return <EnrollStep start={step.start} onDone={(result) => setStep({ name: 'codes', result })} onRestart={restart} />;
-  }
-  if (step.name === 'codes') {
-    return (
-      <Frame title="Save your recovery codes" subtitle="Two-factor is on.">
-        <RecoveryCodes codes={step.result.recoveryCodes} onDone={() => signedIn(step.result)} doneLabel="Continue to the suite" />
-      </Frame>
-    );
-  }
   return (
     <PasswordStep
       notice={restartNotice ?? notice}
-      onNext={(start) => setStep({ name: start.next === 'enroll' ? 'enroll' : 'code', start })}
+      onNext={(start) => setStep({ name: 'code', start })}
     />
   );
 }
