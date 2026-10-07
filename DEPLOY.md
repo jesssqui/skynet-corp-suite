@@ -237,7 +237,9 @@ Offline:
   and try again.
 - **Changes stay "waiting"** → the app sends them only while it is open and can reach the suite: open it and check
   Tailscale is connected. It retries by itself; Offline data (from the bar or System) → *Sync now* forces a try.
-- **Signing out deletes unsent changes** (on purpose: a signed-out phone may be lost). The app warns before it does.
+- **Signing out deletes unsent changes** (on purpose: a signed-out phone may be lost). The app warns before it does,
+  and the sign-in screen warns before another person signs in over them. Signing out with no connection works; the
+  sign-out reaches the Mac mini the next time the device can reach it.
 
 Sign-in:
 - **“Request from another origin”** when signing in through the ts.net address → the suite isn't believing Tailscale
