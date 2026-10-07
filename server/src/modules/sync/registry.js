@@ -45,6 +45,25 @@ const TYPES = {
   enum: (v, f) => typeof v === 'string' && f.values.includes(v),
 };
 
+// The column affinity each field type needs, so values come back exactly as sent:
+// a boolean in a TEXT column would be stored '1.0' and read back as a string, and
+// "0123" in an INTEGER column would come back as 123.
+const AFFINITY_FOR = {
+  text: 'TEXT', date: 'TEXT', datetime: 'TEXT', id: 'TEXT', enum: 'TEXT',
+  integer: 'INTEGER', boolean: 'INTEGER',
+  number: 'REAL',
+};
+
+/** SQLite's column affinity for a declared type (https://sqlite.org/datatype3.html §3.1). */
+export function affinityOf(declared) {
+  const t = String(declared ?? '').toUpperCase();
+  if (t.includes('INT')) return 'INTEGER';
+  if (t.includes('CHAR') || t.includes('CLOB') || t.includes('TEXT')) return 'TEXT';
+  if (t === '' || t.includes('BLOB')) return 'BLOB';
+  if (t.includes('REAL') || t.includes('FLOA') || t.includes('DOUB')) return 'REAL';
+  return 'NUMERIC';
+}
+
 const q = (name) => `"${name}"`;
 
 export function createRegistry(db) {
@@ -53,7 +72,7 @@ export function createRegistry(db) {
   db.function('sync_writing', { deterministic: false }, () => (writing > 0 ? 1 : 0));
 
   function tableColumns(table) {
-    return db.prepare('SELECT name FROM pragma_table_info(?)').all(table).map((r) => r.name);
+    return db.prepare('SELECT name, type FROM pragma_table_info(?)').all(table);
   }
 
   function installGuard(table) {
@@ -83,10 +102,17 @@ export function createRegistry(db) {
     for (const op of ops) if (!OPS.includes(op)) throw new Error(`${where}: unknown op ${op}`);
     if (!ops.has('create')) throw new Error(`${where}: 'create' must be allowed`);
 
-    const columns = tableColumns(table);
-    if (!columns.length) throw new Error(`${where}: table ${table} does not exist (migrations run before services)`);
+    const columnInfo = tableColumns(table);
+    if (!columnInfo.length) throw new Error(`${where}: table ${table} does not exist (migrations run before services)`);
+    const columns = columnInfo.map((c) => c.name);
+    const affinity = Object.fromEntries(columnInfo.map((c) => [c.name, affinityOf(c.type)]));
     for (const col of ['id', 'deleted_at']) {
       if (!columns.includes(col)) throw new Error(`${where}: table ${table} needs an "${col}" column`);
+      if (affinity[col] !== 'TEXT') throw new Error(`${where}: ${table}.${col} must be a TEXT column`);
+    }
+    const STANDARD_AFFINITY = { created_at: 'TEXT', created_by: 'TEXT', updated_at: 'TEXT', updated_by: 'TEXT', flagged: 'INTEGER' };
+    for (const [col, want] of Object.entries(STANDARD_AFFINITY)) {
+      if (columns.includes(col) && affinity[col] !== want) throw new Error(`${where}: ${table}.${col} must be a ${want} column`);
     }
 
     const fieldDefs = new Map();
@@ -94,6 +120,10 @@ export function createRegistry(db) {
       if (!NAME_RE.test(name) || RESERVED_FIELDS.has(name)) throw new Error(`${where}: bad field name ${name}`);
       if (!columns.includes(name)) throw new Error(`${where}: table ${table} has no column ${name}`);
       if (!TYPES[f?.type]) throw new Error(`${where}: field ${name} has unknown type ${f?.type}`);
+      if (affinity[name] !== AFFINITY_FOR[f.type]) {
+        throw new Error(`${where}: field ${name} is ${f.type} but ${table}.${name} has ${affinity[name]} affinity `
+          + `(declare it ${AFFINITY_FOR[f.type]})`);
+      }
       if (f.type === 'enum' && !(Array.isArray(f.values) && f.values.length)) {
         throw new Error(`${where}: enum field ${name} needs values`);
       }

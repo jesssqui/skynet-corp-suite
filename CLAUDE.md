@@ -118,24 +118,27 @@ server clock, server device id).
 - `hlc`: a stamp from `createHlc(deviceId)` (`@suite/shared/hlc`) — `clock.now()` per change.
 - `seen`: the device's cursor from its last **complete** pull (the page with `hasMore: false`) when the change was made.
   It is how the server tells "edited after seeing the other change" (no clash) from "edited at the same time" (clash).
-  Missing or from another generation = "saw nothing" (safest: more clashes to review, nothing silently lost).
+  From a generation a restore replaced = "saw up to min(its seq, the restored copy's last seq)". Missing or from an
+  unknown generation = "saw nothing" (safest: more clashes to review, nothing silently lost).
 
 **Endpoints** (`/api/sync`; identity until C1: headers `X-Suite-Device: <uuidv7>` and `X-Suite-Actor: owner|partner`,
 or `deviceId`/`actor` in the body/query):
 - `POST /push {steps:[…], deviceTime?}` → `{ generation, seq, hlc, serverTime, clockWarning?, results:[…] }`, one result
-  per step in order: `applied` | `duplicate` | `clash` (applied in part or kept for review; `applied`/`lost` field
-  lists, `clashes` ids, `kept`) | `rejected` (`code` + `reason`; nothing written — show it in "needs attention", never
+  per step in order: `applied` | `duplicate` | `clash` (applied in part or kept for review; `applied`/`lost`/`stale`
+  field lists, `clashes` ids, `kept`) | `rejected` (`code` + `reason`; nothing written — show it in "needs attention", never
   drop it). Each step is its own transaction. Max 500 steps/push, 64 KB/step, 1 MB/body (413 beyond).
 - `GET /pull?since=<cursor>&limit=<1–1000, default 200>` → `{ generation, reset, cursor, hasMore, hlc, changes }`;
   a change is `{ entity, id, seq, deleted:false, flagged, fields, clashes:[open clashes] }` or `{ entity, id, seq,
   deleted:true }`. Keep calling with the returned cursor until `hasMore` is false. Cursors are opaque (`<generation>.<seq>`).
-- `GET /clashes?status=open|all&entity=&recordId=`, `POST /clashes/:id/resolve {resolution: keep_winner|keep_loser}`
+- `GET /clashes?status=open|all&entity=&recordId=&limit=<1–1000>` (each at most once, else 400), `POST /clashes/:id/resolve {resolution: keep_winner|keep_loser}`
   (keep_loser applies the other value, or the delete, as a new change; 409 if the detail changed again since).
 - `GET /info` → generation, current cursor, server clock, registered entities with their fields (for client-side checks).
 
 **Rules**
-- **Exactly once, in order**: steps apply in the order sent; a device's stamps must increase (an older stamp after a
-  newer one is `out_of_order`); the key makes repeats `duplicate`. Every applied step gets the next server `seq`.
+- **Exactly once, in order**: steps apply in the order sent; the key makes repeats `duplicate`. Every applied step
+  gets the next server `seq`. Per field, an *older* stamp from the same device never overwrites that device's newer
+  value (it comes back in `stale`, not a clash), so late or re-sent steps can't undo newer work. Rejected steps are
+  not recorded and can be retried unchanged later (e.g. `not_found` until the create arrives after a restore).
 - **Clock: hybrid logical clock (HLC)**, compared as text (`<ms>-<counter>-<deviceId>`). Chosen over plain device
   timestamps (a wrong clock would decide clashes; ties possible) and over server arrival order (a phone offline for days
   would overwrite newer edits just by arriving last). An HLC is the device's wall clock, but it never goes backwards and
@@ -148,13 +151,15 @@ or `deviceId`/`actor` in the body/query):
   version is newer than the step's `seen`): the later stamp wins, the other value goes to `sync_clashes`, either arrival
   order gives the same result. Not concurrent (same device, or already seen): it just applies. Same value: no clash.
 - **Delete vs edit** (concurrent): the record is kept (un-deleted if the delete arrived first), `flagged`, and a
-  `delete` clash records the delete as the loser. Settle it by keeping the record or deleting after all. A delete of
-  something you had fully seen just deletes (and settles any open clashes on it as `superseded`); an edit of something
-  you knew was deleted is rejected (`deleted`).
+  `delete` clash records the delete as the loser. "Concurrent" for a delete = any create/update **step** in the log by
+  another device after the deleter's `seen` — including edits that lost a field clash. Settle it by keeping the record
+  or deleting after all. A delete of something you had fully seen just deletes, and settles as `superseded` only the
+  open clashes whose steps the deleting device had seen; an edit of something you knew was deleted is rejected (`deleted`).
 - **Deletes are soft**: the row stays with `deleted_at` set; pulls send a tombstone.
 - **Restore generation**: `restore.js` marks the restored file; on the next start sync gives the database a new
-  `generation`. A pull with a cursor from another generation (or ahead of the server) gets `reset: true` and starts
-  from the beginning; steps with such a `seen` are treated as "saw nothing".
+  `generation` and remembers the replaced one with its last seq (`sync_meta.previous_generations`). A pull with a cursor
+  from another generation (or ahead of the server) gets `reset: true` and starts from the beginning (the device may
+  hold records the restored copy never had); a step's `seen` from a replaced generation counts up to the restored point.
 
 **How a module syncs a record type** (C3a):
 1. Its migration makes the table: `id TEXT PRIMARY KEY`, `deleted_at TEXT`, the synced columns, and optionally
@@ -166,12 +171,21 @@ or `deviceId`/`actor` in the body/query):
    (YYYY-MM-DD), `datetime` (nowIso format), `id` (UUIDv7), `enum` (`values`); `required: true`. `appendOnly: true` =
    create only (notes, activities, call logs: they simply add up). The table must start with the module's name;
    entity names are global, short and singular (`client`, `task`, `note`).
+   **Column types must match field types** or registration fails: `text`/`date`/`datetime`/`id`/`enum` → `TEXT`,
+   `integer`/`boolean` → `INTEGER`, `number` → `REAL` (`id`, `deleted_at`, `created_*`/`updated_*` TEXT, `flagged`
+   INTEGER). A boolean in a TEXT column would come back as '1.0'; "0123" in an INTEGER column as 123.
 3. The module comes **after `sync`** in `modules/index.js`.
 4. **All writes go through sync**: devices push steps; server code calls `ctx.services.sync.applyLocal({ actor, entity,
    op, recordId?, fields })` (imports, automations — same rules and log, server's own device id). TEMP triggers make
    any other write to a registered table fail on the app's connection. Reads are the module's own SQL — always filter
    `deleted_at IS NULL`; `sync.recordState(entity, id)` gives flag + open clashes for a record page.
 5. Plan new fields as nullable or with defaults; renaming/removing a synced field breaks old outbox steps (`unknown_field`).
+6. **Migrations never change rows of a synced table.** Schema changes (add a column) are fine; data changes
+   (backfills, clean-ups, imports) run *after* start-up through `applyLocal` — migrations run before the guard exists,
+   so SQL there would bypass the log, field versions and clash rules, and devices would never receive the change.
+7. A newly added field reaches devices only on records changed afterwards (pulls are by record change). To push a
+   backfilled value out, write it with `applyLocal`; to show a new field everywhere at once, devices must re-pull from
+   scratch (C2b: pull without `since`).
 
 **For C2b (browser side)**: keep a device id (`newId()`, once) and a persisted HLC (`createHlc(id, { last })`, save
 `peek()`); for each change write the step to the outbox with `seen` = cursor of the last complete pull; push in order,
@@ -179,12 +193,24 @@ remove `applied`/`duplicate`/`clash` results from the outbox but **keep sent ste
 they can be re-sent after a restore; move `rejected` ones to "needs attention". On `reset: true` (or a new
 `generation` on push), drop the local copy of server data, re-push the kept sent steps first (in order; they come back
 `duplicate` or apply again), then the outbox, then pull from scratch. Show `clashes` on each record with keep/discard.
+- **One push in flight per device.** Mac browser tabs share one device id (and HLC) through storage: use a Web Lock
+  (`navigator.locks.request('suite-sync', …)`) or a single leader tab, so two tabs never push or stamp in parallel.
+- **Pending outbox changes are re-applied on top of pulled records** when showing data: the pulled record is the
+  server's truth; replay the not-yet-acknowledged steps over it so the person sees their own changes until they're in.
+- **Retries**: network errors / 5xx → retry the same steps unchanged (keys make it safe). `rejected` with `not_found`
+  → keep it and retry after the next pull or reset (its record may still be coming); other `rejected` codes →
+  "needs attention" (the person fixes or discards; a fixed change is a *new* step with a new key). `stale` fields are
+  done, not errors.
+- **Plan pruning**: `sync_steps`, `sync_field_versions`, tombstones in `sync_records`/module tables, resolved clashes and
+  `sync_devices` rows all grow forever. Before it matters, add pruning (e.g. steps and tombstones older than the
+  device-retention window, devices unseen for 90 days, forcing those devices to reset).
 **For C1**: replace `identify()` in `modules/sync/identity.js` with the session (actor from the account, device id
 bound to the session); keep the `{ actor, deviceId }` shape. `ACTORS` there are the two people (`system` = server).
 
 **Not done in C2a / open**: clash resolution needs a connection (no offline "resolve" step yet); pulls send every
-synced record (no "active clients only" scope yet — C2b/C3a should add an entity/scope filter); old tombstones,
-step-log and resolved clashes are never pruned; restores done by copying a file by hand (not `npm run restore`) are not
+synced record (no "active clients only" scope yet — C2b/C3a should add an entity/scope filter); nothing is pruned
+yet (see "Plan pruning"); after a restore, an edit re-sent before its record is re-created and then retried may show
+as a clash against the re-created record's values (safe: kept for review); restores done by copying a file by hand (not `npm run restore`) are not
 detected — always restore with the script.
 
 ## Decisions for later packages

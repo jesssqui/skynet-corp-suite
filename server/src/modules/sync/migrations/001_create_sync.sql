@@ -15,7 +15,7 @@ CREATE TABLE sync_meta (
 
 -- Every device that has pushed or pulled. A device belongs to one actor ('system' = the server itself).
 -- last_pull_cursor is the device's bookmark (the cursor we last handed it).
--- last_device_hlc: newest stamp applied from it (its steps must arrive in order).
+-- last_device_hlc: newest stamp received from it (diagnostics).
 -- clock_skew_ms: device clock minus server clock at its last push (diagnostics).
 CREATE TABLE sync_devices (
   device_id        TEXT PRIMARY KEY,

@@ -54,7 +54,8 @@ export function createSyncService({ db, log }) {
     clock_skew_ms = coalesce(?, clock_skew_ms) WHERE device_id = ?`);
   const touchPull = db.prepare(`UPDATE sync_devices SET last_seen_at = ?, last_pull_at = ?, last_pull_cursor = ?
     WHERE device_id = ?`);
-  const setDeviceHlc = db.prepare('UPDATE sync_devices SET last_device_hlc = ? WHERE device_id = ?');
+  const setDeviceHlc = db.prepare(`UPDATE sync_devices SET last_device_hlc = max(coalesce(last_device_hlc, ''), ?)
+    WHERE device_id = ?`);
 
   const getStep = db.prepare('SELECT * FROM sync_steps WHERE key = ?');
   const insertStep = db.prepare(`INSERT INTO sync_steps
@@ -78,9 +79,12 @@ export function createSyncService({ db, log }) {
     VALUES (@entity, @record_id, @field, @hlc, @seq, @device_id, @actor, @step_key)
     ON CONFLICT (entity, record_id, field) DO UPDATE SET hlc = excluded.hlc, seq = excluded.seq,
       device_id = excluded.device_id, actor = excluded.actor, step_key = excluded.step_key`);
-  // The newest edit of this record that the deleting device had not seen (made elsewhere, after its cursor).
-  const unseenEdit = db.prepare(`SELECT * FROM sync_field_versions
-    WHERE entity = ? AND record_id = ? AND device_id <> ? AND seq > ? ORDER BY hlc DESC LIMIT 1`);
+  // The newest create/edit of this record that the deleting device had not seen (made elsewhere, after its
+  // cursor). Read from the step log, not the field versions: an edit that lost a field clash left no version
+  // behind but is still an edit the deleting person never saw.
+  const unseenEdit = db.prepare(`SELECT * FROM sync_steps
+    WHERE entity = ? AND record_id = ? AND op IN ('create', 'update') AND device_id <> ? AND seq > ?
+    ORDER BY hlc DESC LIMIT 1`);
 
   const insertClash = db.prepare(`INSERT INTO sync_clashes (id, entity, record_id, kind, field,
       winner_value, winner_actor, winner_device, winner_hlc, winner_step,
@@ -94,8 +98,13 @@ export function createSyncService({ db, log }) {
     WHERE entity = ? AND record_id = ? AND kind = 'delete' AND resolved = 0`);
   const resolveClashStmt = db.prepare(`UPDATE sync_clashes SET resolved = 1, resolved_at = ?, resolved_by = ?, resolution = ?
     WHERE id = ?`);
-  const supersedeOpen = db.prepare(`UPDATE sync_clashes SET resolved = 1, resolved_at = ?, resolved_by = ?,
-    resolution = 'superseded' WHERE entity = ? AND record_id = ? AND resolved = 0`);
+  // Close open clashes on a deleted record, but only those whose steps the deleting device had seen
+  // (its own, or at or before its cursor); anything else stays open for review.
+  const supersedeOpen = db.prepare(`UPDATE sync_clashes SET resolved = 1, resolved_at = @at, resolved_by = @actor,
+    resolution = 'superseded'
+    WHERE entity = @entity AND record_id = @id AND resolved = 0
+      AND NOT EXISTS (SELECT 1 FROM sync_steps s WHERE s.key IN (sync_clashes.winner_step, sync_clashes.loser_step)
+        AND s.device_id <> @device AND s.seq > @seen)`);
 
   // ---- start-up: generation, sequence, server clock ---------------------
   let generation;
@@ -106,6 +115,14 @@ export function createSyncService({ db, log }) {
     if (!getMeta.get('generation') || restored) {
       // First start, or this database was just restored from a backup: devices'
       // cursors and pushed steps may be ahead of it, so they must resync.
+      if (restored) {
+        // Cursors from the replaced generation stay meaningful up to the restored copy's last seq:
+        // a device that pulled to seq c had seen everything this copy holds up to min(c, seq).
+        const previous = JSON.parse(getMeta.get('previous_generations')?.value ?? '{}');
+        const old = getMeta.get('generation')?.value;
+        if (old) previous[old] = Number(getMeta.get('seq')?.value ?? 0);
+        setMeta.run('previous_generations', JSON.stringify(previous));
+      }
       setMeta.run('generation', newId());
       if (restored) {
         restoredAt = restored;
@@ -122,6 +139,8 @@ export function createSyncService({ db, log }) {
   if (restoredAt) log?.warn(`database was restored (${restoredAt}): new sync generation ${generation}, devices will resync`);
 
   const clock = createHlc(serverDeviceId, { last: getMeta.get('hlc')?.value ?? null });
+  /** generation -> last seq held by this database, for generations replaced by restores */
+  const previousGenerations = JSON.parse(getMeta.get('previous_generations')?.value ?? '{}');
 
   const currentSeq = () => Number(getMeta.get('seq').value);
   function nextSeq() {
@@ -174,7 +193,10 @@ export function createSyncService({ db, log }) {
       if (c.generation === generation) {
         if (c.seq > currentSeq()) throw new StepError('invalid_step', 'seen is ahead of the server');
         seen = c.seq;
-      } // a cursor from before a restore: unknown, treat as "saw nothing" (safest)
+      } else if (Object.hasOwn(previousGenerations, c.generation)) {
+        // From before a restore: the device saw this database's history up to the restored point at most.
+        seen = Math.min(c.seq, previousGenerations[c.generation]);
+      } // any other cursor: unknown, treat as "saw nothing" (safest)
     }
 
     let fields = null;
@@ -258,10 +280,17 @@ export function createSyncService({ db, log }) {
     const write = {};
     const applied = [];
     const lost = [];
+    const stale = [];
     for (const [name, value] of Object.entries(fields)) {
       const f = entry.fields.get(name);
       const v = getVersion.get(entry.entity, step.recordId, name);
-      // Sequential: same device (its steps arrive in order), or the device had already pulled that version.
+      if (v && v.device_id === who.deviceId && hlc < v.hlc) {
+        // An older change from the same device arriving late (a retry, a re-send after a restore):
+        // the device's own newer value stays. Not a clash — nobody else is involved.
+        stale.push(name);
+        continue;
+      }
+      // Sequential: same device (newer stamp), or the device had already pulled that version.
       const sequential = !v || v.device_id === who.deviceId || v.seq <= seen;
       let wins = true;
       if (!sequential && !isDeepStrictEqual(current[name], value)) {
@@ -295,7 +324,7 @@ export function createSyncService({ db, log }) {
       registry.asWriter(() => registry.updateRow(entry, step.recordId, write));
     }
     touchRecord.run(seq, entry.entity, step.recordId);
-    return { status: clashes.length ? 'clash' : 'applied', applied, lost, clashes };
+    return { status: clashes.length ? 'clash' : 'applied', applied, lost, stale, clashes };
   }
 
   function applyDelete(ctx) {
@@ -312,7 +341,7 @@ export function createSyncService({ db, log }) {
       touchRecord.run(seq, entry.entity, step.recordId);
       const id = clash({
         entity: entry.entity, record_id: step.recordId, kind: 'delete',
-        winner_actor: edit.actor, winner_device: edit.device_id, winner_hlc: edit.hlc, winner_step: edit.step_key,
+        winner_actor: edit.actor, winner_device: edit.device_id, winner_hlc: edit.hlc, winner_step: edit.key,
         loser_actor: who.actor, loser_device: who.deviceId, loser_hlc: hlc, loser_step: step.key,
       });
       return { status: 'clash', kept: true, clashes: [id] };
@@ -324,7 +353,7 @@ export function createSyncService({ db, log }) {
     }));
     markDeleted.run({ seq, hlc, actor: who.actor, device: who.deviceId, step: step.key, entity: entry.entity, id: step.recordId });
     // Deleted on purpose with everything seen: open questions about this record no longer apply.
-    supersedeOpen.run(nowIso(), who.actor, entry.entity, step.recordId);
+    supersedeOpen.run({ at: nowIso(), actor: who.actor, entity: entry.entity, id: step.recordId, device: who.deviceId, seen });
     return { status: 'applied', clashes: [] };
   }
 
@@ -352,10 +381,6 @@ export function createSyncService({ db, log }) {
 
         let hlc = step.hlc;
         if (!who.server) {
-          const device = getDevice.get(who.deviceId);
-          if (device.last_device_hlc && step.hlc <= device.last_device_hlc) {
-            throw new StepError('out_of_order', 'this device already sent a later change; steps must be sent in order');
-          }
           const stamp = parseHlc(step.hlc);
           if (stamp.ms > Date.now() + LIMITS.maxFutureMs) {
             const s = parseHlc(clock.now()); // device clock is ahead: use the server's time instead
@@ -377,6 +402,7 @@ export function createSyncService({ db, log }) {
         if (hlc !== step.hlc) out.hlc = hlc;
         if (result.applied) out.applied = result.applied;
         if (result.lost?.length) out.lost = result.lost;
+        if (result.stale?.length) out.stale = result.stale;
         if (result.clashes.length) out.clashes = result.clashes;
         if (result.kept) out.kept = true;
         if (result.alreadyDeleted) out.alreadyDeleted = true;
@@ -504,14 +530,21 @@ export function createSyncService({ db, log }) {
     return { ...applyStep(step, { actor, deviceId: serverDeviceId, server: true }), recordId: id };
   }
 
-  function listClashes({ status = 'open', entity, recordId, limit = 500 } = {}) {
+  function listClashes({ status = 'open', entity, recordId, limit } = {}) {
     if (!['open', 'all'].includes(status)) throw new HttpError(400, 'status must be open or all');
+    for (const [name, v] of [['entity', entity], ['recordId', recordId]]) {
+      if (v !== undefined && typeof v !== 'string') throw new HttpError(400, `${name} must be given once`);
+    }
+    let n = 500;
+    if (limit !== undefined && limit !== '') {
+      n = typeof limit === 'number' ? limit : (typeof limit === 'string' && /^\d+$/.test(limit) ? Number(limit) : NaN);
+      if (!Number.isInteger(n) || n < 1 || n > 1000) throw new HttpError(400, 'limit must be a whole number 1–1000');
+    }
     const where = [];
     const args = [];
     if (status === 'open') where.push('resolved = 0');
     if (entity) { where.push('entity = ?'); args.push(entity); }
     if (recordId) { where.push('record_id = ?'); args.push(recordId); }
-    const n = Math.min(Math.max(Number(limit) || 500, 1), 1000);
     const rows = db.prepare(`SELECT * FROM sync_clashes ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY created_at DESC, id DESC LIMIT ${n}`).all(...args);
     return rows.map(publicClash);

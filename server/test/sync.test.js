@@ -346,13 +346,26 @@ test('ordering: steps apply in the order sent, each device in stamp order, a dev
   assert.deepEqual(res.results.map((r) => r.status), ['rejected', 'applied']);
   assert.equal(res.results[0].code, 'not_found');
 
-  // Steps from one device must come in stamp order; an older one after a newer one is refused.
-  const s1 = a.step('update', 'item', itemId, { qty: 2 });
+  // An older change from the same device arriving after a newer one doesn't overwrite that field
+  // (it is "stale", not a clash), but its other fields still apply.
+  const s1 = a.step('update', 'item', itemId, { qty: 2, phone: 'from s1' });
   const s2 = a.step('update', 'item', itemId, { qty: 3 });
   const r = await a.push([s2, s1]);
-  assert.deepEqual(r.results.map((x) => x.status), ['applied', 'rejected']);
-  assert.equal(r.results[1].code, 'out_of_order');
+  assert.deepEqual(r.results.map((x) => x.status), ['applied', 'applied']);
+  assert.deepEqual(r.results[1].stale, ['qty']);
+  assert.deepEqual(r.results[1].applied, ['phone']);
+  assert.equal(rowOf(db, itemId).qty, 3);
+  assert.equal(rowOf(db, itemId).phone, 'from s1');
   assert.ok(r.results[0].seq > res.results[1].seq, 'server sequence increases');
+  // A rejected step can be retried unchanged once it can apply (here: after its create arrives).
+  const laterId = newId();
+  const createLater = a.step('create', 'item', laterId, { title: 'later' });
+  const early = a.step('update', 'item', laterId, { qty: 1 }); // made after the create, sent before it
+  assert.equal((await one(a, early)).code, 'not_found');
+  assert.equal((await one(a, createLater)).status, 'applied');
+  const retried = await one(a, early);
+  assert.equal(retried.status, 'applied');
+  assert.equal(rowOf(db, laterId).qty, 1);
 
   // Offline for days: the owner's phone pulled and went offline two days ago and edited
   // then; the partner edited since. The phone reconnects today: the partner's edit is later, so it wins.
@@ -593,4 +606,185 @@ test('module tables are written only through sync, and only a module\'s own tabl
   assert.deepEqual(info.entities.map((e) => e.entity), ['item', 'note']);
   assert.deepEqual(info.entities[1].ops, ['create']);
   assert.equal(info.entities[1].appendOnly, true);
+});
+
+// ---------------------------------------------------------------- review regressions (C2a review probes)
+
+test('P1: a delete by a device that never saw a concurrent edit is flagged, even when that edit lost a field clash', async (t) => {
+  const { a, b, itemId, db, base } = await sharedItem(t);
+  const bStep = b.step('update', 'item', itemId, { phone: 'B-phone', qty: 7 });
+  await new Promise((r) => setTimeout(r, 5));
+  const aStep = a.step('update', 'item', itemId, { phone: 'A-phone', qty: 9 });
+  assert.equal((await one(a, aStep)).status, 'applied');
+  const bRes = await one(b, bStep);
+  assert.equal(bRes.status, 'clash');
+  assert.deepEqual(bRes.lost.sort(), ['phone', 'qty'], 'B lost every field: no field version of B survives');
+
+  // A deletes without pulling: it never saw B's edit.
+  const del = await one(a, a.step('delete', 'item', itemId));
+  assert.equal(del.status, 'clash');
+  assert.equal(del.kept, true);
+  const row = rowOf(db, itemId);
+  assert.equal(row.deleted_at, null);
+  assert.equal(row.flagged, 1);
+  const open = (await getJson(`${base}/api/sync/clashes`)).body.clashes;
+  assert.deepEqual(open.map((c) => c.kind).sort(), ['delete', 'field', 'field'], 'B\'s field clashes stay open');
+  const d = open.find((c) => c.kind === 'delete');
+  assert.equal(d.winner.actor, 'partner');
+  assert.equal(d.winner.step, bStep.key);
+});
+
+test('a delete only settles the open clashes whose steps the deleting device had seen', async (t) => {
+  const { a, b, itemId, db, base } = await sharedItem(t);
+  const c = makeDevice(base, 'partner');
+  await c.pull();
+  assert.equal((await one(c, c.step('update', 'item', itemId, { qty: 5 }))).status, 'applied');
+  await a.pull(); // A sees C's edit, not B's delete below
+  const bDel = await one(b, b.step('delete', 'item', itemId)); // B never saw C's edit: kept + flagged
+  assert.equal(bDel.status, 'clash');
+  const aDel = await one(a, a.step('delete', 'item', itemId));
+  assert.equal(aDel.status, 'applied', 'A had seen every edit, so the delete goes through');
+  assert.ok(rowOf(db, itemId).deleted_at);
+  const clashes = (await getJson(`${base}/api/sync/clashes?status=all`)).body.clashes;
+  assert.equal(clashes.length, 1);
+  assert.equal(clashes[0].resolved, false, 'A never saw B\'s delete step, so that clash is not closed for B');
+});
+
+test('P2: the same step pushed twice at the same moment applies once', async (t) => {
+  const { base, db } = await setup(t);
+  const a = makeDevice(base, 'owner');
+  const s = a.step('create', 'item', newId(), { title: 'x' });
+  const [r1, r2] = await Promise.all([a.push([s]), a.push([s])]);
+  assert.deepEqual([r1.results[0].status, r2.results[0].status].sort(), ['applied', 'duplicate']);
+  assert.equal(count(db, 'SELECT count(*) AS n FROM syncdemo_items'), 1);
+});
+
+async function restoredPair(t) {
+  const env = await setup(t);
+  const x = makeDevice(env.base, 'owner');
+  const y = makeDevice(env.base, 'partner');
+  const pre = newId();
+  await one(x, x.step('create', 'item', pre, { title: 'pre', phone: '1' }));
+  await x.pull();
+  await y.pull();
+  const backup = await runBackup({ db: env.db, dir: env.config.backup.dir, offsiteDir: null, keepDays: 30 });
+  return { env, x, y, pre, backup };
+}
+
+async function restore(t, env, backup, devices) {
+  await env.close();
+  await restoreBackup({ from: backup.file, dbPath: env.config.dbPath, backupDir: env.config.backup.dir });
+  const env2 = await startApp(t, env.config);
+  for (const d of devices) d.base = env2.base;
+  return env2;
+}
+
+test('P7: after a restore, re-sent edits and deletes made with an old cursor are not clashes', async (t) => {
+  const { env, x, y, pre } = await restoredPair(t);
+  const other = newId();
+  await one(x, x.step('create', 'item', other, { title: 'other' }));
+  await x.pull();
+  await y.pull();
+  const backup2 = await runBackup({ db: env.db, dir: env.config.backup.dir, offsiteDir: null, keepDays: 30 });
+  const sy = [y.step('update', 'item', pre, { phone: 'y' }), y.step('delete', 'item', other)];
+  assert.deepEqual((await y.push(sy)).results.map((r) => r.status), ['applied', 'applied']);
+
+  const env2 = await restore(t, env, backup2, [x, y]);
+  const resent = await y.push(sy);
+  assert.deepEqual(resent.results.map((r) => r.status), ['applied', 'applied'], JSON.stringify(resent.results));
+  assert.equal(rowOf(env2.db, pre).phone, 'y');
+  assert.ok(rowOf(env2.db, other).deleted_at, 'the re-sent delete of the other person\'s record is not flagged');
+  assert.equal(count(env2.db, 'SELECT count(*) AS n FROM sync_clashes'), 0);
+
+  // The replaced generation and how far the restored copy goes are remembered.
+  const prev = JSON.parse(env2.db.prepare("SELECT value FROM sync_meta WHERE key = 'previous_generations'").get().value);
+  assert.equal(Object.keys(prev).length, 1);
+});
+
+test('P3: after a restore, edits re-sent before their record is re-created can be retried and apply', async (t) => {
+  const { env, x, y, pre, backup } = await restoredPair(t);
+  const R = newId();
+  const sx = [x.step('create', 'item', R, { title: 'R' })];
+  await x.push(sx);
+  await y.pull();
+  const sy = [y.step('update', 'item', R, { phone: 'y-edit' }), y.step('update', 'item', pre, { phone: 'y-pre' })];
+  await y.push(sy);
+
+  const env2 = await restore(t, env, backup, [x, y]);
+  const ry = await y.push(sy); // Y reconnects first and re-sends what it kept
+  assert.deepEqual(ry.results.map((r) => [r.status, r.code]), [['rejected', 'not_found'], ['applied', undefined]]);
+  assert.equal((await x.push(sx)).results[0].status, 'applied');
+  const retry = await y.push([sy[0]]); // the rejected step, retried unchanged
+  assert.notEqual(retry.results[0].status, 'rejected', JSON.stringify(retry.results[0]));
+  assert.deepEqual(retry.results[0].applied, ['phone']);
+  assert.equal(rowOf(env2.db, R).phone, 'y-edit');
+  assert.equal(rowOf(env2.db, pre).phone, 'y-pre');
+});
+
+test('P5: the clash list answers 400 to bad limits and repeated filters', async (t) => {
+  const { base } = await setup(t);
+  for (const qs of ['limit=5.5', 'limit=0', 'limit=abc', 'limit=5000', 'entity=a&entity=b', 'recordId=x&recordId=y', 'status=open&status=all']) {
+    const r = await getJson(`${base}/api/sync/clashes?${qs}`);
+    assert.equal(r.status, 400, qs);
+    assert.ok(r.body.error, qs);
+  }
+  assert.equal((await getJson(`${base}/api/sync/clashes?limit=5&entity=item`)).status, 200);
+});
+
+test('P6: paging while other devices keep pushing misses nothing and ends on the latest values', async (t) => {
+  const { base } = await setup(t);
+  const a = makeDevice(base, 'owner');
+  const b = makeDevice(base, 'partner');
+  const ids = [];
+  for (let i = 0; i < 10; i++) {
+    const id = newId();
+    ids.push(id);
+    await one(a, a.step('create', 'item', id, { title: `t${i}` }));
+  }
+  const seen = new Map();
+  let since = null;
+  for (let i = 0; ; i++) {
+    const { body } = await b.pullPage(since, 2);
+    for (const c of body.changes) seen.set(c.id, c.fields?.title);
+    if (i < 3) {
+      await one(a, a.step('update', 'item', ids[0], { title: `edit${i}` }));
+      await one(a, a.step('update', 'item', ids[9], { title: `edit9-${i}` }));
+      const id = newId();
+      ids.push(id);
+      await one(a, a.step('create', 'item', id, { title: `new${i}` }));
+    }
+    since = body.cursor;
+    if (!body.hasMore) break;
+  }
+  assert.deepEqual(ids.filter((id) => !seen.has(id)), []);
+  assert.equal(seen.get(ids[0]), 'edit2');
+  assert.equal(seen.get(ids[9]), 'edit9-2');
+});
+
+test('registration refuses a field whose column type would change its values', async (t) => {
+  const { ctx, db, base } = await setup(t);
+  db.exec(`CREATE TABLE syncdemo_typed (id TEXT PRIMARY KEY, deleted_at TEXT, flag TEXT, code INTEGER, amount NUMERIC,
+    untyped, price REAL, label VARCHAR(20), ok_bool INTEGER)`);
+  db.exec('CREATE TABLE syncdemo_strict (id TEXT PRIMARY KEY, deleted_at TEXT, n INTEGER, s TEXT) STRICT');
+  db.exec('CREATE TABLE syncdemo_badid (id INTEGER PRIMARY KEY, deleted_at TEXT, s TEXT)');
+  const reg = (entity, table, fields) => ctx.services.sync.registerEntity({ module: 'syncdemo', entity, table, fields });
+  assert.throws(() => reg('t1', 'syncdemo_typed', { flag: { type: 'boolean' } }), /flag is boolean but .* TEXT affinity/);
+  assert.throws(() => reg('t2', 'syncdemo_typed', { code: { type: 'text' } }), /INTEGER affinity/);
+  assert.throws(() => reg('t3', 'syncdemo_typed', { amount: { type: 'number' } }), /NUMERIC affinity/);
+  assert.throws(() => reg('t4', 'syncdemo_typed', { untyped: { type: 'text' } }), /BLOB affinity/);
+  assert.throws(() => reg('t5', 'syncdemo_typed', { code: { type: 'number' } }), /declare it REAL/);
+  assert.throws(() => reg('t6', 'syncdemo_badid', { s: { type: 'text' } }), /id must be a TEXT column/);
+  reg('t7', 'syncdemo_typed', { price: { type: 'number' }, label: { type: 'text' }, ok_bool: { type: 'boolean' } });
+  reg('t8', 'syncdemo_strict', { n: { type: 'integer' }, s: { type: 'text' } });
+
+  // Values round-trip exactly.
+  const a = makeDevice(base, 'owner');
+  const id = newId();
+  assert.equal((await one(a, a.step('create', 't7', id, { price: 2.5, label: '0123', ok_bool: false }))).status, 'applied');
+  assert.equal((await one(a, a.step('create', 'item', newId(), { title: '0123', phone: '0123', done: false }))).status, 'applied');
+  const { records } = await a.pull();
+  assert.deepEqual(records.get(`t7/${id}`).fields, { price: 2.5, label: '0123', ok_bool: false });
+  const item = [...records.values()].find((r) => r.entity === 'item');
+  assert.equal(item.fields.phone, '0123');
+  assert.equal(item.fields.done, false);
 });
