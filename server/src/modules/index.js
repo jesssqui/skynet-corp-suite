@@ -4,7 +4,8 @@
 import auth from './auth/index.js';
 import health from './health/index.js';
 import sync from './sync/index.js';
+import crm from './crm/index.js';
 
 // auth comes first: app.js puts its guard in front of every route.
-// sync comes before every module that registers synced entities with it.
-export const modules = [auth, health, sync];
+// sync comes before every module that registers synced entities with it (crm, …).
+export const modules = [auth, health, sync, crm];

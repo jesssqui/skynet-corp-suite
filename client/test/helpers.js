@@ -10,9 +10,13 @@ import { createSyncEngine, createLocalLocks } from '../src/sync/engine.js';
 
 export { tmpDir, testConfig };
 
-/** A suite server with the test-only syncdemo and chk modules registered and both accounts made. */
-export async function startServer(t, config) {
-  const env = await startApp(t, config ?? testConfig(tmpDir(t)), { modules: [...modules, syncdemo, chk] });
+/**
+ * A suite server with the test-only syncdemo and chk modules registered and both accounts made.
+ * Without the CRM unless `crm: true` (its seeded businesses would shift the engine tests' counts).
+ */
+export async function startServer(t, config, { crm = false } = {}) {
+  const base = crm ? modules : modules.filter((m) => m.name !== 'crm');
+  const env = await startApp(t, config ?? testConfig(tmpDir(t)), { modules: [...base, syncdemo, chk] });
   const users = await ensureTestUsers(env.ctx);
   return { ...env, config: config ?? env.ctx.config, users };
 }
