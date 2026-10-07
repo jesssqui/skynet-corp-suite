@@ -4,9 +4,10 @@ Private business and life management suite (Skynet Corp Suite; `suite` is the sh
 home beside the Wholesale Order Manager, reachable only over Tailscale (Tailscale Serve gives it HTTPS). The CRM is its
 core (later packages); this repo currently holds the skeleton from package **C0** (server, client shell, one example
 module `health`, tests, Docker, nightly backups), the server half of offline sync from **C2a** (module `sync`),
-sign-in from **C1** (module `auth`: two accounts, password + authenticator code, sessions, devices) and the browser half
+sign-in from **C1** (module `auth`: two accounts, password + authenticator code, sessions, devices), the browser half
 of offline sync from **C2b** (the on-device copy and outbox in IndexedDB, a service worker so the app opens with no
-signal, the sync bar and the Needs attention page).
+signal, the sync bar and the Needs attention page) and the CRM's core records from **C3a** (module `crm`: our businesses,
+clients, accounts, contacts, consent, relationships, services, activities, links — all synced; screens are C3b).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -37,8 +38,10 @@ Deploying, Tailscale Serve, backup scheduling and the restore drill: **DEPLOY.md
 
 ## Layout
 ```
-shared/                    @suite/shared — ids.js (UUIDv7), time.js, hlc.js (sync clock stamps), actors.js,
-                           fields.js (synced field types + value checks, used by the server and devices); tests in shared/test
+shared/                    @suite/shared — ids.js (UUIDv7), time.js, hlc.js (sync clock stamps), actors.js (+ OWNERS),
+                           fields.js (synced field types + value checks, used by the server and devices),
+                           normalize.js (clean emails/phones/postal codes/tags), crm.js (CRM value lists, our
+                           businesses' fixed ids, the consent rule); tests in shared/test
 server/src/
   index.js                 start: open db, createApp, listen, heartbeat, backup schedule, shutdown
   app.js                   createApp({config, db, log}) — migrations, services, routes, static client, errors
@@ -50,6 +53,8 @@ server/src/
   modules/auth/            sign-in: crypto.js (scrypt, TOTP, codes), accounts.js + throttle.js (shared with the CLI),
                            service.js (sessions, devices, the request guard, restore check), routes.js, deviceName.js
   modules/sync/            offline sync: registry.js, service.js, routes.js, identity.js (session -> actor + device)
+  modules/crm/             CRM core records: entities.js (the record types), service.js (registration, seeds, reads),
+                           routes.js (read API), migrations/001_create_crm.sql
   backup/                  backup.js, restore.js, schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file)
 server/scripts/            backup.js, restore.js, users.js (CLIs)
@@ -72,6 +77,7 @@ client/src/
   api/client.js            fetch wrapper (api.get/post/put/del, ApiError); sends X-Suite-Device; 401 session codes
                            fire SESSION_LOST_EVENT
   modules/sync/            /sync (Offline data), /sync/attention (Needs attention), /sync/data/:entity (plain records view)
+  modules/crm/             /crm ("Clients" in the nav): our businesses + links to each CRM record type's plain view (C3b replaces it)
 client/public/             manifest.webmanifest, icons (placeholders)
 client/test/               node --test: the engine against a real server with syncdemo + fixtures/chk (a UNIQUE column),
                            overlay; fake-indexeddb
@@ -102,7 +108,8 @@ One folder per module on each side, same name on both (`server/src/modules/healt
   Never INTEGER AUTOINCREMENT — records will be created on devices while offline (C2). `isId()` validates input.
 - **Times**: `nowIso()` → `"2026-10-06T14:03:22.120Z"` (UTC, made in JS, sorts as text). Not `datetime('now')`.
   Calendar dates are `"YYYY-MM-DD"` (`localDate`, `parseLocalDate`); never `new Date('YYYY-MM-DD')` (UTC shift).
-- Store emails lowercase and phones digits-only (plan: matching across businesses).
+- Store emails lowercase and phones digits-only (plan: matching across businesses): give such synced fields a `format`
+  (below) and both sides keep to it.
 
 ## Security posture
 - **Network**: the server binds `127.0.0.1` by default; in Docker it listens on 0.0.0.0 inside the container but
@@ -286,6 +293,14 @@ gets 401 `device_signed_out`):
   `delete` clash on the record (moot once it is deleted) and the field clashes whose steps the deleting device had
   seen. An edit of something you knew was deleted is rejected (`deleted`).
 - **Deletes are soft**: the row stays with `deleted_at` set; pulls send a tombstone.
+- **Belonging** (`parent` refs; code "belonging" in `sync/service.js`): a record's parents, their parents… are its
+  ancestors; every live record under it is its subtree. **Deletes never cascade**: reads treat a record as gone when
+  it or any ancestor is deleted. The delete-vs-edit rule follows the chain, in either arrival order: a create/update
+  under an ancestor that another device deleted after this one's `seen` keeps that ancestor (un-deleted, flagged, a
+  `delete` clash; the step itself is `applied` and its result lists `revived: [{entity, id}]`); a delete of a record
+  whose subtree has a create/update by another device after the deleter's `seen` is kept and flagged. Such a clash's
+  `winner.value` is `{ _child: { entity, id } }` (what kept it). An ancestor the device knew was deleted → the step is
+  refused `deleted`. Non-parent refs only have to exist (they may name a deleted record: read it as none).
 - **Restore generation**: `restore.js` marks the restored file; on the next start sync gives the database a new
   `generation` and remembers the replaced one with its last seq (`sync_meta.previous_generations`). A pull with a cursor
   from another generation (or ahead of the server) gets `reset: true` and starts from the beginning (the device may
@@ -299,8 +314,16 @@ gets 401 `device_signed_out`):
 2. In `createService(ctx)`: `ctx.services.sync.registerEntity({ module, entity, table, fields, ops | appendOnly })`.
    Field types: `text` (`max`, default 10 000), `integer`, `number`, `boolean` (stored 0/1, sent true/false), `date`
    (YYYY-MM-DD), `datetime` (nowIso format), `id` (UUIDv7), `enum` (`values`); `required: true`. `appendOnly: true` =
-   create only (notes, activities, call logs: they simply add up). The table must start with the module's name;
-   entity names are global, short and singular (`client`, `task`, `note`).
+   create only (notes, activities, call logs: they simply add up); `ops: ['create', 'delete']` = no edits (links).
+   The table must start with the module's name; entity names are global, short and singular (`client`, `task`, `note`).
+   Options (all in `/info`, so devices know them):
+   - `format` (text): `email` | `phone` | `postal` | `tags` (`@suite/shared/normalize`). The value is stored in one
+     clean form: devices (the engine) and `applyLocal` normalise before the step; the server refuses anything not
+     already normalised (`invalid_value`).
+   - `ref: '<entity>'` (id): a soft reference — no SQL foreign key. A step naming a record that isn't there is
+     refused `not_found`, which devices park and retry after each pull (it may still be on its way: made on the other
+     device, re-sent after a restore). With SQL FKs it would be `constraint` → Needs attention instead.
+   - `parent: true` (with `ref`): what the record **belongs to**. See "Belonging" below.
    **Column types must match field types** or registration fails: `text`/`date`/`datetime`/`id`/`enum` → `TEXT`,
    `integer`/`boolean` → `INTEGER`, `number` → `REAL` (`id`, `deleted_at`, `created_*`/`updated_*` TEXT, `flagged`
    INTEGER). A boolean in a TEXT column would come back as '1.0'; "0123" in an INTEGER column as 123.
@@ -327,7 +350,7 @@ from scratch.
 
 **Not done in C2a / open**: clash resolution needs a connection (no offline "resolve" step yet); pulls send every
 synced record (no "active clients only" scope yet — the device has a hook for it, `pullScope` in
-`client/src/sync/engine.js`; C3a adds the server filter); nothing is pruned on the server
+`client/src/sync/engine.js`; still open after C3a, see "CRM"); nothing is pruned on the server
 yet (see "Plan pruning"); after a restore, an edit re-sent before its record is re-created and then retried may show
 as a clash against the re-created record's values (safe: kept for review); restores done by copying a file by hand (not `npm run restore`) are not
 detected — always restore with the script.
@@ -355,6 +378,8 @@ be sent; `local`: made here, not in the pulled copy yet). Record pages show `<Sy
 `<ClashPanel record={r} definition={engine.definition(entity)} />` (both cheap per row: ClashPanel subscribes to
 nothing unless the record has clashes). Every write is checked first against the entity's definition with
 `@suite/shared/fields` (the server's own rules); everything the store throws is a `SyncError` with a `code`:
+Fields with a `format` are normalised first (`' Bob@X.com'` → `'bob@x.com'`, `'+1 (519) 555-0100'` → `'5195550100'`, spaces
+only → null), so a value typed another way is no change. Errors:
 `not_ready` (this device never connected), `unknown_entity`, `unknown_field`, `invalid_value`, `invalid_step` (fields
 not an object, an id that isn't a UUIDv7, a fix that changes nothing), `op_not_allowed`, `not_found`,
 `already_exists`, `too_large` (step over 64 KB), `stopped` (signed out / closed), and IndexedDB failures wrapped as
@@ -453,12 +478,15 @@ attention ›" → `/sync/attention`, and "This device's clock is off ›" when 
 date and time settings need fixing).
 `/sync` (Offline data, linked from the bar and System): status, records per entity, Sync now, Download everything again.
 `/sync/data/:entity`: a plain view of any synced entity (list, add, edit, tick, delete, clashes) — the CRM's pages
-replace it for daily use; it stays as the view of what a device holds and backs the e2e test.
+replace it for daily use; it stays as the view of what a device holds and backs the e2e test. Its id pickers list the
+records of the field's `ref` entity; `format` fields get the email / phone keyboard.
 
-**Scope (TODO, C3a)**: pulls send every record. The device-side hook is `pullScope` in `engine.js` (extra pull
-parameters, `null` today). When the server can filter ("active clients only", open tasks, Today and this month's
-plans), return its parameters there; records that leave the scope need a "left scope" change from the server (or a
-pull from scratch), or they linger on devices.
+**Scope (TODO, still open after C3a)**: pulls send every record. The device-side hook is `pullScope` in `engine.js`
+(extra pull parameters, `null` today). When the server can filter ("active clients only", open tasks, Today and this
+month's plans), return its parameters there; records that leave the scope need a "left scope" change from the server
+(or a pull from scratch), or they linger on devices. C3a left it out on purpose: two people's CRM is hundreds to a few
+thousand records (the e2e test shows 5,000 is fine), and a scope must also follow the belonging chain (a closed
+client's contacts, consents…). Do it when the numbers call for it (activities will grow first).
 
 **Verified**: `client/test/engine.test.js` (offline create+edit then push, reopen, two devices merging, a clash
 surfaced and settled, delete vs edit kept and flagged, pending/accepted overlay, paging and pull from scratch, two tabs
@@ -480,11 +508,93 @@ a task, turn airplane mode off with the app open, and check both on the Mac.
 (above); device-side pruning is only the 30-day kept steps (nothing else grows on the device except the copy itself);
 a record type's own pages (C3a/C4a) should use `useRecords`/`ClashPanel` rather than the generic view.
 
+## CRM (crm module, C3a)
+Code `server/src/modules/crm/` (record types in `entities.js`), shared facts `shared/crm.js` + `shared/normalize.js`,
+client `client/src/modules/crm/`; tests `server/test/crm.test.js`, `client/test/crm.test.js`, `test/e2e/crm.e2e.test.js`. The plan's model: a
+**client** (the owner or group) has **accounts** (their businesses) and **contacts**; a **relationship** is one of our
+**businesses** working with one of their accounts; **services** hang off a relationship; **activities** are the timeline;
+**consent** is per contact and our business; **links** tie another app's record to an account or contact (D2).
+
+**Record types** (entity → table `crm_<plural>`; every one synced, UUIDv7 id, `created_*`/`updated_*` who and when,
+`flagged`; ⇧ = `parent` ref, → = plain ref, * = required; text lengths in `entities.js`):
+- `business`: name*, color ("#rrggbb"), logo (URL/path; a file id once files exist), default_owner* (`owner|partner|shared`), position.
+- `client`: name*, status* (`active|closed`), tags (format tags), notes.
+- `account`: client_id*⇧, name*, street, city, region, postal_code (format postal), country, website, tags, notes,
+  age_restricted (boolean).
+- `contact`: client_id*⇧, account_id→ (optional: which of their businesses), name*, role, email (format email),
+  phone (format phone), preferred_channel (`email|call|text|social|in_person`), notes.
+- `consent` (append-only): contact_id*⇧, business_id*⇧, withdrawn* (boolean), date* (given / withdrawn), kind
+  (`express|implied`, CASL), source (how it was given).
+- `relationship`: account_id*⇧, business_id*⇧, kind* (`wholesale|website|social|consulting`), status* (`active|paused|ended`),
+  start_date, notes.
+- `service`: relationship_id*⇧, name*, status* (`active|paused|done|cancelled`), stage (free text until Projects),
+  billing (`flat|hourly`), amount_cents (flat fee or retainer per period), rate_cents (hourly), period
+  (`once|monthly|quarterly|yearly`), sessions, start_date, renewal_date, scope, notes. Money is integer cents.
+- `activity` (append-only): client_id*⇧, account_id→, business_id→ (ours), type* (`note|call|email|meeting|order|milestone`),
+  body*, at* (datetime it happened; `created_by` = who logged it). A correction is a new activity.
+- `link` (create/delete only; undo = delete): account_id⇧ **or** contact_id⇧ (exactly one: SQL CHECK → `constraint`),
+  app* (`wom`; add values as apps join), external_id*, matched_by* (`auto|approved`). One live link per (app,
+  external_id) per kind of target (partial UNIQUE indexes → `constraint`): an Order Manager customer can be an account
+  and its contact person.
+Value lists live in `@suite/shared/crm` (use them for labels/pickers). New fields: nullable, never renamed (rule 5).
+
+**Rules for C3b, C4a and the D packages**
+- **Writes**: devices `store.create/update/remove` (C2b engine), server code `sync.applyLocal`. No write routes;
+  `crm_*` tables refuse any other write (guard triggers, tested per table).
+- **Our businesses** are seeded at first start through `applyLocal` (actor `system`) with **fixed ids**
+  (`OUR_BUSINESSES` / `BUSINESS_IDS` in `@suite/shared/crm`: wholesale, agency = Great White North Design, consulting,
+  save_point, retail, personal), only when that id has never existed — no duplicates on restart or restore, and a
+  rename/delete in the app sticks. A restore from before C3a gets them back with the same ids, so devices' kept steps
+  still point at them. Default owners: owner for wholesale/agency/consulting, partner for Save Point Shop, shared for
+  the retail stores **and Personal** (proposal: household renewals and bills land on the shared list; a task made by
+  hand should default to its maker — C4a).
+- **"Shared"** is `SHARED = 'shared'` in `@suite/shared/actors` (`OWNERS = ['owner', 'partner', 'shared']`): a list
+  either person picks from, never an actor (never signs in, never in `created_by`). C4a's task owner uses `OWNERS`.
+- **Clean contact details**: `normalize.js` is the one definition (email trimmed + lowercase; phone digits only, North
+  American numbers as 10 digits — "+1 519…" = "519…", an extension is dropped → put it in notes; postal "N3Y 4K3";
+  tags "a, b" without repeats). Matching (D2) compares stored values with `=`. The Order Manager's phase-2 groundwork
+  should copy `normalizePhone`/`normalizeEmail` exactly. `formatPhone` shows a stored phone as "(519) 555-0100"
+  (the generic views' `formatValue` uses it).
+- **Consent** is append-only; withdrawing adds a row with `withdrawn: true`. The one that counts per (contact,
+  business) is the latest by `date`, then by `id` (UUIDv7: recorded later wins a same-day tie) — `latestConsents()` /
+  `hasConsent()` in `@suite/shared/crm`, used by the read API; use the same on devices. No consent row = no consent.
+- **Age-restricted**: `account.age_restricted` (not contact): purchases are made by a business (the Order Manager
+  customer links to an account; order activities carry account_id), and one flag per buyer doesn't drift as people
+  change roles. Set by hand now, by the wholesale connection later (D). Rule for any marketing list (D packages): an
+  age-restricted account, its contacts and its activities/orders may be used only by our businesses that have a
+  relationship with that account — never to select, segment or target for another brand — and every email still
+  needs that business's own consent.
+- **References** are soft `ref`s checked by sync (not SQL FKs; see "Belonging" under Offline sync): SQL FKs would
+  answer `constraint` when a child arrives before its parent (two devices, or kept steps re-sent after a restore in
+  another order), which devices send to Needs attention; `not_found` is parked and retried after each pull, so
+  offline order sorts itself out. FKs would also need SQLite's 12-step rebuild for any later parent-table change.
+  Same-client consistency (contact.account_id's client = contact.client_id) is not enforced: screens and D2 merges
+  move them together.
+- **Deleting**: delete only the record itself (e.g. a client) — never its children; they are hidden with it and come
+  back if the delete is undone through a clash. Prefer `status: closed` / `ended` for normal use; delete is for mistakes.
+  Reads (server SQL and device lists) must show a record only while its whole parent chain is live, and treat a
+  non-parent ref to a deleted record (contact.account_id, activity.account_id/business_id) as none.
+- **Read API** (`/api/crm`, signed in, GET only): `/businesses`; `/clients?q=&business=&status=&limit=&offset=` (q:
+  part of a client/account/contact name or an email, or a phone typed any way; business: clients with a live
+  relationship with it; `{ clients: [{ …client, accountCount, contactCount, businessIds, lastActivityAt }], total }`);
+  `/clients/:id` → `{ client, accounts: [{ …, relationships: [{ …, services }], links }], contacts: [{ …, consent:
+  { [businessId]: { given, date, kind, source, id, recordedAt, recordedBy } }, links }], activities (latest 20),
+  activityCount }`; the client, accounts, relationships, services, contacts and links carry `_sync: { flagged, clashes }`
+  (from `sync.recordState`; append-only activities and consent can't clash);
+  `/clients/:id/activities?business=&account=&type=&limit=&offset=` (newest first). Screens can read the device's offline copy
+  (`useRecords`) instead; the API is for search across everything, records a device may not hold once the pull scope
+  exists, and server-side consumers.
+- **Not in C3a**: screens (C3b; `/crm` is a plain doorway to the generic views), tasks (C4a), lead stages (D8), the
+  matching itself (D2: the link record exists), the pull scope (see Offline sync C2b, "Scope").
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
   sections). `health_meta.instance_id` still names the database and survives restores; the sync `generation` is what
-  changes on a restore. Next: C3a registers real record types (clients, notes) and adds the pull scope; C4a tasks.
+  changes on a restore.
+- **C3a (core records)**: done — see "CRM". Next: C3b screens (client list/search, client page with timeline and
+  clashes, quick capture), C4a tasks (`OWNERS` for the owner, `business_id`⇧ + optional client/account refs, the
+  business's `default_owner` for automated tasks), D2 matching (links), the pull scope when volumes need it.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -493,7 +603,8 @@ a record type's own pages (C3a/C4a) should use `useRecords`/`ClashPanel` rather 
 `npm test` from the root. Server tests use `node --test`, real temporary SQLite files and an app on an ephemeral port
 (`createApp` + `listen(0)`) — no mocks of the database. Client tests (`client/test`) run the sync engine in Node with
 fake-indexeddb against such a server (helpers.js: `startServer`, `makeDevice` with an on/off connection switch); the
-client build must succeed. `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
+client build must succeed. The sync engine tests (`server/test/sync.test.js`, `client/test/engine.test.js`) run without
+the crm module so its seeded businesses don't shift their counts; `startServer(t, config, { crm: true })` includes it. `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
 touching the engine, the service worker or the sync UI. Write a test with every module and every bug fix.
 
 ## Git
