@@ -2,8 +2,9 @@
 // GET /api/sync/info; modules (C3a/C4a) read and write synced records only through this
 // engine (via `store` / the hooks in ./index.js), never with their own API calls.
 //
-// Writing: create/update/remove check the change against the entity's field definitions,
-// then write it as a step to the outbox in one IndexedDB transaction (with the device's HLC
+// Writing: create/update/remove normalise fields that have a `format` (emails lowercase, phones
+// digits only… — @suite/shared/normalize, the server refuses anything else) and check the change
+// against the entity's field definitions, then write it as a step to the outbox in one IndexedDB transaction (with the device's HLC
 // stamp and the cursor of the last complete pull as `seen`), and ask for a sync soon.
 // Reading: list/get return the pulled copy with the outbox replayed on top (./overlay.js).
 // Syncing (one cycle at a time per device, across tabs, under the Web Lock 'suite-sync'):
@@ -15,7 +16,7 @@
 // See CLAUDE.md, "Offline sync (C2b: browser side)".
 import { newId, isId } from '@suite/shared/ids';
 import { createHlc } from '@suite/shared/hlc';
-import { checkFieldValue } from '@suite/shared/fields';
+import { checkFieldValue, normalizeFieldValue } from '@suite/shared/fields';
 import { transact } from './idb.js';
 import { openLocalDb, deleteLocalDb, DB_NAME } from './localdb.js';
 import { changesFor, overlay, toView } from './overlay.js';
@@ -385,10 +386,13 @@ export function createSyncEngine({
       throw new SyncError('invalid_step', 'fields must be an object');
     }
     const clean = {};
-    for (const [name, value] of Object.entries(fields)) {
-      if (value === undefined) continue;
+    for (const [name, typed] of Object.entries(fields)) {
+      if (typed === undefined) continue;
       const f = def.fields[name];
       if (!f) throw new SyncError('unknown_field', `${def.entity} has no field ${name}`);
+      // The stored form ("Bob@X.com " -> "bob@x.com", "(519) 555-0100" -> "5195550100"), so the
+      // step carries exactly what the server keeps and an unchanged value makes no step.
+      const value = normalizeFieldValue(f, typed);
       const problem = checkFieldValue(f, value);
       if (problem) throw new SyncError('invalid_value', problem);
       clean[name] = value;
