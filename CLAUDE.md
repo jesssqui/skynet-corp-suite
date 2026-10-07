@@ -3,8 +3,10 @@
 Private business and life management suite (Skynet Corp Suite; `suite` is the short name used in code, packages and file names) for two people. Runs in Docker on the Mac mini at
 home beside the Wholesale Order Manager, reachable only over Tailscale (Tailscale Serve gives it HTTPS). The CRM is its
 core (later packages); this repo currently holds the skeleton from package **C0** (server, client shell, one example
-module `health`, tests, Docker, nightly backups), the server half of offline sync from **C2a** (module `sync`) and
-sign-in from **C1** (module `auth`: two accounts, password + authenticator code, sessions, devices).
+module `health`, tests, Docker, nightly backups), the server half of offline sync from **C2a** (module `sync`),
+sign-in from **C1** (module `auth`: two accounts, password + authenticator code, sessions, devices) and the browser half
+of offline sync from **C2b** (the on-device copy and outbox in IndexedDB, a service worker so the app opens with no
+signal, the sync bar and the Needs attention page).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -13,11 +15,16 @@ sign-in from **C1** (module `auth`: two accounts, password + authenticator code,
 - npm workspaces: one `npm ci` at the root installs everything; one `package-lock.json`.
 - Dependencies are kept few and mainstream; ask before adding one. `qrcode-generator` (MIT, no dependencies) draws the
   authenticator QR code: in the terminal for `users.js add/reset-2fa` (server) and on the Account page (client).
+  Dev only: `fake-indexeddb` (client tests: IndexedDB in Node) and `playwright-core` (pinned to 1.56.0 to match the
+  Chromium build in this environment's `PLAYWRIGHT_BROWSERS_PATH`; `npm run test:e2e`). No IndexedDB or service-worker
+  library: `client/src/sync/idb.js` and the small Vite plugin in `client/vite.config.js` do what is needed.
 
 ## Commands (repo root)
 ```bash
 npm ci                 # install everything
-npm test               # shared + server tests (node --test) and a client build — must pass before every commit
+npm test               # shared + server + client tests (node --test) and a client build — must pass before every commit
+npm run test:e2e       # client build + Playwright (Chromium, iPhone emulation) against a real server; separate (needs a
+                       # browser: PLAYWRIGHT_BROWSERS_PATH here, `npx playwright-core install chromium` on a Mac)
 npm run dev:server     # API on http://127.0.0.1:3100 (data in ./data, git-ignored)
 npm run dev:client     # Vite on http://localhost:5173, proxies /api to :3100
 npm run build && npm start   # production-style: server also serves client/dist
@@ -30,7 +37,8 @@ Deploying, Tailscale Serve, backup scheduling and the restore drill: **DEPLOY.md
 
 ## Layout
 ```
-shared/                    @suite/shared — ids.js (UUIDv7), time.js, hlc.js (sync clock stamps), actors.js; tests in shared/test
+shared/                    @suite/shared — ids.js (UUIDv7), time.js, hlc.js (sync clock stamps), actors.js,
+                           fields.js (synced field types + value checks, used by the server and devices); tests in shared/test
 server/src/
   index.js                 start: open db, createApp, listen, heartbeat, backup schedule, shutdown
   app.js                   createApp({config, db, log}) — migrations, services, routes, static client, errors
@@ -48,16 +56,26 @@ server/scripts/            backup.js, restore.js, users.js (CLIs)
 server/test/               node --test; helpers.js: tmpDir/testConfig/startApp/testClock/ensureTestUsers/sessionFor/dumpDb;
                            fixtures/syncdemo = test-only synced module
 client/src/
-  main.jsx, App.jsx        providers + router built from the module list, behind AuthGate
+  main.jsx, App.jsx        providers + router built from the module list, behind AuthGate and SyncProvider;
+                           main.jsx registers the service worker (production builds)
   auth/                    session.jsx (AuthProvider, useAuth), SignInScreen.jsx (+ AuthGate), TwoFactorParts.jsx,
-                           Qr.jsx, device.js (device id, clearLocalData — C2b extends it)
-  shell/                   AppShell (sidebar on desktop, bottom tab bar on phones), shell.css
+                           Qr.jsx, device.js (device id, remembered session, clearLocalData)
+  sync/                    offline sync, browser side (C2b): engine.js (the engine), overlay.js (what is shown),
+                           localdb.js + idb.js (IndexedDB), index.js (store + the app's engine), hooks.js, SyncProvider.jsx,
+                           components.jsx (SyncBar, ClashPanel, SyncBadges, FieldInput/FieldsForm)
+  sw/                      service-worker.js (built to dist/sw.js), register.js (registration + update flow)
+  shell/                   AppShell (sidebar on desktop, bottom tab bar on phones), shell.css, SyncBar slot,
+                           UpdateBanner ("new version ready · Reload"), BackupBanner
   ui/                      the shared look: theme.css (tokens, light/dark), theme.jsx, components.jsx, icons.jsx; import from ui/index.js
   modules/index.js         client module registration list -> nav + routes
   modules/<name>/          index.jsx ({ id, nav, routes }) + pages
   api/client.js            fetch wrapper (api.get/post/put/del, ApiError); sends X-Suite-Device; 401 session codes
                            fire SESSION_LOST_EVENT
+  modules/sync/            /sync (Offline data), /sync/attention (Needs attention), /sync/data/:entity (plain records view)
 client/public/             manifest.webmanifest, icons (placeholders)
+client/test/               node --test: the engine against a real server with syncdemo + fixtures/chk (a UNIQUE column),
+                           overlay; fake-indexeddb
+test/e2e/                  Playwright end-to-end tests (npm run test:e2e); proxy.js cuts the server off for real outages
 ```
 
 ## Modules
@@ -94,8 +112,15 @@ One folder per module on each side, same name on both (`server/src/modules/healt
 - **Sign-in on everything**: every API route needs a session except `POST /api/auth/login|login/code` and
   `GET /api/health` (which answers anonymous callers with `{ ok, name, version, time }` only; details, backup paths
   and errors need a session). Unknown `/api` paths answer 401 to anonymous callers. The built client (HTML/JS) is public;
-  it shows nothing until `GET /api/auth/session` succeeds.
-- helmet sets a strict CSP (`script-src 'self'`): no inline scripts, no third-party script/style hosts.
+  it shows nothing until `GET /api/auth/session` succeeds — except on a device where someone was signed in before:
+  there it opens at once from the remembered session and shows that device's own offline copy (IndexedDB) while the
+  check runs (offline: until the server can be reached). Nothing is fetched from the server without a session; a
+  session that ended or a device signed out elsewhere is found out at the first request that reaches the server.
+- The service worker caches only the built app (same files the server gives anyone); it never caches `/api`. Signing
+  out keeps that cache (no personal data in it) so the app still opens offline afterwards.
+- helmet sets a strict CSP (`script-src 'self'`): no inline scripts, no third-party script/style hosts. The service
+  worker is a same-origin script (`worker-src` falls back to `script-src 'self'`); the cached `index.html` keeps its
+  CSP header, so pages served offline have the same policy (the e2e test checks for violations).
 - **No HSTS** (helmet's is off): browsers apply it to the whole ts.net hostname on every port, which would force the
   Order Manager's plain-http port on the same Mac to https. Tailscale Serve already makes the suite HTTPS-only.
 
@@ -172,8 +197,8 @@ Code `server/src/modules/auth/`, client `client/src/auth/` + `client/src/modules
 - **401 codes** (all requests): `not_signed_in` (show sign-in), `session_expired` (sign in again, **keep** local data:
   same person, same device), `device_signed_out` (**clear** local data, then sign in). The client's
   `api/client.js` fires `SESSION_LOST_EVENT`; `auth/session.jsx` calls `clearLocalData()` for `device_signed_out` and
-  shows the sign-in screen with the reason. The session is re-checked when the app returns to the foreground and
-  every 5 minutes.
+  shows the sign-in screen with the reason. The session is re-checked when the app returns to the foreground, comes
+  back online, and every 5 minutes. Requests that get no answer in 30 s count as no connection (status 0).
 - **Backups** contain the auth tables (scrypt hashes, TOTP secrets, hashed tokens). **A restore ends every session**:
   at start (`start` hook) auth compares the sync generation with `auth_meta.sync_generation`; a different one means
   the database was restored, so all open sessions end (`end_reason = 'restored'`). Every device then gets
@@ -290,56 +315,186 @@ gets 401 `device_signed_out`):
    so SQL there would bypass the log, field versions and clash rules, and devices would never receive the change.
 7. A newly added field reaches devices only on records changed afterwards (pulls are by record change). To push a
    backfilled value out, write it with `applyLocal`; to show a new field everywhere at once, devices must re-pull from
-   scratch (C2b: pull without `since`).
+   scratch (Offline data → "Download everything again", `engine.refetchAll()`).
 
-**For C2b (browser side)**: the device id comes from sign-in (`client/src/auth/device.js` `getDeviceId()`, stored by
-`AuthProvider.signedIn`); keep a persisted HLC (`createHlc(id, { last })`, save `peek()`); for each change write the step to the outbox with `seen` = cursor of the last complete pull; push in order,
-remove `applied`/`duplicate`/`clash` results from the outbox but **keep sent steps for 30 days** (backup retention) so
-they can be re-sent after a restore; move `rejected` ones to "needs attention". On `reset: true` (or a new
-`generation` on push), drop the local copy of server data, re-push the kept sent steps first (in order; they come back
-`duplicate` or apply again), then the outbox, then pull from scratch. Show `clashes` on each record with keep/discard.
-- **One push in flight per device.** Mac browser tabs share one device id (and HLC) through storage: use a Web Lock
-  (`navigator.locks.request('suite-sync', …)`) or a single leader tab, so two tabs never push or stamp in parallel.
-- **Pending outbox changes are re-applied on top of pulled records** when showing data: the pulled record is the
-  server's truth; replay the not-yet-acknowledged steps over it so the person sees their own changes until they're in.
-- **Retries**: network errors / 5xx → retry the same steps unchanged (keys make it safe). `rejected` with `not_found`
-  → keep it and retry after the next pull or reset (its record may still be coming); other `rejected` codes →
-  "needs attention" (the person fixes or discards; a fixed change is a *new* step with a new key). `stale` fields are
-  done, not errors.
-- **Plan pruning**: `sync_steps`, `sync_field_versions`, tombstones in `sync_records`/module tables, resolved clashes and
-  `sync_devices` rows all grow forever. Before it matters, add pruning (e.g. steps and tombstones older than the
-  device-retention window, devices unseen for 90 days, forcing those devices to reset).
+**Browser side**: built in C2b — see "Offline sync (C2b: browser side)" below for how each of these rules is met.
+**Plan pruning**: `sync_steps`, `sync_field_versions`, tombstones in `sync_records`/module tables, resolved clashes and
+`sync_devices` rows all grow forever. Before it matters, add pruning (e.g. steps and tombstones older than the
+device-retention window, devices unseen for 90 days, forcing those devices to reset).
 **After a restore** every session has ended (see "Sign-in"): devices get `session_expired`, keep their outbox and kept
-steps, sign in again (keeping their device id), then see `reset: true` and re-push as above.
-**Sign-out and C2b (must do)**: a device can be signed out from the other device at any time. When any request
-(sync or not) answers **401 `device_signed_out`**, the device must delete everything it stores for the person —
-offline records (IndexedDB), the outbox **including unsent changes** (on purpose: the phone may be lost), kept sent
-steps, the HLC, the pull cursor, cached API responses in the service worker — then show sign-in. Do it by extending
-`clearLocalData()` in `client/src/auth/device.js` (already called on that code, on Sign out, and when sign-in returns
-a different device id). On `session_expired` keep everything: after signing in again the device keeps its id, so its
-outbox pushes as before. Send `X-Suite-Device` on every request (`api/client.js` does) so a device whose cookie is
-gone still hears `device_signed_out`. A signed-out device must not push before clearing (the server refuses anyway).
-If the browser is shared (Mac), signing in as the other person gives a new device id → clear the previous person's
-copy first (`deviceReplaced` / id change).
+steps, sign in again (keeping their device id), then see the new generation and re-push (kept steps first), then pull
+from scratch.
 
 **Not done in C2a / open**: clash resolution needs a connection (no offline "resolve" step yet); pulls send every
-synced record (no "active clients only" scope yet — C2b/C3a should add an entity/scope filter); nothing is pruned
+synced record (no "active clients only" scope yet — the device has a hook for it, `pullScope` in
+`client/src/sync/engine.js`; C3a adds the server filter); nothing is pruned on the server
 yet (see "Plan pruning"); after a restore, an edit re-sent before its record is re-created and then retried may show
 as a clash against the re-created record's values (safe: kept for review); restores done by copying a file by hand (not `npm run restore`) are not
 detected — always restore with the script.
 
+## Offline sync (C2b: browser side)
+Code `client/src/sync/`, pages `client/src/modules/sync/`, service worker `client/src/sw/`; tests `client/test/`
+(the engine in Node with fake-indexeddb against a real server with the test-only `syncdemo` module) and `test/e2e/`.
+The engine is entity-agnostic: what can be saved comes from `GET /api/sync/info`, so a module that registers an entity
+on the server (C3a: "How a module syncs a record type") needs nothing on the client to make it work offline.
+
+**The API for C3a/C4a** — client code reads and writes synced records **only** through this (never its own API calls):
+```js
+import { store, useRecords, useRecord, useSyncStatus, SyncError } from '../../sync/index.js';
+import { ClashPanel, SyncBadges } from '../../sync/components.jsx';
+const id = await store.create('task', { title: 'Call Lefty’s', done: false }); // new UUIDv7, made here; works offline
+await store.update('task', id, { done: true });     // sends only fields that changed; false when nothing did
+await store.remove('task', id);
+await store.list('task', { where: { done: false } /* or (rec) => bool */, sort: 'due' /* '-due', or (a, b) => n */ });
+await store.get('task', id);                         // null when this device doesn't have it
+const { records, loading } = useRecords('task', { where, sort }, deps);   // live; `deps` = state where/sort depend on
+const { record } = useRecord('client', clientId);
+```
+A record is `{ id, ...fields, _sync: { entity, pending, local, flagged, clashes } }` (`pending`: a change is waiting to
+be sent; `local`: made here, not in the pulled copy yet). Record pages show `<SyncBadges record={r} />` and
+`<ClashPanel record={r} definition={engine.definition(entity)} />` (both cheap per row: ClashPanel subscribes to
+nothing unless the record has clashes). Every write is checked first against the entity's definition with
+`@suite/shared/fields` (the server's own rules); everything the store throws is a `SyncError` with a `code`:
+`not_ready` (this device never connected), `unknown_entity`, `unknown_field`, `invalid_value`, `invalid_step` (fields
+not an object, an id that isn't a UUIDv7, a fix that changes nothing), `op_not_allowed`, `not_found`,
+`already_exists`, `too_large` (step over 64 KB), `stopped` (signed out / closed), and IndexedDB failures wrapped as
+`storage_full` (the browser's quota — on an iPhone, the phone is out of space) or `storage_error` (`cause` holds the
+browser's error). A write stores **only the step**, in the outbox (one transaction with the clock); the pulled copy
+(`records`) is never written by local changes — reads replay the outbox over it, so the change shows at once, and the
+engine sends it when it can.
+
+**Long lists (C3a/C4a)**: don't render thousands of rows — page them (the plain records view shows 50 at a time with
+"Show more") or virtualise, and subscribe per list, not per row. Data events name the record types that changed
+(`{ type: 'data', entities: ['task'] }`, `null` = anything), and `useRecords`/`useRecord` re-read only for their own
+type (`useSyncData(load, deps, { entities })` for custom reads). Measured with 5,000 records on the plain view (e2e
+`scale` test, desktop Chromium): ~700 elements, ~130 ms from a tick to the bar counting it.
+
+**Storage** (IndexedDB database `suite-offline`; it belongs to `meta.deviceId`, and one left by another device id is
+deleted before use): `records` (pulled copy, key `[entity, id]`), `staging` (a pull from scratch in progress), `outbox`
+(key `[lane, n]`: lane 0 = kept steps re-sent after a restore, lane 1 = normal; `parked` = waiting for its record),
+`sent` (accepted steps with server seq/generation/applied fields, kept 30 days), `attention` (refused steps), `meta`
+(deviceId, hlc, generation, `pull` bookmark, `seen` = cursor of the last complete pull, pulls, nextN, info, lastSyncAt).
+localStorage: `suite.deviceId`, `suite.session` (the remembered session), `suite.signOutPending` (a sign-out not yet
+sent), `suite.theme`.
+
+**How the rules are met**
+- **Stamping**: a write is one readwrite transaction over `meta` + `outbox`: HLC from `meta.hlc` (`createHlc(id, { last })`),
+  `now()`, save `peek()`, `seen` = `meta.seen`, put the step. Readwrite transactions over the same stores run one at a
+  time across tabs, so stamps stay unique without a lock. `clock.receive()` runs after `/info`, every push and every
+  pull page, in the transaction that records it.
+- **One cycle at a time per device** (Web Lock `suite-sync`; an in-page queue where Web Locks are missing):
+  `GET /info` (definitions; a new generation = reset) → push the outbox in key order (≤ 500 steps / ~900 KB per push;
+  a 413 halves the batch) → pull pages until `hasMore` is false → push the parked steps once more → drop sent steps
+  older than 30 days. Tabs tell each other about changes over a BroadcastChannel (`suite-sync`).
+- **Results**: `applied`/`duplicate`/`clash` → out of the outbox into `sent`; `stale` fields are just done; rejected
+  `not_found` → parked in the outbox and retried after every pull (and after a reset); any other rejection →
+  `attention`: **Try again** re-sends the same step (same key — the server never recorded it), **Fix…** makes a new
+  step (new key and stamp) with corrected fields, **Discard** drops it (a refused create also drops later changes to
+  that record). The Fix form starts from the latest values (the refused step with the record's later waiting edits on
+  top); fixing a refused create **folds those later edits into the new create** and takes them out of the outbox in
+  the same transaction — left alone they would be older than the fix and the server would drop them as stale.
+  Parked steps are listed there too ("Waiting for their record") and can be discarded.
+- **What is shown**: the pulled copy, then (in HLC order) accepted steps that the last complete pull hasn't covered yet
+  (their `applied` fields only, so a change that lost a clash isn't shown as if it won; a kept delete isn't applied),
+  then the outbox (`pending`). A refused change disappears from view and appears in Needs attention.
+- **Pulls**: from the bookmark; without one (first sign-in, after a reset, "Download everything again" on /sync) the
+  pages go to `staging` and replace `records` in one transaction when the last page is in, so the old copy stays
+  readable offline until the new one is complete. A pull that brings nothing redraws nothing.
+- **Reset** (new generation on `/info`, a push or a pull, or `reset: true` for a cursor we sent): kept sent steps from
+  other generations move to outbox lane 0 in their original order, ahead of the outbox; the bookmark is cleared; then
+  push, then pull from scratch. Steps whose record isn't back yet are parked (P3) and apply once it is.
+- **When it syncs**: app open, back to the foreground (and `pageshow` from the page cache), the `online` event, 1.5 s after
+  each local change, every 60 s while visible. `navigator.onLine === false` → no request is tried (phase `offline`).
+  Network errors and timeouts (status 0) → `offline`, 5xx/other → `error`; both retry the same steps with backoff
+  (2 s doubling to 5 min, ±20 %). 401 session codes and 409 `device_mismatch` stop the engine (no retries).
+- **Signed out / session ended** (`api/client.js` sends `X-Suite-Device` on every request, so a device whose cookie is
+  gone still hears it): `device_signed_out` → `clearLocalData()` (`auth/device.js`): deletes the IndexedDB
+  database (records, outbox with unsent changes, kept steps, attention, HLC, cursors — other tabs close it on
+  `versionchange`), `suite.deviceId` and `suite.session`, and every Cache Storage cache **except** `suite-shell-*`
+  (the public app shell, including a version waiting to take over: deleting it would leave the app unable to open
+  offline). Also on Sign out (which warns about unsent changes first) and when sign-in returns a different device id.
+  `session_expired` → everything is kept; signing in again (same device id) resumes.
+- **Other tabs** (same device): when the database is deleted from another tab their engine stops (`stoppedBy:
+  'closed'`), the hooks drop what they show at once, and SyncProvider re-checks the session (as does a `storage`
+  event on `suite.deviceId`): they land on the sign-in screen, or on the new person's session.
+- **Signing out offline**: the server can't be told and the HttpOnly cookie stays, so `suite.signOutPending` remembers
+  the device id; the next check sends `POST /api/auth/logout` before anything else (until it gets through, nobody is
+  signed in here — the old session never quietly resumes), and a sign-in meanwhile signs that device out from the new
+  session. If that session ended in the meantime (401 `session_expired`/`not_signed_in`), only a session can sign the
+  device out, so it stays pending for the next sign-in; the screen says "Signed out", not "your session ended". The Account page offers Sign out without a connection too.
+- **Switching person**: the sign-in screen warns when the last person's unsent changes would be deleted (another
+  username typed while the remembered session's outbox isn't empty).
+- **Clashes** come with the pulled record (`_sync.clashes`); ClashPanel settles them with
+  `POST /api/sync/clashes/:id/resolve` (online only), then syncs.
+- **Opening offline**: AuthProvider remembers the last confirmed session (`suite.session`, only while the device id
+  matches) and opens the app from it at once; `GET /api/auth/session` confirms it or ends it once the server answers.
+
+**Service worker** (`client/src/sw/service-worker.js`; the `suite-service-worker` plugin in `client/vite.config.js`
+writes `dist/sw.js` with the list of every built file and a version hashed from them and the worker): cache
+`suite-shell-<version>`; navigations get the cached `index.html` (every route is the same shell), built files come from
+the cache, `/api` is never intercepted. A file missing from the cache (the browser evicted it, someone cleared it) is
+fetched and put back on the next request, and a version refills anything missing when it activates. The first install takes over at once (`clients.claim`). A new version installs
+in the background and **waits** (no `skipWaiting`): the open app keeps its own files (offline too) and UpdateBanner
+offers **Reload** → `SKIP_WAITING` → `controllerchange` → reload; the old cache is deleted when the new version
+activates. The app looks for a new version on coming to the foreground (≥ 10 min apart) and hourly. Registered in
+production builds only (none under `npm run dev:client`). Service workers need a secure context: the ts.net HTTPS
+address from Tailscale Serve (or localhost) — a plain `http://100.x…:3100` address gets no offline app.
+
+**iPhone limits**: a home-screen web app **can't sync in the background** (iOS has no Background Sync for web apps), so
+changes made offline go out the next time the app is open and online (it syncs on open, on coming to the foreground
+and on `online`). Web Locks and BroadcastChannel need iOS 15.4+. The app asks for persistent storage
+(`navigator.storage.persist()`); home-screen apps aren't subject to Safari's 7-day storage limit, but iOS can still
+clear website data under storage pressure — a change is only safe once it has been sent.
+
+**UI**: the sync bar at the top of every page — "Offline · N changes waiting", "Syncing…" (only when there is something
+to send or nothing was downloaded yet, so the routine check doesn't flicker), "N changes waiting · can't sync right now ·
+Retry", "N changes waiting for records not here yet", "All changes saved" (not before the first sync), "N need
+attention ›" → `/sync/attention`, and "This device's clock is off ›" when the server says so (stamps are clamped; the
+date and time settings need fixing).
+`/sync` (Offline data, linked from the bar and System): status, records per entity, Sync now, Download everything again.
+`/sync/data/:entity`: a plain view of any synced entity (list, add, edit, tick, delete, clashes) — the CRM's pages
+replace it for daily use; it stays as the view of what a device holds and backs the e2e test.
+
+**Scope (TODO, C3a)**: pulls send every record. The device-side hook is `pullScope` in `engine.js` (extra pull
+parameters, `null` today). When the server can filter ("active clients only", open tasks, Today and this month's
+plans), return its parameters there; records that leave the scope need a "left scope" change from the server (or a
+pull from scratch), or they linger on devices.
+
+**Verified**: `client/test/engine.test.js` (offline create+edit then push, reopen, two devices merging, a clash
+surfaced and settled, delete vs edit kept and flagged, pending/accepted overlay, paging and pull from scratch, two tabs
+never pushing at once, retries with backoff applying once, refused → needs attention (fix / retry / discard), fixing a
+refused create keeps its later edits, restore → kept steps first then outbox, parked edits applying later,
+`device_signed_out` → clearLocalData deletes everything but the app shell, `session_expired` keeps everything, another
+device id's database dropped, quota errors as `storage_full`, events naming entities, clock warnings) and `test/e2e/`
+(Chromium; "offline" is a real outage — a proxy in front of the server is cut, since `setOffline` doesn't stop the
+service worker's own requests — plus `setOffline` for airplane mode): iPhone 13 emulation signs in, airplane mode,
+reload served by the service worker, tick an item and add a note, reload still offline, back online → saved, seen on a
+second "Mac" context, no CSP violations; the update flow; sign-out with an update waiting, the other person signs in
+and reloads into it, then it opens in an outage (and an emptied shell cache refills); a sign-out in one tab sends the
+other to sign-in at once and reaches the server later; the switching-person warning; the clock warning in the bar;
+5,000 records (`scale.e2e.test.js`).
+**Owner's step after C3a/C4a**: on an iPhone in airplane mode, open the suite from the Home Screen, add a note and tick
+a task, turn airplane mode off with the app open, and check both on the Mac.
+
+**Not done / open**: settling a clash needs a connection; no background sync on iPhone (above); the pull scope
+(above); device-side pruning is only the 30-day kept steps (nothing else grows on the device except the copy itself);
+a record type's own pages (C3a/C4a) should use `useRecords`/`ClashPanel` rather than the generic view.
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
-- **C2 (offline sync)**: server half done in C2a — see "Offline sync" above. `health_meta.instance_id` still names the
-  database and survives restores; the sync `generation` is what changes on a restore. No service worker yet; C2b adds it.
+- **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
+  sections). `health_meta.instance_id` still names the database and survives restores; the sync `generation` is what
+  changes on a restore. Next: C3a registers real record types (clients, notes) and adds the pull scope; C4a tasks.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
 
 ## Testing
 `npm test` from the root. Server tests use `node --test`, real temporary SQLite files and an app on an ephemeral port
-(`createApp` + `listen(0)`) — no mocks of the database. Client: the build must succeed (add component tests when there is
-logic worth testing). Write a test with every module and every bug fix.
+(`createApp` + `listen(0)`) — no mocks of the database. Client tests (`client/test`) run the sync engine in Node with
+fake-indexeddb against such a server (helpers.js: `startServer`, `makeDevice` with an on/off connection switch); the
+client build must succeed. `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
+touching the engine, the service worker or the sync UI. Write a test with every module and every bug fix.
 
 ## Git
 Work on a branch per package (`pkg/<id>-<name>`), small commits, PR into `main`. No remote yet.

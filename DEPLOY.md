@@ -154,6 +154,14 @@ clears the data saved on it and shows the sign-in screen.
 Sessions last 30 days without use and at most 90 days (`SESSION_IDLE_DAYS`, `SESSION_MAX_DAYS` in `.env`); then that
 device asks for the password and a code again (its data stays).
 
+**Working offline.** Once signed in from the Home Screen icon (with a connection, once), the app opens with no signal
+— airplane mode, no Tailscale — and shows what the phone has saved. Changes made then are kept on the phone; the bar
+at the top says *Offline · N changes waiting*. They are sent when the app is **open** and the suite can be reached
+again (an iPhone web app can't sync in the background): open the app once you're back online and wait for *All changes
+saved*. If the bar says *N need attention*, tap it: those are changes the server refused, to fix or discard. Offline
+only works through the HTTPS address from step 3 (service workers need HTTPS). After an update of the suite the app
+shows *A new version of the suite is ready · Reload*.
+
 ## 4. Nightly backups
 
 **Chosen approach: the container's own scheduler.** The server makes the backup itself every night at `BACKUP_TIME`
@@ -222,6 +230,16 @@ one without the password and a code, but if it is lost or gone, sign it out agai
 (it is inside the volume: `/app/data/backups/pre-restore-….db`).
 
 ## Troubleshooting
+
+Offline:
+- **The app doesn't open without a connection** → it must have been opened once, signed in, from the HTTPS ts.net
+  address after it was added to the Home Screen; a plain `http://` address can't work offline. Open it once online
+  and try again.
+- **Changes stay "waiting"** → the app sends them only while it is open and can reach the suite: open it and check
+  Tailscale is connected. It retries by itself; Offline data (from the bar or System) → *Sync now* forces a try.
+- **Signing out deletes unsent changes** (on purpose: a signed-out phone may be lost). The app warns before it does,
+  and the sign-in screen warns before another person signs in over them. Signing out with no connection works; the
+  sign-out reaches the Mac mini the next time the device can reach it.
 
 Sign-in:
 - **“Request from another origin”** when signing in through the ts.net address → the suite isn't believing Tailscale

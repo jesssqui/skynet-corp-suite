@@ -1,0 +1,84 @@
+// The suite's service worker (served as /sw.js). It keeps the built app — HTML, JS, CSS,
+// icons, manifest — so the home-screen app opens with no signal. It never answers /api:
+// records live in IndexedDB, written and read by the sync engine (src/sync/).
+//
+// Not bundled by Vite: the build (vite.config.js, plugin "suite-service-worker") copies this
+// file to dist/sw.js and fills in MANIFEST below with { version, files } — every file of
+// that build. A new build is a new version: the browser installs it in the background,
+// the open app keeps running its own version (same cache, so nothing it needs disappears) and
+// offers "Reload"; the old cache is deleted only when the new version takes over.
+/* global self, caches */
+const MANIFEST = self.__SUITE_PRECACHE__;
+const PREFIX = 'suite-shell-';
+const SHELL = `${PREFIX}${MANIFEST.version}`;
+const INDEX = '/index.html';
+const FILES = new Set(MANIFEST.files);
+
+async function fill() {
+  const cache = await caches.open(SHELL);
+  // cache: 'reload' — straight from the server, not the browser's HTTP cache.
+  await cache.addAll(MANIFEST.files.map((url) => new Request(url, { cache: 'reload' })));
+}
+
+/** Put back any file missing from this version's cache (best effort: needs the network). */
+async function refill() {
+  const cache = await caches.open(SHELL);
+  await Promise.all(MANIFEST.files.map(async (url) => {
+    if (await cache.match(url)) return;
+    try {
+      const res = await fetch(new Request(url, { cache: 'reload' }));
+      if (res.ok) await cache.put(url, res);
+    } catch {
+      /* offline: the next activate or fetch tries again */
+    }
+  }));
+}
+
+self.addEventListener('install', (event) => {
+  // No skipWaiting: an open app keeps the version it started with until the person reloads.
+  // (The very first install has no app to replace and takes over at activate.)
+  event.waitUntil(fill());
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil((async () => {
+    // Own cache complete first (something may have emptied it while this version waited),
+    // then drop older versions'.
+    await refill();
+    for (const name of await caches.keys()) {
+      if (name.startsWith(PREFIX) && name !== SHELL) await caches.delete(name);
+    }
+    await self.clients.claim();
+  })());
+});
+
+self.addEventListener('message', (event) => {
+  const type = event.data?.type;
+  if (type === 'SKIP_WAITING') self.skipWaiting(); // the person tapped Reload
+  else if (type === 'VERSION') event.ports?.[0]?.postMessage({ version: MANIFEST.version });
+});
+
+async function fromShell(path, request) {
+  const cache = await caches.open(SHELL);
+  const hit = await cache.match(path);
+  if (hit) return hit;
+  // Missing (cleared by the browser or by hand): from the network, and kept again for next time.
+  const res = await fetch(path === INDEX ? new Request(INDEX, { cache: 'reload' }) : request);
+  if (res.ok) await cache.put(path, res.clone()).catch(() => {});
+  return res;
+}
+
+self.addEventListener('fetch', (event) => {
+  const { request } = event;
+  if (request.method !== 'GET') return;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+  // The API is never cached here: it is the network or nothing (the engine keeps its own copy).
+  if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return;
+  if (request.mode === 'navigate') {
+    // Every page of the app is the same index.html (client-side routes).
+    event.respondWith(fromShell(INDEX, request));
+  } else if (FILES.has(url.pathname)) {
+    event.respondWith(fromShell(url.pathname, request));
+  }
+});

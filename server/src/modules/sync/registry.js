@@ -14,36 +14,15 @@
 // The registry also installs per-connection TEMP triggers so a registered table
 // can only be written while the sync module is applying a step: a stray
 // `INSERT INTO crm_tasks` anywhere else fails loudly.
-import { isId } from '@suite/shared/ids';
+import { FIELD_TYPES as TYPES, DEFAULT_TEXT_MAX, checkFieldValue } from '@suite/shared/fields';
 
 const NAME_RE = /^[a-z][a-z0-9_]{0,62}$/;
-const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
-const DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 export const OPS = ['create', 'update', 'delete'];
 // Columns the sync module fills itself when the table has them (never sent by devices).
 export const STANDARD_COLUMNS = ['created_at', 'created_by', 'updated_at', 'updated_by', 'flagged'];
 const RESERVED_FIELDS = new Set(['id', 'deleted_at', ...STANDARD_COLUMNS]);
-export const DEFAULT_TEXT_MAX = 10_000;
-
-function validDate(v) {
-  const m = DATE_RE.exec(v);
-  if (!m) return false;
-  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  const dt = new Date(Date.UTC(y, mo - 1, d));
-  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
-}
-
-// type -> (value, fieldDef) => true when valid (null is handled separately)
-const TYPES = {
-  text: (v, f) => typeof v === 'string' && v.length <= (f.max ?? DEFAULT_TEXT_MAX),
-  integer: (v) => Number.isSafeInteger(v),
-  number: (v) => typeof v === 'number' && Number.isFinite(v),
-  boolean: (v) => typeof v === 'boolean',
-  date: (v) => typeof v === 'string' && validDate(v),
-  datetime: (v) => typeof v === 'string' && DATETIME_RE.test(v) && !Number.isNaN(Date.parse(v)),
-  id: (v) => isId(v),
-  enum: (v, f) => typeof v === 'string' && f.values.includes(v),
-};
+// Field types and value checks live in @suite/shared/fields: devices check changes with the same rules.
+export { DEFAULT_TEXT_MAX };
 
 // The column affinity each field type needs, so values come back exactly as sent:
 // a boolean in a TEXT column would be stored '1.0' and read back as a string, and
@@ -160,9 +139,7 @@ export function createRegistry(db) {
 
   /** null when valid, else a message. */
   function checkValue(field, value) {
-    if (value === null) return field.required ? `${field.name} is required` : null;
-    if (value === undefined) return `${field.name} has no value`;
-    return TYPES[field.type](value, field) ? null : `${field.name}: not a valid ${field.type}`;
+    return checkFieldValue(field, value);
   }
 
   function encode(field, value) {

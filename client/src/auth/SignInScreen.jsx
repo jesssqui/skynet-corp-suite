@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import { Button, Notice, TextField } from '../ui/index.js';
-import { getDeviceId, isInstalled } from './device.js';
+import { getDeviceId, isInstalled, readSessionCache } from './device.js';
+import { countUnsent } from '../sync/localdb.js';
 import { useAuth } from './session.jsx';
 
 // Sign-in: password, then a code from the authenticator app (or a recovery code). Two-factor is set
@@ -41,11 +42,24 @@ function Frame({ title, subtitle, children }) {
   );
 }
 
+/** Changes the last person signed in here never got to send (deleted if someone else signs in). */
+function useUnsentOfPrevious() {
+  const [state, setState] = useState(null);
+  useEffect(() => {
+    const previous = readSessionCache();
+    if (!previous) return;
+    countUnsent().then((n) => n && setState({ user: previous.user, n }), () => {});
+  }, []);
+  return state;
+}
+
 function PasswordStep({ notice, onNext }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const unsent = useUnsentOfPrevious();
+  const someoneElse = unsent && username.trim() && username.trim().toLowerCase() !== unsent.user.username;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -82,6 +96,12 @@ function PasswordStep({ notice, onNext }) {
           autoComplete="current-password"
           required
         />
+        {someoneElse ? (
+          <Notice tone="warn">
+            {unsent.user.displayName} has {unsent.n} change{unsent.n === 1 ? '' : 's'} on this device that {unsent.n === 1 ? 'hasn’t' : 'haven’t'} been
+            sent. Signing in as someone else deletes {unsent.n === 1 ? 'it' : 'them'}; {unsent.user.displayName} can sign in here first to send {unsent.n === 1 ? 'it' : 'them'}.
+          </Notice>
+        ) : null}
         {error ? <Notice tone="danger">{error}</Notice> : null}
         <Button variant="primary" type="submit" disabled={busy || !username || !password}>
           {busy ? 'Checking…' : 'Continue'}

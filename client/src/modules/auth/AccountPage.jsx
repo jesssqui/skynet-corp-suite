@@ -4,6 +4,7 @@ import { useAuth } from '../../auth/session.jsx';
 import { TotpSetup, RecoveryCodes } from '../../auth/TwoFactorParts.jsx';
 import { PageHeader, Card, Button, Badge, KeyValue, Notice, TextField, Icon } from '../../ui/index.js';
 import AccountTabs from './AccountTabs.jsx';
+import { useUnsentWarning } from '../../sync/components.jsx';
 
 const PERSON = { owner: 'Owner', partner: 'Partner' };
 
@@ -193,8 +194,32 @@ function PasswordCard() {
   );
 }
 
-export default function AccountPage() {
+function SignOutButton() {
   const { signOut } = useAuth();
+  const { warning, sendNow } = useUnsentWarning();
+  const [confirming, setConfirming] = useState(false);
+  if (confirming && warning) {
+    return (
+      <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
+        <Notice tone="warn">{warning}</Notice>
+        <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+          <Button onClick={sendNow}>Try sending them</Button>
+          <Button variant="danger" onClick={signOut}>Sign out anyway</Button>
+          <Button variant="ghost" onClick={() => setConfirming(false)}>Cancel</Button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <Button variant="danger" onClick={() => (warning ? (sendNow(), setConfirming(true)) : signOut())}>
+      <Icon name="logout" size={18} />
+      Sign out of this device
+    </Button>
+  );
+}
+
+export default function AccountPage() {
+  const { session } = useAuth();
   const [info, setInfo] = useState(null);
   const [error, setError] = useState(null);
 
@@ -225,15 +250,20 @@ export default function AccountPage() {
               ]}
             />
             <div style={{ marginTop: 'var(--space-4)' }}>
-              <Button variant="danger" onClick={signOut}>
-                <Icon name="logout" size={18} />
-                Sign out of this device
-              </Button>
+              <SignOutButton />
             </div>
           </Card>
           <TwoFactorCard info={info} reload={load} />
           <PasswordCard />
         </div>
+      ) : error && session ? (
+        // No connection: the rest needs the server, but signing out of this device must still work.
+        <Card title="You" style={{ maxWidth: 480 }}>
+          <KeyValue rows={[['Name', session.user.displayName], ['This device', session.device.name]]} />
+          <div style={{ marginTop: 'var(--space-4)' }}>
+            <SignOutButton />
+          </div>
+        </Card>
       ) : null}
     </>
   );

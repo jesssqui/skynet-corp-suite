@@ -20,23 +20,32 @@ export const SESSION_CODES = ['not_signed_in', 'session_expired', 'device_signed
 /** Fired on window when any request finds the session gone: detail = { code }. */
 export const SESSION_LOST_EVENT = 'suite:session-lost';
 
+/** A request that gets no answer in this long counts as "can't reach the server" (a weak signal can hang for minutes). */
+const TIMEOUT_MS = 30 * 1000;
+
 async function request(method, url, body) {
   const headers = { Accept: 'application/json' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const deviceId = getDeviceId();
   if (deviceId) headers['X-Suite-Device'] = deviceId;
   let res;
+  let text;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
     res = await fetch(url, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       credentials: 'same-origin',
+      signal: controller.signal,
     });
+    text = await res.text();
   } catch (err) {
     throw new ApiError(0, 'Can\'t reach the suite server', { cause: err.message });
+  } finally {
+    clearTimeout(timer);
   }
-  const text = await res.text();
   let data = null;
   try {
     data = text ? JSON.parse(text) : null;
