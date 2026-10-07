@@ -63,9 +63,18 @@ export function checkGoal({ op, fields }) {
   return null;
 }
 
-/** A person's day length is 30 minutes to 24 hours (null = the default). */
-export function checkWorkday({ op, fields }) {
-  if (!fields || !Object.hasOwn(fields, 'day_minutes') || fields.day_minutes === null) return null;
+/**
+ * Workdays: one per person, with its fixed id (WORKDAY_IDS) — a create with any other id is
+ * refused (only the server's seed makes them), and an update never changes whose it is. A day
+ * length is 30 minutes to 24 hours (null = the default).
+ */
+export function checkWorkday({ op, recordId, fields }) {
+  if (!fields) return null;
+  if (op === 'create' && recordId !== WORKDAY_IDS[fields.actor]) {
+    return { code: 'invalid_value', reason: 'workday: one per person, with its fixed id (made by the server)' };
+  }
+  if (op === 'update' && Object.hasOwn(fields, 'actor')) return { code: 'invalid_value', reason: 'workday: actor can’t change' };
+  if (!Object.hasOwn(fields, 'day_minutes') || fields.day_minutes === null) return null;
   const m = fields.day_minutes;
   return m >= DAY_MINUTES_MIN && m <= DAY_MINUTES_MAX ? null
     : { code: 'invalid_value', reason: `day_minutes: ${DAY_MINUTES_MIN} to ${DAY_MINUTES_MAX}` };

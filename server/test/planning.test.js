@@ -115,8 +115,12 @@ test('each person’s workday is made once at start, with its fixed id, and surv
   assert.equal((await phone.one(phone.step('update', 'workday', WORKDAY_IDS.partner, { day_minutes: 360 }))).status, 'applied');
   const bad = await phone.one(phone.step('update', 'workday', WORKDAY_IDS.partner, { day_minutes: 10 }));
   assert.deepEqual([bad.status, bad.code], ['rejected', 'invalid_value']);
-  const twice = await phone.one(phone.step('create', 'workday', newId(), { actor: 'partner' }));
-  assert.equal(twice.status, 'applied', 'a stray second record is allowed (readers use the fixed id)');
+  const stray = await phone.one(phone.step('create', 'workday', newId(), { actor: 'partner' }));
+  assert.deepEqual([stray.status, stray.code], ['rejected', 'invalid_value'], 'one per person, with its fixed id');
+  const dup = await phone.one(phone.step('create', 'workday', WORKDAY_IDS.owner, { actor: 'owner' }));
+  assert.deepEqual([dup.status, dup.code], ['rejected', 'already_exists']);
+  const swap = await phone.one(phone.step('update', 'workday', WORKDAY_IDS.partner, { actor: 'owner' }));
+  assert.deepEqual([swap.status, swap.code], ['rejected', 'invalid_value'], 'whose it is never changes');
   await first.close();
 
   const again = await startApp(t, config, { modules });

@@ -9,8 +9,8 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { WORKDAY_IDS } from '@suite/shared/planner';
 import { Sheet, Button, Icon, Notice, TextField, SelectField } from '../../ui/index.js';
-import { store } from '../../sync/index.js';
-import { TextButton, useAction } from '../crm/parts.jsx';
+import { store, useRecord } from '../../sync/index.js';
+import { RecordSync, TextButton, useAction } from '../crm/parts.jsx';
 import {
   proposePlan, topChange, moveChange, isTop, countTop, addDays, shortDay, dueLabel,
   formatMinutes, TOP_LIMIT,
@@ -30,8 +30,11 @@ function dayLengthOptions(current) {
 function DayLength({ me, minutes }) {
   const [editing, setEditing] = useState(false);
   const { busy, error, run } = useAction();
+  // Its flag and clashes (e.g. both devices changed it, or edits re-sent after a restore), to settle here.
+  const record = useRecord('workday', WORKDAY_IDS[me] ?? null).record;
   return (
     <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'end', flexWrap: 'wrap' }} data-testid="day-length">
+      {record ? <div style={{ flexBasis: '100%' }}><RecordSync record={record} what="day length" /></div> : null}
       {editing ? (
         <SelectField
           id="day-length"
