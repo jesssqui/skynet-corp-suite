@@ -137,7 +137,7 @@ or `deviceId`/`actor` in the body/query):
 **Rules**
 - **Exactly once, in order**: steps apply in the order sent; the key makes repeats `duplicate`. Every applied step
   gets the next server `seq`. Per field, an *older* stamp from the same device never overwrites that device's newer
-  value (it comes back in `stale`, not a clash), so late or re-sent steps can't undo newer work. Rejected steps are
+  value (it comes back in `stale`, not a clash; compared by the device's original stamps, not clamped ones), so late or re-sent steps can't undo newer work. Rejected steps are
   not recorded and can be retried unchanged later (e.g. `not_found` until the create arrives after a restore).
 - **Clock: hybrid logical clock (HLC)**, compared as text (`<ms>-<counter>-<deviceId>`). Chosen over plain device
   timestamps (a wrong clock would decide clashes; ties possible) and over server arrival order (a phone offline for days
@@ -153,8 +153,9 @@ or `deviceId`/`actor` in the body/query):
 - **Delete vs edit** (concurrent): the record is kept (un-deleted if the delete arrived first), `flagged`, and a
   `delete` clash records the delete as the loser. "Concurrent" for a delete = any create/update **step** in the log by
   another device after the deleter's `seen` — including edits that lost a field clash. Settle it by keeping the record
-  or deleting after all. A delete of something you had fully seen just deletes, and settles as `superseded` only the
-  open clashes whose steps the deleting device had seen; an edit of something you knew was deleted is rejected (`deleted`).
+  or deleting after all. A delete of something you had fully seen just deletes; it settles as `superseded` every open
+  `delete` clash on the record (moot once it is deleted) and the field clashes whose steps the deleting device had
+  seen. An edit of something you knew was deleted is rejected (`deleted`).
 - **Deletes are soft**: the row stays with `deleted_at` set; pulls send a tombstone.
 - **Restore generation**: `restore.js` marks the restored file; on the next start sync gives the database a new
   `generation` and remembers the replaced one with its last seq (`sync_meta.previous_generations`). A pull with a cursor

@@ -100,6 +100,10 @@ export function createSyncService({ db, log }) {
     WHERE id = ?`);
   // Close open clashes on a deleted record, but only those whose steps the deleting device had seen
   // (its own, or at or before its cursor); anything else stays open for review.
+  // Once a delete applies, open delete clashes on the record are moot (it is deleted either way).
+  const supersedeDeleteClashes = db.prepare(`UPDATE sync_clashes SET resolved = 1, resolved_at = ?, resolved_by = ?,
+    resolution = 'superseded' WHERE entity = ? AND record_id = ? AND resolved = 0 AND kind = 'delete'`);
+  const stepDeviceHlc = db.prepare('SELECT device_hlc FROM sync_steps WHERE key = ?');
   const supersedeOpen = db.prepare(`UPDATE sync_clashes SET resolved = 1, resolved_at = @at, resolved_by = @actor,
     resolution = 'superseded'
     WHERE entity = @entity AND record_id = @id AND resolved = 0
@@ -284,7 +288,10 @@ export function createSyncService({ db, log }) {
     for (const [name, value] of Object.entries(fields)) {
       const f = entry.fields.get(name);
       const v = getVersion.get(entry.entity, step.recordId, name);
-      if (v && v.device_id === who.deviceId && hlc < v.hlc) {
+      // Compare the device's own original stamps: server clamping (a clock running ahead) must not
+      // let an older change, clamped later on arrival, look newer than the one it would overwrite.
+      const wroteAt = v && v.device_id === who.deviceId ? (stepDeviceHlc.get(v.step_key)?.device_hlc ?? v.hlc) : null;
+      if (wroteAt && step.hlc < wroteAt) {
         // An older change from the same device arriving late (a retry, a re-send after a restore):
         // the device's own newer value stays. Not a clash — nobody else is involved.
         stale.push(name);
@@ -354,6 +361,7 @@ export function createSyncService({ db, log }) {
     markDeleted.run({ seq, hlc, actor: who.actor, device: who.deviceId, step: step.key, entity: entry.entity, id: step.recordId });
     // Deleted on purpose with everything seen: open questions about this record no longer apply.
     supersedeOpen.run({ at: nowIso(), actor: who.actor, entity: entry.entity, id: step.recordId, device: who.deviceId, seen });
+    supersedeDeleteClashes.run(nowIso(), who.actor, entry.entity, step.recordId);
     return { status: 'applied', clashes: [] };
   }
 

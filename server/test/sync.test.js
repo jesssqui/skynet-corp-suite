@@ -634,7 +634,7 @@ test('P1: a delete by a device that never saw a concurrent edit is flagged, even
   assert.equal(d.winner.step, bStep.key);
 });
 
-test('a delete only settles the open clashes whose steps the deleting device had seen', async (t) => {
+test('a delete that applies after seeing every edit settles the record\'s delete clashes', async (t) => {
   const { a, b, itemId, db, base } = await sharedItem(t);
   const c = makeDevice(base, 'partner');
   await c.pull();
@@ -647,7 +647,38 @@ test('a delete only settles the open clashes whose steps the deleting device had
   assert.ok(rowOf(db, itemId).deleted_at);
   const clashes = (await getJson(`${base}/api/sync/clashes?status=all`)).body.clashes;
   assert.equal(clashes.length, 1);
-  assert.equal(clashes[0].resolved, false, 'A never saw B\'s delete step, so that clash is not closed for B');
+  assert.equal(clashes[0].kind, 'delete');
+  assert.equal(clashes[0].resolution, 'superseded', 'the record is deleted either way, so B\'s delete clash is moot');
+});
+
+test('Q3: a delete that applies settles open delete clashes on the record, even ones it had not seen', async (t) => {
+  const { a, b, itemId, db, base } = await sharedItem(t);
+  const bDel = b.step('delete', 'item', itemId);
+  assert.equal((await one(a, a.step('update', 'item', itemId, { phone: 'A' }))).status, 'applied');
+  assert.equal((await one(b, bDel)).status, 'clash'); // B's delete loses to A's edit: kept + flagged
+  const aDel = await one(a, a.step('delete', 'item', itemId)); // A never saw B's delete
+  assert.equal(aDel.status, 'applied');
+  assert.ok(rowOf(db, itemId).deleted_at);
+  assert.deepEqual((await getJson(`${base}/api/sync/clashes`)).body.clashes, [], 'no unresolvable clash left open');
+  const [c] = (await getJson(`${base}/api/sync/clashes?status=all`)).body.clashes;
+  assert.equal(c.kind, 'delete');
+  assert.equal(c.resolution, 'superseded');
+});
+
+test('Q6: a late older change from a device whose clock runs ahead does not overwrite its newer one', async (t) => {
+  const { itemId, db, base } = await sharedItem(t);
+  const f = makeDevice(base, 'owner', { offsetMs: HOUR }); // ahead: every stamp gets clamped on arrival
+  await f.pull();
+  const s1 = f.step('update', 'item', itemId, { phone: 'f-one' });
+  const s2 = f.step('update', 'item', itemId, { phone: 'f-two' });
+  const r2 = await one(f, s2);
+  assert.equal(r2.status, 'applied');
+  assert.ok(r2.hlc, 'clamped');
+  await new Promise((r) => setTimeout(r, 5));
+  const r1 = await one(f, s1); // clamped to a later server time than s2 was
+  assert.equal(r1.status, 'applied');
+  assert.deepEqual(r1.stale, ['phone']);
+  assert.equal(rowOf(db, itemId).phone, 'f-two');
 });
 
 test('P2: the same step pushed twice at the same moment applies once', async (t) => {
