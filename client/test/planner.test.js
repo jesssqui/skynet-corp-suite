@@ -97,7 +97,7 @@ test('Today: top picks show once — marked where they are due, the rest listed 
 
 // ---- the morning plan -----------------------------------------------------------------------------
 
-test('the morning plan proposes overdue + due today (mine and shared) + my undated tasks; load against the day', () => {
+test('the morning plan proposes overdue + due today (mine and shared); undated ones that belong nowhere are to sort; load against the day', () => {
   const tasks = [
     task({ title: 'Overdue mine', due_date: '2026-10-05', estimate_minutes: 60 }),
     task({ title: 'Overdue shared', due_date: '2026-10-06', owner: 'shared', estimate_minutes: 30 }),
@@ -113,7 +113,10 @@ test('the morning plan proposes overdue + due today (mine and shared) + my undat
   const names = (ids) => ids.map((id) => byId.get(id).title);
   assert.deepEqual(names(p.overdue), ['Overdue mine', 'Overdue shared']);
   assert.deepEqual(names(p.dueToday), ['Today mine']);
-  assert.deepEqual(names(p.undated), ['Undated mine'], 'the shared undated pile stays on Tasks; never the partner’s');
+  // C4b: undated tasks that belong to no goal aren't proposed as today's any more: they're counted
+  // to sort (mine and the shared list's, never the partner's own). See plan.test.js for goal tasks.
+  assert.deepEqual(p.forGoals, []);
+  assert.equal(p.toSort, 2);
 
   let load = planLoad({ tasks, me: 'owner', today: TODAY });
   assert.deepEqual([load.minutes, load.count, load.over], [330, 3, false]);
@@ -269,8 +272,11 @@ test('the task form: a new task saves every field; an edit sends only what chang
   assert.equal(isDirty(fresh, { ...fresh }), false, 'pre-filled values are not "typed"');
   assert.deepEqual(taskForm.toFields(fresh).fields, {
     title: 'Renew the domain', notes: null, owner: 'owner', business_id: PERSONAL, client_id: null, account_id: null, relationship_id: null,
-    due_date: null, due_time: null, estimate_minutes: null, done_at: null, top_on_owner: null,
+    goal_id: null, due_date: null, due_time: null, estimate_minutes: null, done_at: null, top_on_owner: null,
   });
+  // A record pulled before C4b has no goal_id at all: opening and saving it doesn't send one.
+  const old = taskValues({ id: 't0', title: 'Old', owner: 'owner', business_id: W }, { today: TODAY });
+  assert.deepEqual(editChanges(taskForm, old, { ...old, title: 'Old task' }).fields, { title: 'Old task' });
   assert.ok(!('top_on_partner' in taskForm.toFields(fresh).fields), 'only the maker’s own pick field');
   assert.deepEqual(Object.keys(taskForm.toFields({ ...fresh, title: ' ', business_id: '' }).problems).sort(), ['business_id', 'title']);
   assert.deepEqual(Object.keys(taskForm.toFields({ ...fresh, due_time: '09:00' }).problems), ['due_time']);

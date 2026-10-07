@@ -23,7 +23,7 @@ export function PageHeader({ title, subtitle, actions }) {
           <p style={{ margin: 'var(--space-1) 0 0', color: 'var(--text-muted)', fontSize: 'var(--text-sm)' }}>{subtitle}</p>
         ) : null}
       </div>
-      {actions ? <div style={{ display: 'flex', gap: 'var(--space-2)' }}>{actions}</div> : null}
+      {actions ? <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>{actions}</div> : null}
     </header>
   );
 }
@@ -279,9 +279,20 @@ function FieldFrame({ id, label, hint, error, children, style }) {
   );
 }
 
+/** Options in runs: consecutive options with the same `group` go under one <optgroup>. */
+function optionGroups(options) {
+  const out = [];
+  for (const o of options) {
+    const last = out[out.length - 1];
+    if (last && last.group === (o.group ?? null)) last.options.push(o);
+    else out.push({ group: o.group ?? null, options: [o] });
+  }
+  return out;
+}
+
 /**
- * A labelled <select>. options: [{ value, label }] (value '' = nothing chosen). onChange gets the
- * value string.
+ * A labelled <select>. options: [{ value, label, group? }] (value '' = nothing chosen; consecutive
+ * options with the same `group` are shown under an <optgroup>). onChange gets the value string.
  */
 export function SelectField({ label, hint, error, id, value, onChange, options, style, selectStyle, ...rest }) {
   const fieldId = fieldIdOf(id, label);
@@ -296,7 +307,9 @@ export function SelectField({ label, hint, error, id, value, onChange, options, 
         style={{ ...fieldInputStyle, ...(error ? { borderColor: 'var(--danger)' } : {}), ...selectStyle }}
         {...rest}
       >
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        {optionGroups(options).map((g) => (g.group
+          ? <optgroup key={`g:${g.group}`} label={g.group}>{g.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</optgroup>
+          : g.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)))}
       </select>
     </FieldFrame>
   );

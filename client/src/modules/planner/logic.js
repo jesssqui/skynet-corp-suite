@@ -7,25 +7,23 @@
 // new Date('YYYY-MM-DD').
 import { BUSINESS_IDS } from '@suite/shared/crm';
 import { SHARED } from '@suite/shared/actors';
-import { isDueTime, isOpenTask, ESTIMATE_MAX_MINUTES, DAY_MINUTES, relationshipsWithoutNextStep, topField } from '@suite/shared/planner';
+import {
+  isDueTime, isOpenTask, isUnplannedTask, ESTIMATE_MAX_MINUTES, DEFAULT_DAY_MINUTES, relationshipsWithoutNextStep, topField,
+  addDays, weekStart, monthStart, goalPeriodOf,
+} from '@suite/shared/planner';
 import { formatDate, parseLocalDate } from '../../ui/format.js';
 
-export { DAY_MINUTES, relationshipsWithoutNextStep, isOpenTask, topField };
+export { DEFAULT_DAY_MINUTES, relationshipsWithoutNextStep, isOpenTask, isUnplannedTask, topField };
+/** @deprecated C4a's name: each person's day length is their workday record now (plan.js). */
+export const DAY_MINUTES = DEFAULT_DAY_MINUTES;
 
 // ---- dates -----------------------------------------------------------------------------------
 
-/** "2026-10-07" + n days on the calendar (month and year ends, leap days). */
-export function addDays(ymd, n) {
-  const [y, m, d] = ymd.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d + n));
-  return dt.toISOString().slice(0, 10);
-}
+export { addDays };
 
 /** Monday and Sunday of the week `today` is in (weeks start on Monday, like the Monday plan). */
 export function weekBounds(today) {
-  const [y, m, d] = today.split('-').map(Number);
-  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sunday
-  const start = addDays(today, -((dow + 6) % 7));
+  const start = weekStart(today);
   return { start, end: addDays(start, 6) };
 }
 
@@ -163,23 +161,37 @@ export function buildToday({ tasks, me, today, keep = new Set() }) {
 // ---- the morning plan -------------------------------------------------------------------------------
 
 /**
- * What the morning plan proposes: overdue and due-today tasks on my Today (mine and the shared
- * list's), and my own open tasks with no date (the shared list's undated pile stays on Tasks: either
- * person may pick from it there). Ids, so the sheet keeps its rows while tasks are moved.
- * @returns {{ overdue: string[], dueToday: string[], undated: string[] }}
+ * Is this goal current on `today`: a week goal of this week, or a month priority of this month?
  */
-export function proposePlan({ tasks, me, today }) {
+export function isCurrentGoal(goal, today) {
+  const period = goalPeriodOf(goal);
+  return Boolean(period) && period === (goal.kind === 'month' ? monthStart(today) : weekStart(today));
+}
+
+/**
+ * What the morning plan proposes: overdue and due-today tasks on my Today (mine and the shared
+ * list's), and my own open tasks with no date that belong to one of this week's goals or this
+ * month's priorities (work towards them that could be done today). Since C4b, undated tasks that
+ * belong nowhere (no day, no goal) are no longer proposed as if they were today's: they are
+ * counted as `toSort` and sorted on the Monday plan. Ids, so the sheet keeps its rows while tasks
+ * are moved.
+ * @param {{ tasks, me, today, goalsById?: Map }} args
+ * @returns {{ overdue: string[], dueToday: string[], forGoals: string[], toSort: number }}
+ */
+export function proposePlan({ tasks, me, today, goalsById = new Map() }) {
   const { overdue, dueToday } = buildToday({ tasks, me, today });
-  const undated = tasks.filter((t) => t.owner === me && isOpenTask(t) && !t.due_date)
+  const forGoals = tasks.filter((t) => t.owner === me && isOpenTask(t) && !t.due_date && t.goal_id
+    && goalsById.has(t.goal_id) && isCurrentGoal(goalsById.get(t.goal_id), today))
     .sort((a, b) => (isTop(b, today, me) - isTop(a, today, me)) || compareDue(a, b));
-  return { overdue: overdue.map((t) => t.id), dueToday: dueToday.map((t) => t.id), undated: undated.map((t) => t.id) };
+  const toSort = tasks.filter((t) => isMineOrShared(t, me) && isUnplannedTask(t, goalsById)).length;
+  return { overdue: overdue.map((t) => t.id), dueToday: dueToday.map((t) => t.id), forGoals: forGoals.map((t) => t.id), toSort };
 }
 
 /**
  * The day as planned: open tasks on my Today (overdue, due today, or picked as top today) and how
  * long they take by their estimates, against the day's length.
  */
-export function planLoad({ tasks, me, today, dayMinutes = DAY_MINUTES }) {
+export function planLoad({ tasks, me, today, dayMinutes = DEFAULT_DAY_MINUTES }) {
   let minutes = 0;
   let count = 0;
   let unestimated = 0;
@@ -213,7 +225,7 @@ export function topChange(task, today, on, me) {
  * latest record (store.get), not one from an earlier render. `undo` puts back what it was.
  */
 export function moveChange(task, day, today, me) {
-  const pick = isTop(task, today, me) ? topField(me) : null;
+  const pick = day !== today && isTop(task, today, me) ? topField(me) : null;
   return {
     change: { due_date: day, ...(pick ? { [pick]: null } : {}) },
     undo: { due_date: task.due_date ?? null, ...(pick ? { [pick]: task[pick] } : {}) },
@@ -235,16 +247,18 @@ export const DUE_FILTERS = Object.freeze([
   { value: 'today', label: 'Today' },
   { value: 'week', label: 'This week' },
   { value: 'none', label: 'No date' },
+  { value: 'unplanned', label: 'To sort (no day or goal)' },
   { value: 'done', label: 'Done' },
 ]);
 
 /**
  * The tasks page's rows. owner: mine | partner | shared | all; business / client: an id or '' (any);
  * due: open (every open task) | overdue | today | week (due Monday–Sunday of this week) | none (no
- * date) | done. Open lists are in due order (overdue first, no date last); done is newest first.
+ * date) | unplanned (no date and no live goal: to sort) | done. Open lists are in due order (overdue
+ * first, no date last); done is newest first. goal: a goal id or '' (any).
  * `keep`: ids finished this session, still shown where they were (to undo a tick).
  */
-export function filterTasks(tasks, { owner = 'all', business = '', client = '', due = 'open' } = {}, { me, today, keep = new Set() }) {
+export function filterTasks(tasks, { owner = 'all', business = '', client = '', due = 'open', goal = '' } = {}, { me, today, keep = new Set(), goalsById = new Map() }) {
   const week = due === 'week' ? weekBounds(today) : null;
   const rows = tasks.filter((t) => {
     if (owner === 'mine' && t.owner !== me) return false;
@@ -252,12 +266,14 @@ export function filterTasks(tasks, { owner = 'all', business = '', client = '', 
     if (owner === 'partner' && (t.owner === me || t.owner === SHARED)) return false;
     if (business && t.business_id !== business) return false;
     if (client && t.client_id !== client) return false;
+    if (goal && t.goal_id !== goal) return false;
     if (due === 'done') return !isOpenTask(t);
     if (!isOpenTask(t) && !keep.has(t.id)) return false;
     const state = dueState(t, today);
     if (due === 'overdue') return state === 'overdue';
     if (due === 'today') return state === 'today';
     if (due === 'none') return state === 'none';
+    if (due === 'unplanned') return state === 'none' && !(t.goal_id && goalsById.has(t.goal_id));
     if (week) return Boolean(t.due_date) && t.due_date >= week.start && t.due_date <= week.end;
     return true;
   });

@@ -3,15 +3,16 @@
 // (taskForm.js), so the other person's change that arrives meanwhile survives. A sheet with
 // typed input asks before it is thrown away (FormSheet).
 import { useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { TextField, SelectField, TextAreaField, CheckboxField, Segmented, Notice } from '../../ui/index.js';
 import { localDate } from '../../ui/format.js';
 import { store, useRecord } from '../../sync/index.js';
 import { useAuth } from '../../auth/session.jsx';
 import { FormSheet, RecordSync, useAction } from '../crm/parts.jsx';
 import { KIND_LABELS, pickableBusinesses, textOrNull, fold } from '../crm/logic.js';
-import { taskForm, taskValues, editChanges, isDirty, linkChange } from './taskForm.js';
+import { taskForm, taskValues, editChanges, isDirty, linkChange, goalPick } from './taskForm.js';
 import { estimateOptions, otherActor, relationshipLabel, clearedFields, defaultBusinessId, alreadySorted } from './logic.js';
+import { goalChoices } from './plan.js';
 import { usePlannerData } from './data.js';
 import { getLastBusiness, setLastBusiness } from './prefs.js';
 import { nowIso } from '../../ui/format.js';
@@ -84,6 +85,7 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
   const [problems, setProblems] = useState({});
   const { busy, error, run } = useAction();
   const [blocked, setBlocked] = useState(null);
+  const navigate = useNavigate();
   const live = useRecord('task', record?.id ?? null).record; // its flag and clashes, live
   // A new task saved once stays that task: if what runs after it (onSaved) fails, Save again
   // retries that part instead of making a second task.
@@ -91,15 +93,18 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
 
   const pick = useMemo(() => {
     if (!data) return null;
-    const { businesses, clients, accounts, relationships, businessesById, accountsById, relationshipsById } = data;
-    return { businesses, clients, accounts, relationships, businessesById, accountsById, relationshipsById };
+    const { businesses, clients, accounts, relationships, businessesById, accountsById, relationshipsById, goals, goalsById } = data;
+    return { businesses, clients, accounts, relationships, businessesById, accountsById, relationshipsById, goals, goalsById };
   }, [data]);
 
   const set = (k) => (e) => {
     const value = e?.target ? (e.target.type === 'checkbox' ? e.target.checked : e.target.value) : e;
-    setV((cur) => (pick && ['client_id', 'account_id', 'relationship_id', 'due_date'].includes(k)
-      ? linkChange(cur, k, value, pick)
-      : { ...cur, [k]: value }));
+    setV((cur) => {
+      if (pick && k === 'goal_id') return goalPick(cur, value, pick.goalsById);
+      return pick && ['client_id', 'account_id', 'relationship_id', 'due_date'].includes(k)
+        ? linkChange(cur, k, value, pick)
+        : { ...cur, [k]: value };
+    });
   };
 
   const save = async () => {
@@ -146,6 +151,8 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
     const relationships = pick.relationships.filter((r) => accountIds.has(r.account_id));
     return {
       businesses: pickableBusinesses(pick.businesses, v.business_id || null),
+      goals: goalChoices(pick.goals, { today, dueDate: v.due_date || null, current: v.goal_id || null, businessesById: pick.businessesById }),
+      goalGone: Boolean(v.goal_id) && !pick.goalsById.has(v.goal_id),
       clients,
       clientGone: Boolean(v.client_id) && !clientIds.has(v.client_id),
       accounts,
@@ -153,7 +160,7 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
       relationships,
       relationshipGone: Boolean(v.relationship_id) && !pick.relationshipsById.has(v.relationship_id),
     };
-  }, [pick, v.client_id, v.business_id, v.account_id, v.relationship_id]);
+  }, [pick, v.client_id, v.business_id, v.account_id, v.relationship_id, v.goal_id, v.due_date, today]);
 
   const other = otherActor(me);
   return (
@@ -197,6 +204,18 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
             onChange={set('business_id')}
             error={problems.business_id}
             options={[{ value: '', label: 'Choose…' }, ...options.businesses.map((b) => ({ value: b.id, label: b.archived ? `${b.name} (archived)` : b.name }))]}
+          />
+          <SelectField
+            id="task-goal"
+            label="Part of (optional)"
+            value={v.goal_id}
+            onChange={set('goal_id')}
+            hint={!v.goal_id && !v.due_date ? 'With no day and no goal, it waits in “To sort”' : undefined}
+            options={[
+              { value: '', label: 'No goal' },
+              ...(options.goalGone ? [{ value: v.goal_id, label: '(deleted goal)' }] : []),
+              ...options.goals,
+            ]}
           />
           <div style={row}>
             <TextField
@@ -271,6 +290,11 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
       <TextAreaField id="task-notes" label="Notes (optional)" value={v.notes} onChange={set('notes')} rows={3} />
       <CheckboxField id="task-top" label="One of today’s top 3" checked={v.top} onChange={set('top')} />
       {record ? <CheckboxField id="task-done" label="Done" checked={v.done} onChange={set('done')} /> : null}
+      {record && !record.done_at ? (
+        <button type="button" className="crm-link-button" style={{ justifySelf: 'start', minHeight: 'var(--tap)' }} onClick={() => navigate(`/focus?task=${record.id}`)}>
+          Focus on this task
+        </button>
+      ) : null}
     </FormSheet>
   );
 }
