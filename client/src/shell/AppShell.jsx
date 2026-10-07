@@ -22,6 +22,7 @@ export default function AppShell({ children }) {
           <NavLink key={item.id} to={item.path} end={item.path === '/'} className={linkClass('shell-nav-link')}>
             <Icon name={item.icon} />
             {item.label}
+            {item.Badge ? <item.Badge /> : null}
           </NavLink>
         ))}
         <div className="shell-signed-in">
@@ -42,7 +43,10 @@ export default function AppShell({ children }) {
       <nav className="shell-tabbar" aria-label="Main">
         {navItems.map((item) => (
           <NavLink key={item.id} to={item.path} end={item.path === '/'} className={linkClass('shell-tab')}>
-            <Icon name={item.icon} size={22} />
+            <span className="shell-tab-icon">
+              <Icon name={item.icon} size={22} />
+              {item.Badge ? <item.Badge /> : null}
+            </span>
             {item.label}
           </NavLink>
         ))}

@@ -13,6 +13,8 @@ import {
 } from './logic.js';
 import { BusinessChip, Badges, RecordSync, StatusBadge, TextButton } from './parts.jsx';
 import { ClientForm, AccountForm, ContactForm, RelationshipForm, ServiceForm, ConsentForm, ActivityForm } from './forms.jsx';
+import { relationshipsWithoutNextStep } from '@suite/shared/planner';
+import { ClientTasksCard, NoNextStepLine } from '../planner/ClientTasksCard.jsx';
 import './crm.css';
 
 // One client on one screen (/crm/clients/:id): who they are, their businesses (accounts) with
@@ -103,7 +105,7 @@ function ServiceItem({ service, open }) {
   );
 }
 
-function RelationshipItem({ rel, business, services, onEdit, onAddService, onEditService }) {
+function RelationshipItem({ rel, business, services, onEdit, onAddService, onEditService, noNextStep, clientId, businesses }) {
   return (
     <li className="crm-rel" data-relationship-id={rel.id}>
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -113,6 +115,7 @@ function RelationshipItem({ rel, business, services, onEdit, onAddService, onEdi
         <TextButton style={{ marginLeft: 'auto' }} onClick={onEdit} aria-label={`Edit ${KIND_LABELS[rel.kind] ?? rel.kind} relationship`}>Edit</TextButton>
       </div>
       {rel.start_date ? <div style={muted}>Since {formatDate(rel.start_date)}</div> : null}
+      {noNextStep ? <NoNextStepLine rel={rel} clientId={clientId} businesses={businesses} /> : null}
       {rel.notes ? <p style={{ ...preWrap, ...muted }}>{rel.notes}</p> : null}
       <RecordSync record={rel} what="relationship" />
       {services.length ? (
@@ -125,7 +128,7 @@ function RelationshipItem({ rel, business, services, onEdit, onAddService, onEdi
   );
 }
 
-function AccountItem({ account, rels, servicesByRel, links, businessesById, open }) {
+function AccountItem({ account, rels, servicesByRel, links, businessesById, open, noNextStep, businesses }) {
   const lines = addressLines(account);
   const href = websiteHref(account.website);
   return (
@@ -160,6 +163,9 @@ function AccountItem({ account, rels, servicesByRel, links, businessesById, open
               onEdit={() => open({ kind: 'relationship', record: r })}
               onAddService={() => open({ kind: 'service', relationshipId: r.id })}
               onEditService={(s) => open({ kind: 'service', record: s, relationshipId: r.id })}
+              noNextStep={noNextStep.has(r.id)}
+              clientId={account.client_id}
+              businesses={businesses}
             />
           ))}
         </ul>
@@ -365,7 +371,11 @@ function ClientScreen({ clientId }) {
     const working = new Set(data.relationships.map((r) => r.business_id));
     const order = (ids) => [...ids].filter((id) => businessesById.has(id))
       .sort((a, b) => (businessesById.get(a).position ?? 99) - (businessesById.get(b).position ?? 99));
-    return { businessesById, accountsById, relsByAccount, servicesByRel, consentsByContact, linksBy, working, order };
+    // Active relationships with no open, dated task naming them (the planner's "No next step").
+    const noNextStep = new Set(relationshipsWithoutNextStep({
+      relationships: data.relationships, accounts: data.accounts, clients: [data.client], tasks: data.relationshipTasks,
+    }).map((r) => r.id));
+    return { businessesById, accountsById, relsByAccount, servicesByRel, consentsByContact, linksBy, working, order, noNextStep };
   }, [data]);
 
   if (!data) return <Card><p style={{ ...muted, margin: 0 }}>{loading ? 'Loading…' : ' '}</p></Card>;
@@ -379,7 +389,7 @@ function ClientScreen({ clientId }) {
     );
   }
   const { client, accounts, contacts, activities, businesses } = data;
-  const { businessesById, accountsById, relsByAccount, servicesByRel, consentsByContact, linksBy, working, order } = maps;
+  const { businessesById, accountsById, relsByAccount, servicesByRel, consentsByContact, linksBy, working, order, noNextStep } = maps;
   const open = (s) => setSheet(s);
   const close = () => setSheet(null);
   const capture = (type) => open({
@@ -418,6 +428,8 @@ function ClientScreen({ clientId }) {
                     links={linksBy.get(a.id) ?? []}
                     businessesById={businessesById}
                     open={open}
+                    noNextStep={noNextStep}
+                    businesses={businesses}
                   />
                 ))}
               </ul>
@@ -451,6 +463,14 @@ function ClientScreen({ clientId }) {
           </Card>
         </div>
         <div className="crm-col">
+          <ClientTasksCard
+            client={client}
+            tasks={data.tasks}
+            businesses={businesses}
+            businessesById={businessesById}
+            accountsById={accountsById}
+            filter={filter}
+          />
           <Timeline
             activities={activities}
             accounts={accounts}
@@ -506,6 +526,7 @@ function ClientScreen({ clientId }) {
           businessId={sheet.businessId}
           accounts={accounts}
           businesses={businesses}
+          relationships={data.relationships}
           onClose={close}
           onDone={close}
         />
