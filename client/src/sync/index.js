@@ -93,6 +93,8 @@ function need() {
 /** Synced records, for code outside components (event handlers, helpers). Same API as the engine. */
 export const store = {
   list: (entity, opts) => need().list(entity, opts),
+  /** { [entity]: records } for several types, reading each (and their parents) once. */
+  listMany: (entities, opts) => need().listMany(entities, opts),
   get: (entity, id, opts) => need().get(entity, id, opts),
   /** { [entity]: how many records a person sees } — records under a deleted parent not counted. */
   liveCounts: (entities) => need().liveCounts(entities),

@@ -97,29 +97,34 @@ export function fold(text) {
 /**
  * What a search box query looks for: `words` (each must appear somewhere in a client's names
  * and emails) and, when it looks like part of a phone number (digits, spaces, ( ) + . -, at least
- * 3 digits), `phone` — the query in the stored phone form ("(519) 555" -> "519555",
- * "+1 519 555 01" -> "51955501"), matched as part of a contact's stored phone. Same rule as the
- * server's search (GET /api/crm/clients?q=).
+ * 3 digits), `phones` — the query in the stored phone form ("(519) 555" -> "519555",
+ * "+1 519 555 01" -> "51955501"; "1-519-555" also as "519555"), matched as part of a contact's
+ * stored phone. The server's search (GET /api/crm/clients?q=) has the same rule except that last case.
  */
 export function parseQuery(q) {
   const text = String(q ?? '').trim();
   if (!text) return null;
-  let phone = null;
+  const phones = [];
   if (/^[\d\s()+.-]+$/.test(text)) {
     const p = normalizePhone(text);
-    if (p && p.replace('+', '').length >= 3) phone = p;
+    if (p && p.replace('+', '').length >= 3) phones.push(p);
+    // A partial number typed with the +1 country code ("1-519-555", "+1 519"): normalizePhone drops
+    // the 1 only from a complete number, so also try it without. (The server's search doesn't yet.)
+    // Only when it reads as one: "1" then a separator ("1-519…", "1 (519…"), or 7+ digits "1[2-9]…".
+    if (p && /^1\d{3,}$/.test(p) && (/^1[\s.(-]/.test(text) || /^1[2-9]\d{5,}$/.test(p))) phones.push(p.slice(1));
   }
-  return { words: fold(text).split(/\s+/).filter(Boolean), phone };
+  return { words: fold(text).split(/\s+/).filter(Boolean), phones };
 }
 
 /**
  * One row per client, with what the list shows and what search looks at — built once per data
  * change. Records come from the device's copy (engine.list: records under a deleted parent are
- * already left out).
+ * already left out). `lastActivity` (Map client id -> at, computed once per activity change) can
+ * stand in for `activities`.
  * @returns {Array<{ client, accountNames: string[], businessIds: string[], lastActivityAt: string|null,
  *   text: string, phones: string[] }>} sorted by client name
  */
-export function buildClientIndex({ clients = [], accounts = [], contacts = [], relationships = [], activities = [] }) {
+export function buildClientIndex({ clients = [], accounts = [], contacts = [], relationships = [], activities = [], lastActivity = null }) {
   const byClient = new Map();
   for (const c of clients) {
     byClient.set(c.id, { client: c, accountNames: [], businessIds: new Set(), lastActivityAt: null, parts: [c.name], phones: [] });
@@ -140,9 +145,16 @@ export function buildClientIndex({ clients = [], accounts = [], contacts = [], r
   }
   // Every live relationship counts (any status), as on the server: "clients who work with X".
   for (const r of relationships) byClient.get(accountClient.get(r.account_id))?.businessIds.add(r.business_id);
-  for (const t of activities) {
-    const row = byClient.get(t.client_id);
-    if (row && t.at && (!row.lastActivityAt || t.at > row.lastActivityAt)) row.lastActivityAt = t.at;
+  if (lastActivity) {
+    for (const [clientId, at] of lastActivity) {
+      const row = byClient.get(clientId);
+      if (row) row.lastActivityAt = at;
+    }
+  } else {
+    for (const t of activities) {
+      const row = byClient.get(t.client_id);
+      if (row && t.at && (!row.lastActivityAt || t.at > row.lastActivityAt)) row.lastActivityAt = t.at;
+    }
   }
   return [...byClient.values()]
     .map(({ parts, businessIds, ...row }) => ({ ...row, businessIds: [...businessIds], text: fold(parts.filter(Boolean).join(' \u0001 ')) }))
@@ -152,7 +164,7 @@ export function buildClientIndex({ clients = [], accounts = [], contacts = [], r
 /** Does an index row match a parsed query? */
 export function matchesQuery(row, query) {
   if (!query) return true;
-  if (query.phone && row.phones.some((p) => p.includes(query.phone))) return true;
+  if (query.phones.some((q) => row.phones.some((p) => p.includes(q)))) return true;
   return query.words.every((w) => row.text.includes(w));
 }
 

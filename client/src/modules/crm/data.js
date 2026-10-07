@@ -1,19 +1,145 @@
 // What the client screens read: the device's offline copy through the sync store (never
-// /api/crm), one subscription per page that re-reads when CRM records change. Records under a
-// deleted parent are already left out by engine.list/get ("Hidden under a deleted parent").
-import { CRM_ENTITY_NAMES } from '@suite/shared/crm';
+// /api/crm). Records under a deleted parent are already left out by engine.list ("Hidden under a
+// deleted parent").
+//
+// Speed with thousands of clients: each record type is listed once and kept (per engine) until a
+// change to that type — or to a type it belongs to, which can hide or show its records — arrives;
+// lookups by a field (activities by client_id, …) and derived maps (last activity per client) are
+// built once per such change. So saving a note re-reads only activities, and opening a client
+// after the list reuses what the list already read.
 import { useSyncData } from '../../sync/index.js';
 
+// What each CRM type belongs to (its parent chain), for when the engine's definitions aren't here yet.
+const BELONGS_TO = {
+  business: [],
+  client: [],
+  account: ['client'],
+  contact: ['client'],
+  consent: ['contact', 'client', 'business'],
+  relationship: ['account', 'client', 'business'],
+  service: ['relationship', 'account', 'client', 'business'],
+  activity: ['client'],
+  link: ['account', 'contact', 'client'],
+};
+
+const caches = new WeakMap(); // engine -> { entries: Map<entity, Promise<Entry>>, off }
+
+function cacheFor(engine) {
+  let c = caches.get(engine);
+  if (c) return c;
+  c = { entries: new Map() };
+  // Registered before any page's subscription reads (useSyncData runs its loads in a microtask
+  // after the event), so a load after a change never gets the old list.
+  c.off = engine.subscribe((e) => {
+    if (e.type === 'status') {
+      if (e.status.phase === 'stopped') c.entries.clear();
+      return;
+    }
+    if (!e.entities) {
+      c.entries.clear();
+      return;
+    }
+    for (const entity of [...c.entries.keys()]) {
+      const affected = new Set([entity, ...(BELONGS_TO[entity] ?? []), ...(engine.ancestorsOf?.(entity) ?? [])]);
+      if (e.entities.some((x) => affected.has(x))) c.entries.delete(entity);
+    }
+  });
+  caches.set(engine, c);
+  return c;
+}
+
+function makeEntry(records) {
+  const byField = new Map();
+  const derived = new Map();
+  const entry = {
+    records,
+    /** field -> Map<value, records[]> (built once). */
+    by(field) {
+      if (!byField.has(field)) {
+        const m = new Map();
+        for (const r of records) {
+          const k = r[field];
+          if (k === null || k === undefined) continue;
+          const list = m.get(k);
+          if (list) list.push(r);
+          else m.set(k, [r]);
+        }
+        byField.set(field, m);
+      }
+      return byField.get(field);
+    },
+    /** Records whose `field` is `value`. */
+    where(field, value) {
+      return entry.by(field).get(value) ?? [];
+    },
+    byId() {
+      return entry.derive('byId', (rs) => new Map(rs.map((r) => [r.id, r])));
+    },
+    /** A value computed from the records once (until they change). */
+    derive(key, fn) {
+      if (!derived.has(key)) derived.set(key, fn(records));
+      return derived.get(key);
+    },
+  };
+  return entry;
+}
+
+/**
+ * Cached entries for several entities: those not cached are read together in one listMany (each
+ * type and its parents read once), then kept until they change.
+ * @returns {Promise<Entry[]>} in the order asked
+ */
+export function cachedLists(engine, entities) {
+  const c = cacheFor(engine);
+  const missing = entities.filter((x) => !c.entries.has(x));
+  if (missing.length) {
+    const all = engine.listMany(missing);
+    for (const entity of missing) {
+      const p = all.then((lists) => makeEntry(lists[entity]));
+      c.entries.set(entity, p);
+      p.catch(() => c.entries.get(entity) === p && c.entries.delete(entity));
+    }
+  }
+  return Promise.all(entities.map((x) => c.entries.get(x)));
+}
+
+/** The records of one entity as a cached entry (see above). */
+export async function cachedList(engine, entity) {
+  return (await cachedLists(engine, [entity]))[0];
+}
+
 const LIST_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'activity'];
+const PAGE_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'service', 'consent', 'activity', 'link'];
+
+/** Last activity per client: Map<client_id, at>. */
+function lastActivityByClient(activities) {
+  const m = new Map();
+  for (const t of activities) {
+    const cur = m.get(t.client_id);
+    if (t.at && (!cur || t.at > cur)) m.set(t.client_id, t.at);
+  }
+  return m;
+}
 
 /** Everything the client list needs (every client; the page builds its index once per change). */
 export function useClientListData() {
   const { data, loading, error } = useSyncData(async (e) => {
-    const [businesses, clients, accounts, contacts, relationships, activities] = await Promise.all(LIST_ENTITIES.map((x) => e.list(x)));
-    return { businesses, clients, accounts, contacts, relationships, activities };
+    const [businesses, clients, accounts, contacts, relationships, activities] = await cachedLists(e, LIST_ENTITIES);
+    // Read what a client page needs too, in the background, so opening one from the list is quick.
+    setTimeout(() => !e.isStopped() && cachedLists(e, PAGE_ENTITIES).catch(() => {}), 250);
+    return {
+      businesses: businesses.records,
+      clients: clients.records,
+      accounts: accounts.records,
+      contacts: contacts.records,
+      relationships: relationships.records,
+      lastActivity: activities.derive('lastByClient', lastActivityByClient),
+    };
   }, [], { entities: LIST_ENTITIES });
   return { data: data ?? null, loading, error };
 }
+
+const byName = (a, b) => String(a.name).localeCompare(String(b.name)) || (a.id < b.id ? -1 : 1);
 
 /**
  * One client with everything under it, or { client: null } when this device doesn't have it
@@ -21,28 +147,33 @@ export function useClientListData() {
  */
 export function useClientPageData(clientId) {
   const { data, loading, error } = useSyncData(async (e) => {
-    const client = clientId ? await e.get('client', clientId) : null;
+    const [businesses, clients, accounts, contacts, relationships, services, consents, activities, links] = await cachedLists(e, PAGE_ENTITIES);
+    const client = clients.byId().get(clientId) ?? null;
     if (!client) return { client: null };
-    const mine = { where: { client_id: clientId } };
-    const [businesses, accounts, contacts, activities] = await Promise.all([
-      e.list('business'), e.list('account', { ...mine, sort: 'name' }), e.list('contact', { ...mine, sort: 'name' }), e.list('activity', mine),
-    ]);
-    const accountIds = new Set(accounts.map((a) => a.id));
-    const contactIds = new Set(contacts.map((p) => p.id));
-    const relationships = await e.list('relationship', { where: (r) => accountIds.has(r.account_id), sort: 'start_date' });
-    const relationshipIds = new Set(relationships.map((r) => r.id));
-    const [services, consents, links] = await Promise.all([
-      e.list('service', { where: (s) => relationshipIds.has(s.relationship_id), sort: 'name' }),
-      e.list('consent', { where: (k) => contactIds.has(k.contact_id) }),
-      e.list('link', { where: (l) => accountIds.has(l.account_id) || contactIds.has(l.contact_id) }),
-    ]);
-    return { client, businesses, accounts, contacts, activities, relationships, services, consents, links };
-  }, [clientId], { entities: CRM_ENTITY_NAMES });
+    const myAccounts = [...accounts.where('client_id', clientId)].sort(byName);
+    const myContacts = [...contacts.where('client_id', clientId)].sort(byName);
+    const myRelationships = myAccounts.flatMap((a) => relationships.where('account_id', a.id))
+      .sort((a, b) => String(a.start_date ?? '9999').localeCompare(String(b.start_date ?? '9999')) || (a.id < b.id ? -1 : 1));
+    return {
+      client,
+      businesses: businesses.records,
+      accounts: myAccounts,
+      contacts: myContacts,
+      activities: activities.where('client_id', clientId),
+      relationships: myRelationships,
+      services: myRelationships.flatMap((r) => services.where('relationship_id', r.id)).sort(byName),
+      consents: myContacts.flatMap((p) => consents.where('contact_id', p.id)),
+      links: [...myAccounts.flatMap((a) => links.where('account_id', a.id)), ...myContacts.flatMap((p) => links.where('contact_id', p.id))],
+    };
+  }, [clientId], { entities: PAGE_ENTITIES });
   return { data: data ?? null, loading, error };
 }
 
 /** Our businesses (for the businesses page). */
 export function useBusinesses() {
-  const { data, loading } = useSyncData((e) => e.list('business', { sort: 'position' }), [], { entities: ['business'] });
+  const { data, loading } = useSyncData(async (e) => {
+    const entry = await cachedList(e, 'business');
+    return [...entry.records].sort((a, b) => (a.position ?? 1e9) - (b.position ?? 1e9));
+  }, [], { entities: ['business'] });
   return { businesses: data ?? [], loading };
 }
