@@ -725,8 +725,9 @@ only its own tables and has **no HTTP routes**: devices use their offline copy, 
   notes, owner* (`OWNERS`: owner | partner | shared), business_id*⇧ (one of ours, Personal included; businesses are
   never deleted), client_id→, account_id→, relationship_id→ (plain refs, **not** parents: deleting a client must not
   hide the person's tasks — they stay, shown with "Deleted client"), due_date (date), due_time (text "HH:MM", local,
-  only with a date), estimate_minutes (integer), done_at (datetime; null = open), top_on (date: "one of that day's
-  three most important", set by the morning plan; a pick from another day is simply stale).
+  only with a date), estimate_minutes (integer), done_at (datetime; null = open), top_on_owner / top_on_partner
+  (date: "one of that day's three most important" **for that person**, set by the morning plan; `TOP_FIELDS` /
+  `topField(actor)` in `@suite/shared/planner`; a pick from another day is simply stale).
 - `inbox_item` (`planner_inbox_items`; create/update/delete): text* (≤ 5000), source (`typed|phone|siri|share`;
   Siri and share arrive in C5), captured_at* (datetime), cleared_at (datetime; null = still in the inbox),
   became_entity (text: `task` | `activity`; null when dismissed — free text so D8 can add `lead`), became_id (id, no
@@ -742,7 +743,11 @@ only its own tables and has **no HTTP routes**: devices use their offline copy, 
 - **Today** (`buildToday`): the signed-in person's own tasks and the shared list (marked "Shared"), never the other
   person's own. Overdue first (oldest first), then due today (timed ones in time order, then the rest with top picks
   first), then "Also in today's top 3" (picks with no date or due later). Each task shows once; a pick is starred
-  where it is. Ticking sets `done_at`; the row stays (ticked, with undo) for the rest of the app session
+  where it is. Each section shows 50 at a time.
+- **Top picks are per person**: a task holds each person's pick day in their own field, so a star on a shared task
+  never fills the other person's three; counts, stars, Today and the plan's load show only your own picks, and
+  moving a task clears only your own pick. Changes are worked out from the latest record (`store.get`), so a
+  move right after a star clears it. Ticking sets `done_at`; the row stays (ticked, with undo) for the rest of the app session
   (`keepFinished`, in memory). Today's calendar (Apple Calendar) is a later package: **nothing is shown for it yet**.
 - **Morning plan** (`PlanSheet`, "Plan my day"): proposes overdue + due today on my Today (mine and the shared list's)
   + **my** undated open tasks (the shared undated pile stays on Tasks for either person to pick). Star up to three
@@ -755,13 +760,23 @@ only its own tables and has **no HTTP routes**: devices use their offline copy, 
   task sheet with the relationship, its account, the client and its business) and on Today (count + list).
   Add note / Log call take an optional **Next step** (title + day) and create the task in the same save (two store
   writes, activity first; a retry after a failure doesn't repeat what was saved), owner = whoever logs it, for the
-  relationship the call's account + business point at (`guessRelationship`; pickable).
+  relationship the call's account + business point at (`guessRelationship`; pickable). When the guess finds none and
+  the client has active relationships, the sheet warns that the step won't clear a "No next step" flag
+  (`nextStepWarning`); with no relationship it is filed under the call's business, else the last one used here,
+  else **Personal**.
 - **Defaults** for a task made by hand: owner = its maker; business = the one in context (client page timeline filter,
   a relationship, the tasks page's business filter), else the last one this person used on this device
   (`prefs.js`, localStorage `suite.planner.lastBusiness`, per actor; best effort), else Personal (`defaultBusinessId`).
   **Automated tasks** (D packages) use the business's `default_owner`: `automatedTaskOwner(business)` in
   `@suite/shared/planner`, or `ctx.services.planner.automatedOwnerFor(businessId)` on the server — then
   `sync.applyLocal({ entity: 'task', op: 'create', fields: { …, owner } })`.
+- **The inbox is shared**: both people see and sort every item. Before a task or note is made from an item, its
+  latest copy is read (`inboxItemGuard` → `alreadySorted`); one already sorted (by the other person, or on another
+  device) is refused with who did it and a link to what it became (`/tasks?open=<id>` opens a task's sheet). Two
+  devices sorting the same item offline still make two tasks: the item then has clashes on `cleared_at` /
+  `became_id` and shows under **Sorted twice** with every outcome (`inboxOutcomes`) and its ClashPanel — delete
+  the extra task, then settle. The capture field is cleared before the save and restored only if saving fails
+  (`saveCapture`), so typing the next thought meanwhile is kept.
 - **Inbox**: the capture field (`CaptureBar`) is on Today and Inbox, fixed above the tab bar on phones; one tap (Add)
   saves an `inbox_item` offline (source `phone` on a phone, else `typed`). Each item: **Task** (sheet pre-filled: title =
   its first line, the rest in notes; owner me; business per the defaults; no date) → **Save** = two taps; the item is
@@ -771,7 +786,7 @@ only its own tables and has **no HTTP routes**: devices use their offline copy, 
 - **Tasks page** (`/tasks`): whose (Mine / Partner's / Shared / All), business, client (those with tasks), due
   (all open / overdue / today / this week / no date / done) in the URL (read from `window.location` when changed, so two
   quick changes don't undo each other), 50 at a time. The sheet has every field; reassigning the owner (the handoff)
-  is one field. **Edits send only what changed** (`taskForm.js` with the CRM's `editChanges`) — tested with two
+  is one field. The sheet shows a task's flag and clashes (`RecordSync`), rows their badges. **Edits send only what changed** (`taskForm.js` with the CRM's `editChanges`) — tested with two
   devices: the partner's reassignment or finish arriving while the Mac's sheet is open survives.
 - **Reads**: `usePlannerData` / `useInboxCount` go through `crm/data.js`'s cached lists (`task` belongs to `business`;
   `inbox_item` to nothing), so Today, Tasks, Inbox and the client page share one read; indexes (`byId`, tasks by
