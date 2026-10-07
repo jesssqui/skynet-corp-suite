@@ -8,7 +8,7 @@ import { automatedTaskOwner } from '@suite/shared/planner';
 import {
   addDays, weekBounds, dueState, dueLabel, dueTimeOf, buildToday, proposePlan, planLoad, topChange, moveChange,
   filterTasks, defaultBusinessId, relationshipsWithoutNextStep, nextStepFields, guessRelationship, openInbox,
-  captureFields, clearedFields, titleFromText, formatMinutes, estimateOptions, ownerLabel, compareDue,
+  captureFields, clearedFields, titleFromText, formatMinutes, estimateOptions, ownerLabel, compareDue, isTop,
 } from '../src/modules/planner/logic.js';
 import { taskForm, taskValues, editChanges, isDirty, linkChange } from '../src/modules/planner/taskForm.js';
 
@@ -20,7 +20,7 @@ let seq = 0;
 /** A task with an id that sorts by creation (like a UUIDv7). */
 function task(fields) {
   seq += 1;
-  return { id: `t-${String(seq).padStart(4, '0')}`, title: `Task ${seq}`, owner: 'owner', business_id: W, done_at: null, top_on: null, due_date: null, due_time: null, ...fields };
+  return { id: `t-${String(seq).padStart(4, '0')}`, title: `Task ${seq}`, owner: 'owner', business_id: W, done_at: null, top_on_owner: null, top_on_partner: null, due_date: null, due_time: null, ...fields };
 }
 const titles = (rows) => rows.map((t) => t.title);
 
@@ -78,12 +78,12 @@ test('Today: overdue first (oldest first), then due today with timed ones in tim
 });
 
 test('Today: top picks show once — marked where they are due, the rest listed after; a tick stays shown this session', () => {
-  const overdueTop = task({ title: 'Overdue top', due_date: '2026-10-01', top_on: TODAY });
-  const todayTop = task({ title: 'Untimed top', due_date: TODAY, top_on: TODAY });
+  const overdueTop = task({ title: 'Overdue top', due_date: '2026-10-01', top_on_owner: TODAY });
+  const todayTop = task({ title: 'Untimed top', due_date: TODAY, top_on_owner: TODAY });
   const plain = task({ title: 'Untimed plain', due_date: TODAY });
-  const undatedTop = task({ title: 'Undated top', top_on: TODAY });
-  const staleTop = task({ title: 'Picked yesterday', top_on: '2026-10-06' });
-  const laterTop = task({ title: 'Due Friday, top today', due_date: '2026-10-09', top_on: TODAY });
+  const undatedTop = task({ title: 'Undated top', top_on_owner: TODAY });
+  const staleTop = task({ title: 'Picked yesterday', top_on_owner: '2026-10-06' });
+  const laterTop = task({ title: 'Due Friday, top today', due_date: '2026-10-09', top_on_owner: TODAY });
   const done = task({ title: 'Ticked just now', due_date: TODAY, done_at: '2026-10-07T15:00:00.000Z' });
   const tasks = [plain, todayTop, overdueTop, undatedTop, staleTop, laterTop, done];
   const view = buildToday({ tasks, me: 'owner', today: TODAY });
@@ -119,8 +119,8 @@ test('the morning plan proposes overdue + due today (mine and shared) + my undat
   assert.deepEqual([load.minutes, load.count, load.over], [330, 3, false]);
   // Picking the undated one as top puts it on today: 7 h 30 min of 8 h.
   const undated = tasks.find((t) => t.title === 'Undated mine');
-  Object.assign(undated, topChange(undated, TODAY, true));
-  assert.equal(undated.top_on, TODAY);
+  Object.assign(undated, topChange(undated, TODAY, true, 'owner'));
+  assert.equal(undated.top_on_owner, TODAY);
   load = planLoad({ tasks, me: 'owner', today: TODAY });
   assert.deepEqual([load.minutes, load.count, load.over], [450, 4, false]);
   Object.assign(tasks[0], { estimate_minutes: 120 });
@@ -128,15 +128,15 @@ test('the morning plan proposes overdue + due today (mine and shared) + my undat
   assert.equal(planLoad({ tasks: [task({ due_date: TODAY })], me: 'owner', today: TODAY }).unestimated, 1);
 
   // Unpicking clears only today's pick; another day's pick is left alone.
-  assert.deepEqual(topChange(undated, TODAY, false), { top_on: null });
-  assert.deepEqual(topChange(task({ top_on: '2026-10-06' }), TODAY, false), { top_on: '2026-10-06' });
+  assert.deepEqual(topChange(undated, TODAY, false, 'owner'), { top_on_owner: null });
+  assert.deepEqual(topChange(task({ top_on_owner: '2026-10-06' }), TODAY, false, 'owner'), { top_on_owner: '2026-10-06' });
 
   // Moving to tomorrow: the date changes (the time stays), a top pick stops being one; undo restores.
-  const timedTop = task({ due_date: TODAY, due_time: '10:00', top_on: TODAY });
-  const { change, undo } = moveChange(timedTop, '2026-10-08', TODAY);
-  assert.deepEqual(change, { due_date: '2026-10-08', top_on: null });
-  assert.deepEqual(undo, { due_date: TODAY, top_on: TODAY });
-  assert.deepEqual(moveChange(task({}), '2026-10-08', TODAY), { change: { due_date: '2026-10-08' }, undo: { due_date: null } });
+  const timedTop = task({ due_date: TODAY, due_time: '10:00', top_on_owner: TODAY });
+  const { change, undo } = moveChange(timedTop, '2026-10-08', TODAY, 'owner');
+  assert.deepEqual(change, { due_date: '2026-10-08', top_on_owner: null });
+  assert.deepEqual(undo, { due_date: TODAY, top_on_owner: TODAY });
+  assert.deepEqual(moveChange(task({}), '2026-10-08', TODAY, 'owner'), { change: { due_date: '2026-10-08' }, undo: { due_date: null } });
 });
 
 // ---- the "no next step" rule -------------------------------------------------------------------------
@@ -264,22 +264,23 @@ test('the task form: a new task saves every field; an edit sends only what chang
   assert.equal(isDirty(fresh, { ...fresh }), false, 'pre-filled values are not "typed"');
   assert.deepEqual(taskForm.toFields(fresh).fields, {
     title: 'Renew the domain', notes: null, owner: 'owner', business_id: PERSONAL, client_id: null, account_id: null, relationship_id: null,
-    due_date: null, due_time: null, estimate_minutes: null, done_at: null, top_on: null,
+    due_date: null, due_time: null, estimate_minutes: null, done_at: null, top_on_owner: null,
   });
+  assert.ok(!('top_on_partner' in taskForm.toFields(fresh).fields), 'only the maker’s own pick field');
   assert.deepEqual(Object.keys(taskForm.toFields({ ...fresh, title: ' ', business_id: '' }).problems).sort(), ['business_id', 'title']);
   assert.deepEqual(Object.keys(taskForm.toFields({ ...fresh, due_time: '09:00' }).problems), ['due_time']);
   assert.deepEqual(Object.keys(taskForm.toFields({ ...fresh, estimate: '2.5' }).problems), ['estimate']);
 
   const record = {
     id: 't', title: 'Pack the order', notes: null, owner: 'owner', business_id: W, client_id: 'c1', account_id: null, relationship_id: null,
-    due_date: TODAY, due_time: '10:00', estimate_minutes: 30, done_at: null, top_on: '2026-10-06',
+    due_date: TODAY, due_time: '10:00', estimate_minutes: 30, done_at: null, top_on_owner: '2026-10-06',
   };
   const start = taskValues(record, { today: TODAY });
   assert.equal(start.estimate, '30');
   assert.equal(start.top, false, 'yesterday’s pick isn’t today’s');
   assert.deepEqual(editChanges(taskForm, start, start), { fields: {}, problems: {} });
   assert.deepEqual(editChanges(taskForm, start, { ...start, owner: 'partner' }).fields, { owner: 'partner' }, 'the handoff is one field');
-  assert.deepEqual(editChanges(taskForm, start, { ...start, top: true }).fields, { top_on: TODAY });
+  assert.deepEqual(editChanges(taskForm, start, { ...start, top: true }).fields, { top_on_owner: TODAY });
   assert.deepEqual(editChanges(taskForm, start, { ...start, estimate: '45' }).fields, { estimate_minutes: 45 });
   const cleared = linkChange(start, 'due_date', '', { accountsById: new Map(), relationshipsById: new Map() });
   assert.deepEqual(editChanges(taskForm, start, cleared).fields, { due_date: null, due_time: null }, 'clearing the date clears the time');
@@ -287,9 +288,9 @@ test('the task form: a new task saves every field; an edit sends only what chang
   assert.deepEqual(Object.keys(done), ['done_at']);
   assert.match(done.done_at, /^\d{4}-\d{2}-\d{2}T.*Z$/);
   // Ticked today: unticking clears it.
-  const top = taskValues({ ...record, top_on: TODAY }, { today: TODAY });
+  const top = taskValues({ ...record, top_on_owner: TODAY }, { today: TODAY });
   assert.equal(top.top, true);
-  assert.deepEqual(editChanges(taskForm, top, { ...top, top: false }).fields, { top_on: null });
+  assert.deepEqual(editChanges(taskForm, top, { ...top, top: false }).fields, { top_on_owner: null });
 });
 
 test('the task form keeps client, account and relationship consistent', () => {
@@ -303,4 +304,34 @@ test('the task form keeps client, account and relationship consistent', () => {
   assert.deepEqual([otherClient.account_id, otherClient.relationship_id], ['', '']);
   const otherAccount = linkChange(withRel, 'account_id', 'a9', look);
   assert.equal(otherAccount.relationship_id, '');
+});
+
+test('top picks are per person: one person’s star on a shared task never fills the other’s three', () => {
+  const shared = task({ title: 'Water the office plants', owner: 'shared', due_date: TODAY });
+  const mine = [1, 2, 3].map((n) => task({ title: `Owner pick ${n}`, top_on_owner: TODAY }));
+  const theirs = task({ title: 'Partner undated', owner: 'partner' });
+  const tasks = [shared, ...mine, theirs];
+  // The owner picks the shared task too: four picks would be over the limit, but the partner sees none.
+  Object.assign(shared, topChange(shared, TODAY, true, 'owner'));
+  assert.equal(buildToday({ tasks, me: 'owner', today: TODAY }).topCount, 4);
+  const p = buildToday({ tasks, me: 'partner', today: TODAY });
+  assert.equal(p.topCount, 0, 'the owner’s picks are the owner’s');
+  assert.deepEqual(p.picked, [], 'and don’t show up as the partner’s');
+  // The partner picks the same shared task and their own: only their field changes.
+  assert.deepEqual(topChange(shared, TODAY, true, 'partner'), { top_on_partner: TODAY });
+  Object.assign(shared, topChange(shared, TODAY, true, 'partner'));
+  Object.assign(theirs, topChange(theirs, TODAY, true, 'partner'));
+  assert.equal(shared.top_on_owner, TODAY, 'the owner’s pick stays');
+  const p2 = buildToday({ tasks, me: 'partner', today: TODAY });
+  assert.equal(p2.topCount, 2);
+  assert.deepEqual(titles(p2.picked), ['Partner undated']);
+  assert.ok(isTop(shared, TODAY, 'partner') && isTop(shared, TODAY, 'owner'));
+  assert.equal(planLoad({ tasks: [task({ title: 'x', estimate_minutes: 60, top_on_partner: TODAY })], me: 'owner', today: TODAY }).count, 0,
+    'the partner’s pick isn’t on my day');
+  // Moving a shared task clears only the mover's pick; unticking in the form likewise.
+  assert.deepEqual(moveChange(shared, '2026-10-08', TODAY, 'partner').change, { due_date: '2026-10-08', top_on_partner: null });
+  const start = taskValues(shared, { today: TODAY, me: 'partner' });
+  assert.equal(start.top, true);
+  assert.deepEqual(editChanges(taskForm, start, { ...start, top: false }).fields, { top_on_partner: null });
+  assert.equal(taskValues(shared, { today: TODAY, me: 'owner' }).top, true);
 });

@@ -86,7 +86,9 @@ test('the planner registers task and inbox_item with sync: fields, refs, ops; co
   assert.deepEqual(by.task.fields.due_time, { type: 'text', max: 5 });
   assert.deepEqual(by.task.fields.estimate_minutes, { type: 'integer' });
   assert.deepEqual(by.task.fields.done_at, { type: 'datetime' });
-  assert.deepEqual(by.task.fields.top_on, { type: 'date' });
+  assert.deepEqual(by.task.fields.top_on_owner, { type: 'date' }, 'each person’s own top-3 pick');
+  assert.deepEqual(by.task.fields.top_on_partner, { type: 'date' });
+  assert.equal(by.task.fields.top_on, undefined);
   assert.deepEqual(by.inbox_item.fields.source.values, ['typed', 'phone', 'siri', 'share']);
   assert.deepEqual(by.inbox_item.fields.captured_at, { type: 'datetime', required: true });
   assert.deepEqual(by.inbox_item.fields.became_id, { type: 'id' }, 'no ref: what it became may be deleted later');

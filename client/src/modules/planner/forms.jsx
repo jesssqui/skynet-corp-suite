@@ -40,7 +40,7 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
   const me = session?.user?.actor ?? 'owner';
   const { data } = usePlannerData();
   const today = localDate();
-  const [start] = useState(() => taskValues(record, { today, initial }));
+  const [start] = useState(() => taskValues(record, { today, me, initial }));
   const [v, setV] = useState(start);
   const [problems, setProblems] = useState({});
   const { busy, error, run } = useAction();

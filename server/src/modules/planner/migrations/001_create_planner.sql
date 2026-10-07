@@ -21,7 +21,8 @@ CREATE TABLE planner_tasks (
   due_time         TEXT,              -- "HH:MM", local, only with a due date
   estimate_minutes INTEGER,           -- rough time estimate
   done_at          TEXT,              -- when it was finished (null = open)
-  top_on           TEXT,              -- "YYYY-MM-DD": one of that day's three most important (morning plan)
+  top_on_owner     TEXT,              -- "YYYY-MM-DD": one of that day's three most important for the owner (morning plan)
+  top_on_partner   TEXT,              -- … for the partner: each person picks their own (a shared task can be both's)
   created_at       TEXT,
   created_by       TEXT,
   updated_at       TEXT,

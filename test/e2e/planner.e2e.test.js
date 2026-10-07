@@ -145,8 +145,8 @@ async function planDay(page, server, { today, ids }, { screenshot }) {
   await page.getByTestId('today-top').filter({ hasText: 'Top 3: 3 of 3 picked' }).waitFor(WAIT);
   await barSays(page, 'All changes saved');
   const t = (id) => server.db.prepare('SELECT * FROM planner_tasks WHERE id = ?').get(id);
-  assert.deepEqual([ids.timed, ids.draft, ids.prices].map((id) => t(id).top_on), [today, today, today]);
-  assert.equal(t(ids.receipts).top_on, null);
+  assert.deepEqual([ids.timed, ids.draft, ids.prices].map((id) => t(id).top_on_owner), [today, today, today]);
+  assert.equal(t(ids.receipts).top_on_owner, null);
   assert.equal(t(ids.overdue).due_date, addDays(today, 1), 'moved to tomorrow');
 }
 

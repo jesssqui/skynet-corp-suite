@@ -7,10 +7,10 @@
 // new Date('YYYY-MM-DD').
 import { BUSINESS_IDS } from '@suite/shared/crm';
 import { SHARED } from '@suite/shared/actors';
-import { isDueTime, isOpenTask, ESTIMATE_MAX_MINUTES, DAY_MINUTES, relationshipsWithoutNextStep } from '@suite/shared/planner';
+import { isDueTime, isOpenTask, ESTIMATE_MAX_MINUTES, DAY_MINUTES, relationshipsWithoutNextStep, topField } from '@suite/shared/planner';
 import { formatDate, parseLocalDate } from '../../ui/format.js';
 
-export { DAY_MINUTES, relationshipsWithoutNextStep, isOpenTask };
+export { DAY_MINUTES, relationshipsWithoutNextStep, isOpenTask, topField };
 
 // ---- dates -----------------------------------------------------------------------------------
 
@@ -121,7 +121,12 @@ export function compareDue(a, b) {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
-export const isTop = (task, today) => Boolean(task?.top_on) && task.top_on === today;
+/** Is this task one of `me`'s top picks for `today`? Picks are per person (top_on_owner / top_on_partner). */
+export function isTop(task, today, me) {
+  if (!task || !me) return false;
+  const day = task[topField(me)];
+  return Boolean(day) && day === today;
+}
 
 /**
  * The signed-in person's Today: their own tasks and the shared list (never the other person's own),
@@ -141,17 +146,17 @@ export function buildToday({ tasks, me, today, keep = new Set() }) {
     const state = dueState(t, today);
     if (state === 'overdue') overdue.push(t);
     else if (state === 'today') dueToday.push(t);
-    else if (isTop(t, today)) picked.push(t);
+    else if (isTop(t, today, me)) picked.push(t);
   }
   overdue.sort(compareDue);
   dueToday.sort((a, b) => {
     const at = dueTimeOf(a);
     const bt = dueTimeOf(b);
     if (at || bt) return compareDue(a, b);
-    return (isTop(b, today) - isTop(a, today)) || compareDue(a, b);
+    return (isTop(b, today, me) - isTop(a, today, me)) || compareDue(a, b);
   });
   picked.sort(compareDue);
-  const topCount = tasks.filter((t) => isMineOrShared(t, me) && isOpenTask(t) && isTop(t, today)).length;
+  const topCount = countTop(tasks, me, today);
   return { overdue, dueToday, picked, topCount, total: overdue.length + dueToday.length + picked.length };
 }
 
@@ -166,7 +171,7 @@ export function buildToday({ tasks, me, today, keep = new Set() }) {
 export function proposePlan({ tasks, me, today }) {
   const { overdue, dueToday } = buildToday({ tasks, me, today });
   const undated = tasks.filter((t) => t.owner === me && isOpenTask(t) && !t.due_date)
-    .sort((a, b) => (isTop(b, today) - isTop(a, today)) || compareDue(a, b));
+    .sort((a, b) => (isTop(b, today, me) - isTop(a, today, me)) || compareDue(a, b));
   return { overdue: overdue.map((t) => t.id), dueToday: dueToday.map((t) => t.id), undated: undated.map((t) => t.id) };
 }
 
@@ -180,7 +185,7 @@ export function planLoad({ tasks, me, today, dayMinutes = DAY_MINUTES }) {
   let unestimated = 0;
   for (const t of tasks) {
     if (!isMineOrShared(t, me) || !isOpenTask(t)) continue;
-    if (!((t.due_date && t.due_date <= today) || isTop(t, today))) continue;
+    if (!((t.due_date && t.due_date <= today) || isTop(t, today, me))) continue;
     count += 1;
     if (t.estimate_minutes) minutes += t.estimate_minutes;
     else unestimated += 1;
@@ -191,19 +196,27 @@ export function planLoad({ tasks, me, today, dayMinutes = DAY_MINUTES }) {
 /** At most three top picks a day. */
 export const TOP_LIMIT = 3;
 
-/** The change that makes a task one of today's top picks, or not. */
-export function topChange(task, today, on) {
-  return { top_on: on ? today : (isTop(task, today) ? null : task.top_on ?? null) };
+/** How many of `me`'s own picks for today are open (the other person's picks never count). */
+export function countTop(tasks, me, today) {
+  return tasks.filter((t) => isMineOrShared(t, me) && isOpenTask(t) && isTop(t, today, me)).length;
+}
+
+/** The change that makes a task one of `me`'s top picks today, or not (only `me`'s field). */
+export function topChange(task, today, on, me) {
+  const f = topField(me);
+  return { [f]: on ? today : (isTop(task, today, me) ? null : task[f] ?? null) };
 }
 
 /**
  * Moving a task to another day: its date changes (its time of day stays) and it stops being one of
- * today's top picks. `undo` puts back what it was.
+ * `me`'s top picks today (the other person's pick of a shared task is theirs to change). Pass the
+ * latest record (store.get), not one from an earlier render. `undo` puts back what it was.
  */
-export function moveChange(task, day, today) {
+export function moveChange(task, day, today, me) {
+  const pick = isTop(task, today, me) ? topField(me) : null;
   return {
-    change: { due_date: day, ...(isTop(task, today) ? { top_on: null } : {}) },
-    undo: { due_date: task.due_date ?? null, ...(isTop(task, today) ? { top_on: task.top_on } : {}) },
+    change: { due_date: day, ...(pick ? { [pick]: null } : {}) },
+    undo: { due_date: task.due_date ?? null, ...(pick ? { [pick]: task[pick] } : {}) },
   };
 }
 

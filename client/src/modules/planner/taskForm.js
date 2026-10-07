@@ -1,7 +1,7 @@
 // The task add/edit form without React: what it holds and the fields it saves, so the "only what
 // you changed" rule is tested against a real engine (client/test/planner-forms.test.js). Same
 // contract as the CRM's forms (../crm/formFields.js: valuesFrom, editChanges, isDirty).
-import { ESTIMATE_MAX_MINUTES, TASK_TITLE_MAX } from '@suite/shared/planner';
+import { ESTIMATE_MAX_MINUTES, TASK_TITLE_MAX, topField } from '@suite/shared/planner';
 import { valuesFrom } from '../crm/formFields.js';
 import { textOrNull } from '../crm/logic.js';
 import { nowIso } from '../../ui/format.js';
@@ -11,9 +11,9 @@ export { editChanges, isDirty, changedFields } from '../crm/formFields.js';
 export const taskForm = {
   defaults: {
     title: '', notes: '', owner: '', business_id: '', client_id: '', account_id: '', relationship_id: '',
-    due_date: '', due_time: '', estimate: '', done: false, done_at: '', top: false, top_on: '', today: '',
+    due_date: '', due_time: '', estimate: '', done: false, done_at: '', top: false, top_prev: '', today: '', me: 'owner',
   },
-  // estimate is typed/picked as text; done and top are ticks over done_at / top_on.
+  // estimate is typed/picked as text; done and top are ticks over done_at / the person's top field.
   fromRecord: (v, record) => ({
     ...v,
     estimate: record?.estimate_minutes ? String(record.estimate_minutes) : '',
@@ -31,8 +31,9 @@ export const taskForm = {
     if (estimate !== null && !(Number.isSafeInteger(estimate) && estimate >= 1 && estimate <= ESTIMATE_MAX_MINUTES)) {
       problems.estimate = 'Minutes, from 1 to a week';
     }
-    // Ticked "top 3 today": today; unticked: cleared if it was today's, else whatever day it was.
-    const topOn = v.top ? v.today : (v.top_on && v.top_on !== v.today ? v.top_on : null);
+    // Ticked "top 3 today" (this person's own pick): today; unticked: cleared if it was today's,
+    // else whatever day it was.
+    const topOn = v.top ? v.today : (v.top_prev && v.top_prev !== v.today ? v.top_prev : null);
     return {
       problems,
       fields: {
@@ -47,7 +48,7 @@ export const taskForm = {
         due_time: v.due_date ? (v.due_time || null) : null,
         estimate_minutes: Number.isSafeInteger(estimate) ? estimate : null,
         done_at: v.done ? (v.done_at || nowIso()) : null,
-        top_on: topOn || null,
+        [topField(v.me || 'owner')]: topOn || null,
       },
     };
   },
@@ -55,11 +56,13 @@ export const taskForm = {
 
 /**
  * The form's values for a task (or a new one): `today` (the device's local date, for the top-3
- * tick) and `initial` (pre-filled values for a new task: owner, business, client…).
+ * tick), `me` (whose pick the tick is) and `initial` (pre-filled values for a new task: owner,
+ * business, client…).
  */
-export function taskValues(record, { today, initial = {} } = {}) {
-  const v = { ...valuesFrom(taskForm, record), today, ...(record ? {} : initial) };
-  v.top = Boolean(v.top_on) && v.top_on === today;
+export function taskValues(record, { today, me = 'owner', initial = {} } = {}) {
+  const v = { ...valuesFrom(taskForm, record), today, me, ...(record ? {} : initial) };
+  v.top_prev = record?.[topField(me)] ?? '';
+  v.top = Boolean(v.top_prev) && v.top_prev === today;
   return v;
 }
 

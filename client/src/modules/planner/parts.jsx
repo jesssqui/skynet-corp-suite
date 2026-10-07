@@ -69,7 +69,7 @@ export function TaskRow({ task, me, today, businessesById, clientsById, accounts
       <TaskTick task={task} onError={setError} />
       <div style={{ display: 'grid', gap: 4, minWidth: 0 }}>
         <button type="button" className="planner-task-title" onClick={() => onOpen?.(task)}>
-          {isTop(task, today) ? <Icon name="star" size={15} title="One of today’s top 3" style={{ fill: 'currentColor', color: 'var(--warn)' }} /> : null}
+          {isTop(task, today, me) ? <Icon name="star" size={15} title="One of today’s top 3" style={{ fill: 'currentColor', color: 'var(--warn)' }} /> : null}
           <span>{task.title}</span>
         </button>
         <div className="planner-task-meta">

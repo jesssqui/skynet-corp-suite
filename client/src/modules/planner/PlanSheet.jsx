@@ -9,7 +9,7 @@ import { Sheet, Button, Icon, Notice, TextField } from '../../ui/index.js';
 import { store } from '../../sync/index.js';
 import { useAction } from '../crm/parts.jsx';
 import {
-  proposePlan, planLoad, topChange, moveChange, isTop, isMineOrShared, isOpenTask, addDays, shortDay, dueLabel,
+  proposePlan, planLoad, topChange, moveChange, isTop, countTop, addDays, shortDay, dueLabel,
   formatMinutes, TOP_LIMIT,
 } from './logic.js';
 import { OwnerBadge } from './parts.jsx';
@@ -18,7 +18,7 @@ const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
 
 function PlanRow({ task, me, today, topCount, moved, moving, onTop, onMove, onUndo, setMoving }) {
   const [day, setDay] = useState(addDays(today, 2));
-  const top = isTop(task, today);
+  const top = isTop(task, today, me);
   const due = dueLabel(task, today);
   const meta = [
     due && task.due_date < today ? `Overdue · ${due}` : due,
@@ -77,11 +77,14 @@ export default function PlanSheet({ data, me, today, inboxCount, onClose }) {
   const { error, run } = useAction();
   const tasksById = useMemo(() => new Map(data.tasks.map((t) => [t.id, t])), [data.tasks]);
   const load = useMemo(() => planLoad({ tasks: data.tasks, me, today }), [data.tasks, me, today]);
-  const topCount = useMemo(() => data.tasks.filter((t) => isMineOrShared(t, me) && isOpenTask(t) && isTop(t, today)).length, [data.tasks, me, today]);
+  const topCount = useMemo(() => countTop(data.tasks, me, today), [data.tasks, me, today]);
 
-  const onTop = (task, on) => run(() => store.update('task', task.id, topChange(task, today, on)));
+  // Changes are worked out from the latest record (store.get), not this render's copy: a star
+  // tapped just before Move must be cleared by the move.
+  const latest = async (task) => (await store.get('task', task.id)) ?? task;
+  const onTop = (task, on) => run(async () => store.update('task', task.id, topChange(await latest(task), today, on, me)));
   const onMove = (task, day) => run(async () => {
-    const { change, undo } = moveChange(task, day, today);
+    const { change, undo } = moveChange(await latest(task), day, today, me);
     await store.update('task', task.id, change);
     setMoved((m) => new Map(m).set(task.id, { day, label: day === addDays(today, 1) ? `tomorrow (${shortDay(day)})` : shortDay(day), undo }));
     setMoving(null);

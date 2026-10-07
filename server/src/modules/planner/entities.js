@@ -26,7 +26,10 @@ export const PLANNER_ENTITIES = [
       due_time: { type: 'text', max: 5 }, // "HH:MM" (checked by the module), only with a due date
       estimate_minutes: { type: 'integer' },
       done_at: { type: 'datetime' },
-      top_on: { type: 'date' },
+      // Today's top 3 is per person (each picks their own, a shared task may be in both): the day
+      // it was picked by each actor (TOP_FIELDS in @suite/shared/planner).
+      top_on_owner: { type: 'date' },
+      top_on_partner: { type: 'date' },
     },
   },
   {

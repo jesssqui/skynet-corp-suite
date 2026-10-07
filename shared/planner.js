@@ -3,9 +3,23 @@
 // types themselves are registered by the server's planner module
 // (server/src/modules/planner/entities.js) and reach devices through GET /api/sync/info.
 // See CLAUDE.md, "Planner (C4a)".
-import { OWNERS, SHARED } from './actors.js';
+import { ACTORS, OWNERS, SHARED } from './actors.js';
 
 export { OWNERS, SHARED };
+
+/**
+ * Today's top 3 is per person: a task holds the day each person picked it (`top_on_owner`,
+ * `top_on_partner`), so a shared task can be one of both people's picks and one person's star never
+ * fills the other's three. actor -> field.
+ */
+export const TOP_FIELDS = Object.freeze(Object.fromEntries(ACTORS.map((a) => [a, `top_on_${a}`])));
+
+/** The field holding `actor`'s pick day ('top_on_owner' | 'top_on_partner'). */
+export function topField(actor) {
+  const f = TOP_FIELDS[actor];
+  if (!f) throw new TypeError(`Not a person: ${actor}`);
+  return f;
+}
 
 /** The planner's synced record types (entity names). */
 export const PLANNER_ENTITY_NAMES = Object.freeze(['task', 'inbox_item']);

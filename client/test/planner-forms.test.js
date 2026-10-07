@@ -30,8 +30,8 @@ test('the Mac’s open task sheet doesn’t undo the partner’s reassignment or
   await phone.engine.syncNow();
 
   // The Mac opens both tasks' sheets…
-  const startA = taskValues(await m.get('task', a), { today });
-  const startB = taskValues(await m.get('task', b), { today });
+  const startA = taskValues(await m.get('task', a), { today, me: 'owner' });
+  const startB = taskValues(await m.get('task', b), { today, me: 'owner' });
   // …meanwhile the partner takes over task A (the handoff) and finishes task B, and the Mac pulls that in.
   await phone.engine.update('task', a, { owner: 'partner' });
   await phone.engine.update('task', b, { done_at: nowIso() });
@@ -44,7 +44,7 @@ test('the Mac’s open task sheet doesn’t undo the partner’s reassignment or
   assert.deepEqual(editA.fields, { title: 'Pack the Cloud Vape order (40 tins)', estimate_minutes: 30 });
   await m.update('task', a, editA.fields);
   const editB = editChanges(taskForm, startB, { ...startB, notes: 'The 2x3 ones', top: true });
-  assert.deepEqual(editB.fields, { notes: 'The 2x3 ones', top_on: today });
+  assert.deepEqual(editB.fields, { notes: 'The 2x3 ones', top_on_owner: today });
   await m.update('task', b, editB.fields);
   await m.syncNow();
   await phone.engine.syncNow();
