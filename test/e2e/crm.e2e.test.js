@@ -1,4 +1,4 @@
-// The CRM's records in the browser (C3a): the Clients page shows our businesses from each person's
+// The CRM's records in the browser (C3a): Our businesses (Clients → Our businesses) shows them from each person's
 // side, and the plain record forms pick only the right kind of record and store clean contact details.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,6 +14,7 @@ test('Clients page and plain CRM forms: owners from each side, ref pickers, clea
   await signIn(page, base, 'jessy', users.owner.totpSecret);
   await barSays(page, 'All changes saved');
   await page.getByRole('link', { name: 'Clients' }).first().click();
+  await page.getByRole('link', { name: 'Our businesses' }).click();
   await page.getByText('Great White North Design').waitFor(WAIT);
   assert.equal(await page.getByText('You', { exact: true }).count(), 3, 'wholesale, agency and consulting are the owner’s');
   assert.equal(await page.getByText('Shared list', { exact: true }).count(), 2);
@@ -52,7 +53,7 @@ test('Clients page and plain CRM forms: owners from each side, ref pickers, clea
   assert.equal(await page.locator('[data-record-id]').count(), 0);
   await page.getByRole('button', { name: 'Show them' }).click();
   await page.locator('[data-record-id]').first().waitFor(WAIT);
-  await page.goto(`${base}/crm`);
+  await page.goto(`${base}/crm/businesses`);
   await page.getByText('Great White North Design').waitFor(WAIT);
   const contactRow = page.locator('a[href="/sync/data/contact"]');
   await contactRow.filter({ hasText: /contact\s*0/ }).waitFor(WAIT);
@@ -61,7 +62,7 @@ test('Clients page and plain CRM forms: owners from each side, ref pickers, clea
   const mac = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const p2 = await mac.newPage();
   await signIn(p2, base, 'sam', users.partner.totpSecret);
-  await p2.goto(`${base}/crm`);
+  await p2.goto(`${base}/crm/businesses`);
   await p2.getByText('Save Point Shop').waitFor(WAIT);
   assert.equal(await p2.getByText('You', { exact: true }).count(), 1, 'Save Point Shop is the partner’s');
   assert.equal(await p2.getByText('Your partner', { exact: true }).count(), 3);

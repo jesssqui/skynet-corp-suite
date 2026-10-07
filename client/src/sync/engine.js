@@ -418,6 +418,23 @@ export function createSyncEngine({
   }
 
   /**
+   * Several entities' records at once, as list() shows them (no where/sort), reading each type —
+   * and each type they belong to — once: { [entity]: records }. For pages that need many types
+   * (a client page), where separate list() calls would each re-read the parent chain.
+   */
+  async function listMany(entities, { orphans = false } = {}) {
+    await opened();
+    const cache = new Map();
+    const out = {};
+    for (const entity of entities) {
+      const map = await viewMap(entity, cache);
+      const live = orphans || !parentFields(entity).length ? null : await liveIds(entity, cache);
+      out[entity] = [...map.values()].filter((r) => !live || live.has(r.id)).map((r) => toView(entity, r)).sort(sorter());
+    }
+    return out;
+  }
+
+  /**
    * One record, or null when this device doesn't have it (or it was deleted) — or, unless
    * `orphans`, when something up its parent chain is gone.
    */
@@ -796,7 +813,12 @@ export function createSyncEngine({
       const target = full ? 'staging' : 'records';
       for (const c of body.changes) {
         if (c.deleted) await t.delete(target, [c.entity, c.id]);
-        else await t.put(target, { entity: c.entity, id: c.id, fields: c.fields, flagged: Boolean(c.flagged), clashes: c.clashes ?? [], seq: c.seq });
+        else {
+          await t.put(target, {
+            entity: c.entity, id: c.id, fields: c.fields, flagged: Boolean(c.flagged), clashes: c.clashes ?? [], seq: c.seq,
+            ...(c.meta ? { meta: c.meta } : {}),
+          });
+        }
       }
       await t.put('meta', body.cursor, 'pull');
       if (!body.hasMore) {
@@ -1013,6 +1035,7 @@ export function createSyncEngine({
     wipe,
     // read
     list,
+    listMany,
     get,
     liveCounts,
     ancestorsOf,

@@ -54,5 +54,9 @@ test('updates to a record that is not here are skipped; views put sync state und
   assert.equal(map.size, 0);
   const id = newId();
   const view = toView('item', { id, fields: { title: 't' }, flagged: true, clashes: [{ id: 'c' }], pending: false, local: false });
-  assert.deepEqual(view, { id, title: 't', _sync: { entity: 'item', pending: false, local: false, flagged: true, clashes: [{ id: 'c' }] } });
+  const none = { createdBy: null, createdAt: null, updatedBy: null, updatedAt: null };
+  assert.deepEqual(view, { id, title: 't', _sync: { entity: 'item', pending: false, local: false, flagged: true, clashes: [{ id: 'c' }], ...none } });
+  const meta = { createdBy: 'owner', createdAt: '2026-10-07T12:00:00.000Z', updatedBy: 'partner', updatedAt: '2026-10-07T13:00:00.000Z' };
+  const pulled = overlay([{ id, fields: { title: 't' }, meta }], [], ['title']).get(id);
+  assert.deepEqual(toView('item', pulled)._sync, { entity: 'item', pending: false, local: false, flagged: false, clashes: [], ...meta }, 'who and when come with the pulled copy');
 });

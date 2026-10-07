@@ -591,8 +591,21 @@ export function createSyncService({ db, log }) {
       deleted: false,
       flagged: rec.flagged === 1,
       fields: registry.decodeRow(entry, row),
+      ...(entry.standard.has('created_by') || entry.standard.has('updated_by') ? { meta: recordMeta(entry, row) } : {}),
       clashes: openClashesFor.all(rec.entity, rec.record_id).map(publicClash),
     };
+  }
+
+  /**
+   * Who made a record and who changed it last, and when (its stamps, i.e. when it was done on the
+   * device) — for pages ("logged by you"). Only the columns the table has; not synced fields.
+   */
+  function recordMeta(entry, row) {
+    const out = {};
+    for (const [key, col] of [['createdAt', 'created_at'], ['createdBy', 'created_by'], ['updatedAt', 'updated_at'], ['updatedBy', 'updated_by']]) {
+      if (entry.standard.has(col)) out[key] = row[col] ?? null;
+    }
+    return out;
   }
 
   /** GET /api/sync/pull */

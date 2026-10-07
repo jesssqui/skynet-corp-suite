@@ -46,7 +46,7 @@ function blankFields(fieldNames, fields) {
 export function overlay(records, changes, fieldNames = []) {
   const map = new Map();
   for (const r of records) {
-    map.set(r.id, { id: r.id, fields: { ...r.fields }, flagged: Boolean(r.flagged), clashes: r.clashes ?? [], pending: false, local: false });
+    map.set(r.id, { id: r.id, fields: { ...r.fields }, flagged: Boolean(r.flagged), clashes: r.clashes ?? [], pending: false, local: false, meta: r.meta ?? null });
   }
   for (const { step, acked, pending } of changes) {
     const rec = map.get(step.recordId);
@@ -55,7 +55,7 @@ export function overlay(records, changes, fieldNames = []) {
       if (acked && acked.status !== 'applied') continue;
       map.set(step.recordId, {
         id: step.recordId, fields: blankFields(fieldNames, step.fields ?? {}),
-        flagged: false, clashes: [], pending: Boolean(pending), local: true,
+        flagged: false, clashes: [], pending: Boolean(pending), local: true, meta: null,
       });
       continue;
     }
@@ -75,11 +75,20 @@ export function overlay(records, changes, fieldNames = []) {
   return map;
 }
 
-/** What callers get: the fields at the top level, sync state under `_sync` (never a field name). */
+/**
+ * What callers get: the fields at the top level, sync state under `_sync` (never a field name).
+ * `_sync.createdBy/createdAt/updatedBy/updatedAt` come with the pulled copy (null for a record
+ * made here and not pulled back yet — `local`: made on this device, so by its signed-in person —
+ * and for records pulled before pulls carried them, until they change or are downloaded again).
+ */
 export function toView(entity, rec) {
+  const m = rec.meta ?? {};
   return {
     id: rec.id,
     ...rec.fields,
-    _sync: { entity, pending: rec.pending, local: rec.local, flagged: rec.flagged, clashes: rec.clashes },
+    _sync: {
+      entity, pending: rec.pending, local: rec.local, flagged: rec.flagged, clashes: rec.clashes,
+      createdBy: m.createdBy ?? null, createdAt: m.createdAt ?? null, updatedBy: m.updatedBy ?? null, updatedAt: m.updatedAt ?? null,
+    },
   };
 }

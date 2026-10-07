@@ -1,5 +1,9 @@
 // Shared building blocks. Every module uses these instead of styling its own,
-// so the suite looks like one app. Styles are inline and use the theme tokens.
+// so the suite looks like one app. Styles are inline and use the theme tokens
+// (ui.css only for what needs media queries: the Sheet).
+import { useEffect, useId, useRef } from 'react';
+import { Icon } from './icons.jsx';
+import './ui.css';
 
 export function PageHeader({ title, subtitle, actions }) {
   return (
@@ -241,6 +245,132 @@ export function Notice({ tone = 'info', children, style }) {
       }}
     >
       {children}
+    </div>
+  );
+}
+
+const fieldInputStyle = {
+  minHeight: 'var(--tap)',
+  padding: '0 var(--space-3)',
+  fontSize: 16,
+  background: 'var(--surface)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius)',
+  width: '100%',
+  minWidth: 0,
+};
+
+function fieldIdOf(id, label) {
+  return id ?? `f-${String(label).replace(/\W+/g, '-').toLowerCase()}`;
+}
+
+function FieldFrame({ id, label, hint, error, children, style }) {
+  const note = error || hint;
+  return (
+    <div style={{ display: 'grid', gap: 6, minWidth: 0, ...style }}>
+      <label htmlFor={id} style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>{label}</label>
+      {children}
+      {note ? (
+        <span id={`${id}-note`} style={{ fontSize: 'var(--text-xs)', color: error ? 'var(--danger)' : 'var(--text-muted)' }}>
+          {note}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * A labelled <select>. options: [{ value, label }] (value '' = nothing chosen). onChange gets the
+ * value string.
+ */
+export function SelectField({ label, hint, error, id, value, onChange, options, style, selectStyle, ...rest }) {
+  const fieldId = fieldIdOf(id, label);
+  return (
+    <FieldFrame id={fieldId} label={label} hint={hint} error={error} style={style}>
+      <select
+        id={fieldId}
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value)}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error || hint ? `${fieldId}-note` : undefined}
+        style={{ ...fieldInputStyle, ...(error ? { borderColor: 'var(--danger)' } : {}), ...selectStyle }}
+        {...rest}
+      >
+        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </FieldFrame>
+  );
+}
+
+/** A labelled multi-line text input (16px, so iPhone Safari doesn't zoom). */
+export function TextAreaField({ label, hint, error, id, rows = 3, style, inputStyle, ...rest }) {
+  const fieldId = fieldIdOf(id, label);
+  return (
+    <FieldFrame id={fieldId} label={label} hint={hint} error={error} style={style}>
+      <textarea
+        id={fieldId}
+        rows={rows}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error || hint ? `${fieldId}-note` : undefined}
+        style={{ ...fieldInputStyle, padding: 'var(--space-2) var(--space-3)', resize: 'vertical', lineHeight: 1.4, ...inputStyle }}
+        {...rest}
+      />
+    </FieldFrame>
+  );
+}
+
+/** A checkbox with its label, a full tap target high. */
+export function CheckboxField({ label, id, checked, onChange, hint }) {
+  const fieldId = fieldIdOf(id, label);
+  return (
+    <div style={{ display: 'grid', gap: 2 }}>
+      <label htmlFor={fieldId} style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', minHeight: 'var(--tap)', fontSize: 'var(--text-sm)', fontWeight: 600, cursor: 'pointer' }}>
+        <input id={fieldId} type="checkbox" checked={Boolean(checked)} onChange={(e) => onChange(e.target.checked)} style={{ width: 20, height: 20, margin: 0 }} />
+        {label}
+      </label>
+      {hint ? <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>{hint}</span> : null}
+    </div>
+  );
+}
+
+/**
+ * A dialog for a short form: a sheet from the bottom on phones, a centred panel on wider
+ * screens (ui.css). Escape, a tap outside or the close button call onClose (which may ask first); the page behind doesn't scroll
+ * while it is open. `footer` (the buttons) stays visible at the bottom while the body scrolls.
+ * Wrap body + footer in a <form> by passing `onSubmit`.
+ */
+export function Sheet({ title, onClose, onSubmit, children, footer, testId }) {
+  const titleId = useId();
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && close.current?.();
+    document.addEventListener('keydown', onKey);
+    const body = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = body;
+    };
+  }, []);
+  const Inner = onSubmit ? 'form' : 'div';
+  return (
+    <div className="ui-sheet-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose?.()}>
+      <div className="ui-sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} data-testid={testId}>
+        <Inner
+          className="ui-sheet-inner"
+          {...(onSubmit ? { onSubmit: (e) => { e.preventDefault(); onSubmit(e); }, noValidate: true } : {})}
+        >
+          <header className="ui-sheet-header">
+            <h2 id={titleId} style={{ fontSize: 'var(--text-lg)', fontWeight: 650, flex: 1, minWidth: 0 }}>{title}</h2>
+            <button type="button" className="ui-sheet-close" onClick={onClose} aria-label="Close">
+              <Icon name="close" size={20} />
+            </button>
+          </header>
+          <div className="ui-sheet-body">{children}</div>
+          {footer ? <footer className="ui-sheet-footer">{footer}</footer> : null}
+        </Inner>
+      </div>
     </div>
   );
 }

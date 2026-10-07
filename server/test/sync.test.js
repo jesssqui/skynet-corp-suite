@@ -466,6 +466,10 @@ test('pull pages through changes with a cursor and returns only what changed sin
   const next = await b.pullPage(p3.body.cursor);
   assert.deepEqual(next.body.changes.map((c) => [c.id, c.deleted]), [[ids[3], false], [ids[4], true]]);
   assert.equal(next.body.changes[0].fields.status, 'won');
+  const meta = next.body.changes[0].meta;
+  assert.deepEqual([meta.createdBy, meta.updatedBy], ['owner', 'owner'], 'who made and last changed it come with the record');
+  assert.ok(meta.createdAt <= meta.updatedAt && /Z$/.test(meta.updatedAt));
+  assert.equal(next.body.changes[0].fields.created_by, undefined, 'not as a synced field');
   assert.equal(next.body.changes[1].fields, undefined, 'a delete carries no data');
 
   assert.equal((await b.pullPage('nonsense')).status, 400);

@@ -1,0 +1,89 @@
+/* What the shared components need beyond inline styles: media queries and safe areas. */
+
+/* Sheet: from the bottom on phones, a centred panel on wider screens. */
+.ui-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(10, 12, 14, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+}
+
+.ui-sheet {
+  width: 100%;
+  max-width: 560px;
+  max-height: calc(100dvh - 2 * var(--space-5));
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+  display: flex;
+  overflow: hidden;
+}
+
+.ui-sheet-inner {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+}
+
+.ui-sheet-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-2) var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.ui-sheet-close {
+  width: var(--tap);
+  height: var(--tap);
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ui-sheet-body {
+  padding: var(--space-4);
+  overflow-y: auto;
+  display: grid;
+  gap: var(--space-3);
+  min-height: 0;
+  flex: 1;
+}
+
+.ui-sheet-footer {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+@media (max-width: 767px) {
+  .ui-sheet-backdrop {
+    align-items: flex-end;
+    padding: env(safe-area-inset-top) 0 0;
+  }
+
+  .ui-sheet {
+    max-width: none;
+    max-height: calc(100dvh - var(--space-5) - env(safe-area-inset-top));
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  .ui-sheet-footer {
+    padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom));
+  }
+}

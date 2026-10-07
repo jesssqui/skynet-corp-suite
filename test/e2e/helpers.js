@@ -17,10 +17,10 @@ const DIST = path.join(ROOT, 'client', 'dist');
 const SHOTS = process.env.E2E_SCREENSHOTS || null;
 export const WAIT = { timeout: 20_000 };
 
-export async function shot(page, name) {
+export async function shot(page, name, { fullPage = true } = {}) {
   if (!SHOTS) return;
   fs.mkdirSync(SHOTS, { recursive: true });
-  await page.screenshot({ path: path.join(SHOTS, `${name}.png`), fullPage: true });
+  await page.screenshot({ path: path.join(SHOTS, `${name}.png`), fullPage });
 }
 
 /**
