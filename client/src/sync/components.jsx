@@ -2,16 +2,18 @@
 // (keep / use the other), and generic field inputs driven by the entity definitions.
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { formatPhone } from '@suite/shared/normalize';
 import { Button, Badge, Icon, Notice } from '../ui/index.js';
 import { useAuth } from '../auth/session.jsx';
 import { useSyncEngine, useSyncStatus, useSyncData } from './hooks.js';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
-/** A field value for reading: '—' for empty, Yes/No for booleans. */
+/** A field value for reading: '—' for empty, Yes/No for booleans, phones as "(519) 555-0100". */
 export function formatValue(field, value) {
   if (value === null || value === undefined || value === '') return '—';
   if (field?.type === 'boolean' || typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (field?.format === 'phone') return formatPhone(value);
   return String(value);
 }
 

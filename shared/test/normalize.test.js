@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  normalizeEmail, isEmail, normalizePhone, isPhone, normalizePostalCode, isPostalCode, normalizeTags, parseTags, FORMATS,
+  normalizeEmail, isEmail, normalizePhone, isPhone, formatPhone, normalizePostalCode, isPostalCode, normalizeTags, parseTags, FORMATS,
 } from '../normalize.js';
 import { checkFieldValue, normalizeFieldValue } from '../fields.js';
 import { newId } from '../ids.js';
@@ -25,6 +25,10 @@ test('phones: digits only, one form for North American numbers, extensions dropp
   assert.equal(normalizePhone(' - '), null);
   assert.ok(isPhone('5195550100'));
   for (const bad of ['555', '519-555-0100', '1234567890123456', '']) assert.equal(isPhone(bad), false, bad);
+  assert.equal(formatPhone('5195550100'), '(519) 555-0100', 'for reading');
+  assert.equal(formatPhone('5550100'), '555-0100');
+  assert.equal(formatPhone('442079460958'), '442079460958');
+  assert.equal(formatPhone(null), null);
 });
 
 test('postal codes: uppercase, Canadian ones as "A1A 1A1"', () => {

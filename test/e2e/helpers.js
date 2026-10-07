@@ -1,5 +1,5 @@
-// Shared by the end-to-end tests: a real suite server (with the test-only syncdemo module standing
-// in for the CRM's record types) on a copy of the built client, behind a proxy that can be cut
+// Shared by the end-to-end tests: a real suite server (every module, the CRM included, plus the
+// test-only syncdemo module) on a copy of the built client, behind a proxy that can be cut
 // (a real outage: the service worker can't reach the server either), and Chromium.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

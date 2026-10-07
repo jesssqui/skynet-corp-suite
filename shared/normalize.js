@@ -37,6 +37,14 @@ export function normalizePhone(input) {
   return digits === '' ? null : digits;
 }
 
+/** A stored phone for reading: "5195550100" -> "(519) 555-0100", "5550100" -> "555-0100"; others as stored. */
+export function formatPhone(stored) {
+  if (typeof stored !== 'string') return stored ?? null;
+  if (/^\d{10}$/.test(stored)) return `(${stored.slice(0, 3)}) ${stored.slice(3, 6)}-${stored.slice(6)}`;
+  if (/^\d{7}$/.test(stored)) return `${stored.slice(0, 3)}-${stored.slice(3)}`;
+  return stored;
+}
+
 /** 7 to 15 digits (15 = the international maximum, E.164). */
 export function isPhone(value) {
   return typeof value === 'string' && /^\d{7,15}$/.test(value);

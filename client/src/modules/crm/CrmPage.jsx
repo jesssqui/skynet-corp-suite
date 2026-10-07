@@ -1,13 +1,20 @@
 import { Link } from 'react-router-dom';
 import { CRM_ENTITY_NAMES } from '@suite/shared/crm';
+import { SHARED } from '@suite/shared/actors';
 import { PageHeader, Card, Badge, EmptyState, Icon } from '../../ui/index.js';
+import { useAuth } from '../../auth/session.jsx';
 import { useRecords, useSyncData } from '../../sync/index.js';
 
 // A plain doorway to the CRM's records until the client screens arrive (C3b): our businesses,
 // and each record type in the generic offline view (/sync/data/:entity). Everything here reads
 // the device's offline copy, so it works with no connection.
 
-const OWNER_LABEL = { owner: 'You', partner: 'Your partner', shared: 'Shared list' };
+/** Who a business's new tasks go to, said from the signed-in person's side (there are two of you). */
+function ownerLabel(owner, me) {
+  if (owner === SHARED) return 'Shared list';
+  if (!me) return owner;
+  return owner === me ? 'You' : 'Your partner';
+}
 
 const rowLink = {
   display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minHeight: 'var(--tap)', color: 'inherit', textDecoration: 'none',
@@ -16,6 +23,8 @@ const rowLink = {
 export default function CrmPage() {
   const { records: businesses, loading } = useRecords('business', { sort: 'position' });
   const { data: counts } = useSyncData((engine) => engine.counts());
+  const { session } = useAuth();
+  const me = session?.user?.actor ?? null;
   return (
     <>
       <PageHeader title="Clients" subtitle="CRM records on this device · the client screens come next" />
@@ -32,7 +41,7 @@ export default function CrmPage() {
                     style={{ width: 12, height: 12, borderRadius: 999, background: b.color || 'var(--border)', flexShrink: 0 }}
                   />
                   <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>{b.name}</span>
-                  <Badge tone="neutral">{OWNER_LABEL[b.default_owner] ?? b.default_owner}</Badge>
+                  <Badge tone="neutral">{ownerLabel(b.default_owner, me)}</Badge>
                 </li>
               ))}
             </ul>
