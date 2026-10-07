@@ -13,7 +13,7 @@ import { BusinessChip, TextButton } from '../crm/parts.jsx';
 import { KIND_LABELS } from '../crm/logic.js';
 import { usePlannerData } from './data.js';
 import { buildToday, openInbox, relationshipsWithoutNextStep, TOP_LIMIT } from './logic.js';
-import { TaskList, CaptureBar, CaptureSpacer, useToday, muted } from './parts.jsx';
+import { PagedTaskList, ShowMore, PAGE, CaptureBar, CaptureSpacer, useToday, muted } from './parts.jsx';
 import { useFinishedThisSession } from './prefs.js';
 import { TaskSheet, newTaskInitial } from './forms.jsx';
 import PlanSheet from './PlanSheet.jsx';
@@ -33,8 +33,8 @@ function Section({ title, tone, count, children, testId }) {
 }
 
 function NoNextStep({ flagged, data, onAdd }) {
-  const [all, setAll] = useState(false);
-  const rows = all ? flagged : flagged.slice(0, SHOWN_FLAGS);
+  const [shown, setShown] = useState(SHOWN_FLAGS); // 5, then 50 more at a time (thousands at scale)
+  const rows = flagged.slice(0, shown);
   return (
     <Card>
       <div className="planner-section-head">
@@ -62,9 +62,7 @@ function NoNextStep({ flagged, data, onAdd }) {
           );
         })}
       </ul>
-      {flagged.length > SHOWN_FLAGS ? (
-        <TextButton onClick={() => setAll(!all)} style={{ paddingLeft: 0 }}>{all ? 'Show fewer' : `Show all ${flagged.length}`}</TextButton>
-      ) : null}
+      <ShowMore shown={shown} total={flagged.length} onMore={() => setShown((n) => n + PAGE)} testId="no-next-step-more" />
     </Card>
   );
 }
@@ -121,17 +119,17 @@ export default function TodayPage() {
             <div className="planner-col" data-testid="today-tasks">
               {view.overdue.length ? (
                 <Section title="Overdue" tone="danger" count={view.overdue.length} testId="overdue">
-                  <TaskList tasks={view.overdue} testId="overdue" {...rowProps} />
+                  <PagedTaskList tasks={view.overdue} testId="overdue" {...rowProps} />
                 </Section>
               ) : null}
               {view.dueToday.length ? (
                 <Section title="Due today" count={view.dueToday.length} testId="due-today">
-                  <TaskList tasks={view.dueToday} testId="due-today" {...rowProps} />
+                  <PagedTaskList tasks={view.dueToday} testId="due-today" {...rowProps} />
                 </Section>
               ) : null}
               {view.picked.length ? (
                 <Section title="Also in today’s top 3" count={view.picked.length} testId="picked">
-                  <TaskList tasks={view.picked} testId="picked" {...rowProps} />
+                  <PagedTaskList tasks={view.picked} testId="picked" {...rowProps} />
                 </Section>
               ) : null}
               {!view.total ? (

@@ -105,6 +105,30 @@ export function TaskList({ tasks, testId, ...rowProps }) {
   );
 }
 
+export const PAGE = 50;
+
+/** "Show N more" under a long list (adds `step` rows each time). */
+export function ShowMore({ shown, total, onMore, step = PAGE, testId }) {
+  if (total <= shown) return null;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap', marginTop: 'var(--space-2)' }}>
+      <Button onClick={onMore} data-testid={testId}>Show {Math.min(step, total - shown)} more</Button>
+      <span style={muted}>{shown} of {total}</span>
+    </div>
+  );
+}
+
+/** A task list shown 50 at a time (Today's sections can hold hundreds at scale). */
+export function PagedTaskList({ tasks, testId, ...rowProps }) {
+  const [shown, setShown] = useState(PAGE);
+  return (
+    <>
+      <TaskList tasks={tasks.slice(0, shown)} testId={testId} {...rowProps} />
+      <ShowMore shown={shown} total={tasks.length} onMore={() => setShown((n) => n + PAGE)} testId={testId ? `${testId}-more` : undefined} />
+    </>
+  );
+}
+
 /**
  * Capture anything into the inbox: one field and Add, saved on this device at once (offline too).
  * On phones it sits above the tab bar (planner.css), so it is in reach from Today and Inbox.

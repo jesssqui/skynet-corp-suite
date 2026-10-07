@@ -7,7 +7,7 @@ import { BUSINESS_IDS } from '@suite/shared/crm';
 import { automatedTaskOwner } from '@suite/shared/planner';
 import {
   addDays, weekBounds, dueState, dueLabel, dueTimeOf, buildToday, proposePlan, planLoad, topChange, moveChange,
-  filterTasks, defaultBusinessId, relationshipsWithoutNextStep, nextStepFields, guessRelationship, openInbox,
+  filterTasks, defaultBusinessId, relationshipsWithoutNextStep, nextStepFields, nextStepWarning, guessRelationship, openInbox,
   captureFields, saveCapture, clearedFields, titleFromText, formatMinutes, estimateOptions, ownerLabel, compareDue, isTop,
 } from '../src/modules/planner/logic.js';
 import { taskForm, taskValues, editChanges, isDirty, linkChange } from '../src/modules/planner/taskForm.js';
@@ -255,6 +255,11 @@ test('a call’s next step: title and date together; the relationship sets accou
   assert.equal(guessRelationship(rels, { accountId: 'a3' }), '', 'nothing matches the call: none');
   assert.equal(guessRelationship(rels, {}), '', 'several active, nothing picked: none');
   assert.equal(guessRelationship([rels[0]], {}), 'r1', 'the client’s only active relationship');
+  // The guess failed (several active, nothing picked): the sheet warns, and the step falls back.
+  assert.match(nextStepWarning({ title: 'Book a call', relationshipId: '', activeCount: 3 }), /won’t clear a “No next step” flag/);
+  assert.equal(nextStepWarning({ title: 'Book a call', relationshipId: 'r1', activeCount: 3 }), null);
+  assert.equal(nextStepWarning({ title: '', relationshipId: '', activeCount: 3 }), null, 'no next step typed: nothing to say');
+  assert.equal(nextStepWarning({ title: 'Book a call', relationshipId: '', activeCount: 0 }), null, 'no relationships: nothing to clear');
 });
 
 // ---- the task form ----------------------------------------------------------------------------------------

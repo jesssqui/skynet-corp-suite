@@ -7,7 +7,7 @@ import { Card, Icon } from '../../ui/index.js';
 import { useAuth } from '../../auth/session.jsx';
 import { TextButton } from '../crm/parts.jsx';
 import { compareDue, isOpenTask } from './logic.js';
-import { TaskList, useToday, muted } from './parts.jsx';
+import { TaskList, useToday, muted, PAGE } from './parts.jsx';
 import { useFinishedThisSession } from './prefs.js';
 import { TaskSheet, newTaskInitial } from './forms.jsx';
 
@@ -25,7 +25,7 @@ export function ClientTasksCard({ client, tasks, businesses, businessesById, acc
   const today = useToday();
   const { keep, version } = useFinishedThisSession();
   const [sheet, setSheet] = useState(null);
-  const [all, setAll] = useState(false);
+  const [shown, setShown] = useState(SHOWN); // 10, then 50 more at a time
   const open = useMemo(
     () => tasks.filter((t) => isOpenTask(t) || keep.has(t.id)).sort(compareDue),
     [tasks, keep, version],
@@ -42,7 +42,7 @@ export function ClientTasksCard({ client, tasks, businesses, businessesById, acc
       account_id: filter.account !== 'all' ? filter.account : undefined,
     }),
   });
-  const rows = all ? open : open.slice(0, SHOWN);
+  const rows = open.slice(0, shown);
   return (
     <Card>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
@@ -63,7 +63,7 @@ export function ClientTasksCard({ client, tasks, businesses, businessesById, acc
         />
       ) : <p style={{ ...muted, margin: 0 }}>No open tasks for this client.</p>}
       <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap', alignItems: 'center' }}>
-        {open.length > SHOWN ? <TextButton style={{ paddingLeft: 0 }} onClick={() => setAll(!all)}>{all ? 'Show fewer' : `Show all ${open.length}`}</TextButton> : null}
+        {open.length > shown ? <TextButton style={{ paddingLeft: 0 }} onClick={() => setShown((n) => n + PAGE)}>Show {Math.min(PAGE, open.length - shown)} more ({shown} of {open.length})</TextButton> : null}
         {doneCount ? <Link to={`/tasks?client=${client.id}&due=done`} style={{ ...muted, minHeight: 'var(--tap)', display: 'inline-flex', alignItems: 'center' }}>{doneCount} done</Link> : null}
       </div>
       {sheet ? <TaskSheet record={sheet.record} initial={sheet.initial} onClose={close} onDone={close} onDeleted={close} /> : null}

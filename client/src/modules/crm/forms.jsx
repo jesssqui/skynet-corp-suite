@@ -6,11 +6,11 @@ import {
   CLIENT_STATUSES, RELATIONSHIP_KINDS, RELATIONSHIP_STATUSES, SERVICE_STATUSES, SERVICE_BILLING, SERVICE_PERIODS,
   CONTACT_CHANNELS, CONSENT_KINDS, consentExpiresOn,
 } from '@suite/shared/crm';
-import { TextField, SelectField, TextAreaField, CheckboxField, Segmented } from '../../ui/index.js';
+import { TextField, SelectField, TextAreaField, CheckboxField, Segmented, Notice } from '../../ui/index.js';
 import { localDate, toDateTimeInput } from '../../ui/format.js';
 import { store } from '../../sync/index.js';
 import { useAuth } from '../../auth/session.jsx';
-import { nextStepFields, guessRelationship, relationshipLabel, defaultBusinessId } from '../planner/logic.js';
+import { nextStepFields, nextStepWarning, guessRelationship, relationshipLabel, defaultBusinessId } from '../planner/logic.js';
 import { getLastBusiness, setLastBusiness } from '../planner/prefs.js';
 import { FormSheet, useAction } from './parts.jsx';
 import {
@@ -432,6 +432,9 @@ export function ActivityForm({ clientId, type: initialType = 'note', accountId =
             options={[...none('No relationship'), ...active.map((r) => ({ value: r.id, label: relationshipLabel(r, { ...lookups, kindLabels: KIND_LABELS }) }))]}
             hint="A dated next step clears the relationship’s “No next step”"
           />
+        ) : null}
+        {nextStepWarning({ title: v.next_title, relationshipId: nextRel, activeCount: active.length }) ? (
+          <Notice tone="warn"><span data-testid="next-step-warning">{nextStepWarning({ title: v.next_title, relationshipId: nextRel, activeCount: active.length })}</span></Notice>
         ) : null}
       </fieldset>
     </FormSheet>

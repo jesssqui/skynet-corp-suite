@@ -404,6 +404,17 @@ export function nextStepFields(next, { clientId, me, relationshipsById = new Map
 }
 
 /**
+ * When a call's next step names no relationship but the client has active ones (the guess found
+ * none: several on the call's account, or no account/business picked), say so: it won't clear a
+ * "No next step" flag, and it is filed under the call's business, else the last used / Personal.
+ */
+export function nextStepWarning({ title, relationshipId, activeCount }) {
+  return String(title ?? '').trim() && !relationshipId && activeCount > 0
+    ? 'No relationship picked: this won’t clear a “No next step” flag. Pick the one it’s for.'
+    : null;
+}
+
+/**
  * The relationship a call's next step is for, when the call's account and business point at
  * exactly one active relationship — or, when neither is picked, the client's only active one: '' otherwise.
  */
