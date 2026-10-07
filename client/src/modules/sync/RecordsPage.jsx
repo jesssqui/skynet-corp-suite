@@ -6,7 +6,8 @@ import { ClashPanel, FieldInput, FieldsForm, SyncBadges, fieldLabel, formatValue
 
 // A plain view of any synced record type, straight from the offline copy: list, add, change,
 // tick, delete, settle clashes. The CRM's own pages (C3a/C4a) replace it for real use; this
-// one stays as the place to look at what a device holds.
+// one stays as the place to look at what a device holds. Records under a deleted parent (a
+// contact of a deleted client) are hidden, as everywhere; "Show them" lists them too.
 
 function titleField(def) {
   return Object.values(def.fields).find((f) => f.type === 'text' && f.required) ?? Object.values(def.fields).find((f) => f.type === 'text');
@@ -167,7 +168,17 @@ export default function RecordsPage() {
   const { entity } = useParams();
   const engine = useSyncEngine();
   const def = engine?.definition(entity) ?? null;
-  const { records, loading } = useRecords(entity);
+  const [showHidden, setShowHidden] = useState(false);
+  useEffect(() => setShowHidden(false), [entity]);
+  const { records, loading } = useRecords(entity, { orphans: showHidden }, [showHidden]);
+  // How many this device holds that are hidden because something they belong to is gone.
+  const { data: hidden } = useSyncData(
+    async (e) => (e.ancestorsOf(entity).length
+      ? (await e.list(entity, { orphans: true })).length - (await e.liveCounts([entity]))[entity]
+      : 0),
+    [entity],
+    { entities: () => [entity, ...(engine?.ancestorsOf(entity) ?? [])] },
+  );
   const labels = useLabels(Boolean(def && Object.values(def.fields).some((f) => f.type === 'id')));
   const [adding, setAdding] = useState(false);
   const [shown, setShown] = useState(PAGE);
@@ -191,6 +202,20 @@ export default function RecordsPage() {
       />
       <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
         {adding && def ? <AddForm def={def} engine={engine} onDone={() => setAdding(false)} /> : null}
+        {def && hidden > 0 ? (
+          <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }} data-testid="hidden-records">
+            {showHidden
+              ? `Showing ${hidden} that belong to a deleted record (kept on this device, hidden everywhere else). `
+              : `${hidden} hidden: they belong to a deleted record. `}
+            <button
+              type="button"
+              onClick={() => setShowHidden((v) => !v)}
+              style={{ border: 0, background: 'transparent', color: 'var(--accent)', fontWeight: 600, padding: 0, cursor: 'pointer', fontSize: 'inherit' }}
+            >
+              {showHidden ? 'Hide them' : 'Show them'}
+            </button>
+          </div>
+        ) : null}
         <Card>
           {!def || loading ? (
             <span style={{ color: 'var(--text-muted)' }}>Loading…</span>

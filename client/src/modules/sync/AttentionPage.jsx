@@ -11,7 +11,11 @@ function explain(entry) {
     case 'constraint':
       return 'It points to something the server doesn’t have — it may have been deleted, or not been sent yet.';
     case 'deleted':
-      return 'This was deleted before the change reached the server.';
+      return 'This, or what it belongs to, was deleted before the change reached the server.';
+    case 'parent_discarded':
+      return 'What it belongs to was discarded on this device, so it can never be sent. Point it at another record (Fix…) or discard it.';
+    case 'already_linked':
+      return 'That outside record is already linked to another one. Undo that link first, or discard this.';
     case 'invalid_value':
       return 'The server didn’t accept one of the values.';
     case 'unknown_field':
@@ -28,6 +32,47 @@ function explain(entry) {
 
 function when(iso) {
   return iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
+}
+
+/** "client “Lefty’s”" for a record this device holds, else "client 0193…27a7". */
+function useRecordName(engine, ref) {
+  const { data } = useSyncData(async (e) => {
+    if (!ref) return null;
+    const rec = await e.get(ref.entity, ref.id, { orphans: true });
+    const def = e.definition(ref.entity);
+    const title = rec && Object.values(def?.fields ?? {}).find((f) => f.type === 'text' && rec[f.name]);
+    return title ? `${ref.entity} “${rec[title.name]}”` : null;
+  }, [ref?.entity, ref?.id], { entities: ref ? [ref.entity] : [] });
+  if (!ref) return null;
+  return data ?? `${ref.entity} ${ref.id.slice(0, 4)}…${ref.id.slice(-4)}`;
+}
+
+/** A change waiting for a record the server doesn't have yet: what it waits for, since when. */
+function WaitingItem({ entry, engine }) {
+  const { step, parked } = entry;
+  const missing = parked.missing ?? null;
+  const name = useRecordName(engine, missing);
+  const what = !missing ? 'Waiting for its record'
+    : missing.field ? `Waiting for its ${name} (${fieldLabel(missing.field).toLowerCase()})`
+      : `Waiting for this ${name} to reach the server`;
+  return (
+    <li style={{ borderTop: '1px solid var(--border)', padding: 'var(--space-3) 0', display: 'grid', gap: 'var(--space-2)' }} data-waiting={entry.n}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+        <strong>{OP_LABEL[step.op]} {step.entity}</strong>
+        <span style={{ color: 'var(--text-muted)', fontSize: 'var(--text-xs)' }}>
+          since {when(parked.at)}{parked.triedAt && parked.triedAt !== parked.at ? ` · last tried ${when(parked.triedAt)}` : ''}
+        </span>
+      </div>
+      <span style={{ fontSize: 'var(--text-sm)' }} data-testid="waiting-for">{what}</span>
+      <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>{parked.reason}</span>
+      <StepFields step={step} definition={engine.definition(step.entity)} />
+      <div>
+        <Button variant="ghost" onClick={() => engine.discardWaiting(entry.n)}>
+          {step.op === 'create' ? 'Discard (and what waits for it)' : 'Discard'}
+        </Button>
+      </div>
+    </li>
+  );
 }
 
 function StepFields({ step, definition, fields: shown }) {
@@ -126,20 +171,12 @@ export default function AttentionPage() {
         {waiting.length ? (
           <Card title="Waiting for their record">
             <p style={{ margin: '0 0 var(--space-3)', fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
-              These changes are for records the server doesn’t have yet (for example after it was restored from a backup and
-              the other device hasn’t reconnected). They are sent again after every sync.
+              These changes need a record the server doesn’t have yet — made on the other device and not sent yet, or
+              lost when the server was restored from a backup. They are sent again after every sync and go in once it
+              arrives. If what they wait for was refused above and you discard it, they move up there too.
             </p>
             <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-              {waiting.map((e) => (
-                <li key={e.n} style={{ borderTop: '1px solid var(--border)', padding: 'var(--space-3) 0', display: 'grid', gap: 'var(--space-2)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-                    <strong>{OP_LABEL[e.step.op]} {e.step.entity}</strong>
-                    <span style={{ color: 'var(--text-muted)', fontSize: 'var(--text-xs)' }}>since {when(e.parked.at)}</span>
-                  </div>
-                  <StepFields step={e.step} definition={engine.definition(e.step.entity)} />
-                  <div><Button variant="ghost" onClick={() => engine.discardWaiting(e.n)}>Discard</Button></div>
-                </li>
-              ))}
+              {waiting.map((e) => <WaitingItem key={e.n} entry={e} engine={engine} />)}
             </ul>
           </Card>
         ) : null}

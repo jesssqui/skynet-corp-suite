@@ -2,16 +2,18 @@
 // (keep / use the other), and generic field inputs driven by the entity definitions.
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { formatPhone } from '@suite/shared/normalize';
 import { Button, Badge, Icon, Notice } from '../ui/index.js';
 import { useAuth } from '../auth/session.jsx';
 import { useSyncEngine, useSyncStatus, useSyncData } from './hooks.js';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
-/** A field value for reading: '—' for empty, Yes/No for booleans. */
+/** A field value for reading: '—' for empty, Yes/No for booleans, phones as "(519) 555-0100". */
 export function formatValue(field, value) {
   if (value === null || value === undefined || value === '') return '—';
   if (field?.type === 'boolean' || typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (field?.format === 'phone') return formatPhone(value);
   return String(value);
 }
 
@@ -177,7 +179,12 @@ function Clashes({ clashes, definition }) {
             {c.kind === 'delete' ? (
               <>
                 <strong>Deleted on one device while it was changed on another</strong>
-                <span style={{ color: 'var(--text-muted)' }}>Changed by {who(c.winner, session)}; deleted by {who(c.loser, session)}.</span>
+                <span style={{ color: 'var(--text-muted)' }}>
+                  {c.winner.value?._child
+                    ? `A ${c.winner.value._child.entity} under it was added or changed by ${who(c.winner, session)}`
+                    : `Changed by ${who(c.winner, session)}`}
+                  ; deleted by {who(c.loser, session)}.
+                </span>
                 <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
                   <Button disabled={disabled} onClick={() => settle(c, 'keep_winner')}>Keep it</Button>
                   <Button variant="danger" disabled={disabled} onClick={() => settle(c, 'keep_loser')}>Delete it</Button>
@@ -221,17 +228,21 @@ function recordLabel(def, rec) {
 }
 
 /**
- * A picker for an `id` field: every record on this device (which entity the field points to isn't
- * described). Only rendered in forms, so a long list's rows never load or subscribe to this.
+ * A picker for an `id` field: the records of the entity it points to (`ref`), or every record on
+ * this device when it doesn't say. Only rendered in forms, so a long list's rows never load or
+ * subscribe to this.
  */
 function IdSelect({ field, id, value, onChange }) {
+  const current = useSyncEngine();
   const { data } = useSyncData(async (engine) => {
     const out = [];
-    for (const def of engine.entities()) {
-      for (const rec of await engine.list(def.entity)) out.push({ value: rec.id, label: `${def.entity} · ${recordLabel(def, rec)}` });
+    for (const def of engine.entities().filter((d) => !field.ref || d.entity === field.ref)) {
+      for (const rec of await engine.list(def.entity)) {
+        out.push({ value: rec.id, label: field.ref ? recordLabel(def, rec) : `${def.entity} · ${recordLabel(def, rec)}` });
+      }
     }
     return out;
-  });
+  }, [field.ref], { entities: field.ref ? () => [field.ref, ...(current?.ancestorsOf(field.ref) ?? [])] : null });
   const opts = data ?? [];
   return (
     <select id={id} value={value ?? ''} onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)} style={inputStyle}>
@@ -242,7 +253,14 @@ function IdSelect({ field, id, value, onChange }) {
   );
 }
 
-/** One input for a field definition ({ name, type, required, max, values }). value/onChange use the field's own type. */
+// Text fields with a `format`: the matching keyboard (the engine stores the normalised value on save).
+const FORMAT_INPUT = {
+  email: { type: 'email', inputMode: 'email', autoComplete: 'email' },
+  phone: { type: 'tel', inputMode: 'tel', autoComplete: 'tel' },
+  postal: { autoComplete: 'postal-code', autoCapitalize: 'characters' },
+};
+
+/** One input for a field definition ({ name, type, required, max, values, format, ref }). value/onChange use the field's own type. */
 export function FieldInput({ field, value, onChange, idPrefix = 'f' }) {
   const id = `${idPrefix}-${field.name}`;
   const label = `${fieldLabel(field.name)}${field.required ? '' : ' (optional)'}`;
@@ -293,8 +311,9 @@ export function FieldInput({ field, value, onChange, idPrefix = 'f' }) {
     input = (
       <input
         id={id}
+        {...(FORMAT_INPUT[field.format] ?? {})}
         value={value ?? ''}
-        maxLength={field.max}
+        maxLength={field.format === 'phone' ? 40 : field.max}
         onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)}
         style={inputStyle}
       />

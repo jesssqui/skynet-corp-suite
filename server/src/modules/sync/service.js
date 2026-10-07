@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { newId, isId } from '@suite/shared/ids';
 import { nowIso } from '@suite/shared/time';
 import { createHlc, parseHlc, encodeHlc } from '@suite/shared/hlc';
+import { normalizeFieldValue } from '@suite/shared/fields';
 import { HttpError } from '../../lib/httpError.js';
 import { createRegistry, OPS } from './registry.js';
 import { ACTORS } from './identity.js';
@@ -25,11 +26,12 @@ const STEP_KEYS = new Set(['key', 'entity', 'recordId', 'op', 'fields', 'hlc', '
 const CURSOR_RE = /^([0-9a-f-]{36})\.(\d{1,15})$/;
 const RESOLUTIONS = ['keep_winner', 'keep_loser'];
 
-/** A step that can't be applied; becomes { status: 'rejected', code, reason }. */
+/** A step that can't be applied; becomes { status: 'rejected', code, reason, ...details }. */
 class StepError extends Error {
-  constructor(code, message) {
+  constructor(code, message, details = null) {
     super(message);
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -238,9 +240,107 @@ export function createSyncService({ db, log }) {
     return id;
   }
 
+  // ---- belonging (`ref` and `parent` fields) ------------------------------
+  // A record belongs to the records its `parent` refs name (an account to its client, a service
+  // to its relationship) and through them to theirs: its ancestors. Its subtree is every live
+  // record that belongs to it, directly or not. Deletes never cascade (module reads hide what
+  // belongs to a deleted record), so the delete-vs-edit rule is kept along the chain instead:
+  //  - a change under a record that another device deleted concurrently keeps that record
+  //    (un-deleted, flagged, a `delete` clash) — a note added to a client the other person deleted;
+  //  - a delete of a record whose subtree was changed elsewhere unseen is kept and flagged.
+
+  /** Un-delete a concurrently deleted record because `ctx`'s step needs it; returns the clash id. */
+  function keepDeleted(entity, id, rec, { entry, step, who, hlc }) {
+    const target = registry.get(entity);
+    registry.asWriter(() => registry.updateRow(target, id, { deleted_at: null, ...registry.standardValues(target, { flagged: 1 }) }));
+    markUndeletedFlagged.run(entity, id);
+    touchRecord.run(nextSeq(), entity, id); // its own seq (changed_seq is unique), so devices pull it back
+    return clash({
+      entity, record_id: id, kind: 'delete',
+      // What kept it: a record that belongs to it ("a note was added meanwhile"). `_child` can't be a field name.
+      winner_value: json({ _child: { entity: entry.entity, id: step.recordId } }),
+      winner_actor: who.actor, winner_device: who.deviceId, winner_hlc: hlc, winner_step: step.key,
+      loser_actor: rec.deleted_by, loser_device: rec.deleted_device, loser_hlc: rec.deleted_hlc, loser_step: rec.deleted_step,
+    });
+  }
+
+  /**
+   * Before a create or update applies. Every record a `ref` field of the step names must exist:
+   * missing -> not_found (the device parks the step and retries it after its next pull — the
+   * record may still be on its way: made on the other device, or re-sent after a restore).
+   * Then up the chain of parents (the step's parent refs, else the record's current ones): a
+   * deleted ancestor is refused `deleted` when this device knew (deleted by itself or before its
+   * cursor); deleted concurrently, it is kept (keepDeleted). Returns { clashes, revived }.
+   */
+  function checkBelonging(ctx, currentRow = null) {
+    const { entry, fields, who, seen } = ctx;
+    for (const [name, value] of Object.entries(fields)) {
+      const f = entry.fields.get(name);
+      if (f.ref && value !== null && !getRecord.get(f.ref, value)) {
+        throw new StepError('not_found', `${name}: there is no ${f.ref} ${value} (yet)`, { missing: { field: name, entity: f.ref, id: value } });
+      }
+    }
+    const out = { clashes: [], revived: [] };
+    const queue = [];
+    for (const f of entry.parents) {
+      const id = Object.hasOwn(fields, f.name) ? fields[f.name] : (currentRow?.[f.name] ?? null);
+      if (id !== null) queue.push({ entity: f.ref, id, via: f.name, depth: 0 });
+    }
+    const visited = new Set();
+    while (queue.length) {
+      const { entity, id, via, depth } = queue.shift();
+      if (visited.has(`${entity}/${id}`)) continue;
+      visited.add(`${entity}/${id}`);
+      const rec = getRecord.get(entity, id);
+      if (!rec) continue; // (an ancestor of a record that exists is always there)
+      if (rec.deleted) {
+        const concurrent = rec.deleted_device !== who.deviceId && rec.deleted_seq > seen;
+        if (!concurrent) throw new StepError('deleted', `${via}: ${depth ? 'its' : 'that'} ${entity} was deleted`);
+        out.clashes.push(keepDeleted(entity, id, rec, ctx));
+        out.revived.push({ entity, id });
+      }
+      const target = registry.get(entity);
+      for (const p of registry.parentsOf(target, id)) queue.push({ entity: p.field.ref, id: p.id, via, depth: depth + 1 });
+    }
+    return out;
+  }
+
+  /**
+   * The newest create/update made by another device after `seen` on the record or on anything in
+   * its live subtree: { step, own } or null. (Deleting it would hide that change.)
+   */
+  function unseenChange(entry, recordId, deviceId, seen) {
+    const ownStep = unseenEdit.get(entry.entity, recordId, deviceId, seen);
+    let newest = ownStep ? { step: ownStep, own: true } : null;
+    const visited = new Set([`${entry.entity}/${recordId}`]);
+    const queue = [[entry, recordId]];
+    while (queue.length) {
+      const [e, id] = queue.shift();
+      for (const { entry: child, field } of registry.children(e.entity)) {
+        for (const childId of registry.liveChildren(child, field, id)) {
+          if (visited.has(`${child.entity}/${childId}`)) continue;
+          visited.add(`${child.entity}/${childId}`);
+          const s = unseenEdit.get(child.entity, childId, deviceId, seen);
+          if (s && (!newest || s.hlc > newest.step.hlc)) newest = { step: s, own: false };
+          queue.push([child, childId]);
+        }
+      }
+    }
+    return newest;
+  }
+
+  /** The module's own rule for this record type (registerEntity `check`), if it has one. */
+  function moduleCheck({ entry, step, fields }, current) {
+    if (!entry.check) return;
+    const problem = entry.check({ op: step.op, recordId: step.recordId, fields, current });
+    if (problem) throw new StepError(problem.code ?? 'refused', problem.reason ?? `${entry.entity}: refused`);
+  }
+
   function applyCreate(ctx) {
     const { entry, step, fields, who, hlc, seq } = ctx;
     if (getRecord.get(entry.entity, step.recordId)) throw new StepError('already_exists', 'a record with this id already exists');
+    const refs = checkBelonging(ctx);
+    moduleCheck(ctx, null);
     const at = hlcIso(hlc);
     const values = {};
     for (const f of entry.fields.values()) values[f.name] = registry.encode(f, fields[f.name] ?? null);
@@ -255,14 +355,16 @@ export function createSyncService({ db, log }) {
         device_id: who.deviceId, actor: who.actor, step_key: step.key,
       });
     }
-    return { status: 'applied', clashes: [] };
+    return { status: 'applied', clashes: refs.clashes, revived: refs.revived };
   }
 
   function applyUpdate(ctx) {
     const { entry, step, fields, who, hlc, seq, seen } = ctx;
     const rec = getRecord.get(entry.entity, step.recordId);
-    if (!rec) throw new StepError('not_found', 'no such record');
-    const clashes = [];
+    if (!rec) throw new StepError('not_found', 'no such record', { missing: { field: null, entity: entry.entity, id: step.recordId } });
+    const refs = checkBelonging(ctx, entry.selectParents?.get(step.recordId) ?? null);
+    moduleCheck(ctx, registry.decodeRow(entry, entry.selectRow.get(step.recordId)));
+    const clashes = [...refs.clashes];
     const me = { actor: who.actor, device: who.deviceId, hlc, step: step.key };
 
     if (rec.deleted) {
@@ -331,7 +433,9 @@ export function createSyncService({ db, log }) {
       registry.asWriter(() => registry.updateRow(entry, step.recordId, write));
     }
     touchRecord.run(seq, entry.entity, step.recordId);
-    return { status: clashes.length ? 'clash' : 'applied', applied, lost, stale, clashes };
+    // Keeping a record this one belongs to doesn't make this step a clash: it applied.
+    const own = clashes.length - refs.clashes.length;
+    return { status: own ? 'clash' : 'applied', applied, lost, stale, clashes, revived: refs.revived };
   }
 
   function applyDelete(ctx) {
@@ -340,7 +444,8 @@ export function createSyncService({ db, log }) {
     if (!rec) throw new StepError('not_found', 'no such record');
     if (rec.deleted) return { status: 'applied', alreadyDeleted: true, clashes: [] };
 
-    const edit = unseenEdit.get(entry.entity, step.recordId, who.deviceId, seen);
+    const unseen = unseenChange(entry, step.recordId, who.deviceId, seen);
+    const edit = unseen?.step;
     if (edit) {
       // Edited elsewhere after this device last looked: keep the record, flag it, record the clash.
       registry.asWriter(() => registry.updateRow(entry, step.recordId, registry.standardValues(entry, { flagged: 1 })));
@@ -348,6 +453,8 @@ export function createSyncService({ db, log }) {
       touchRecord.run(seq, entry.entity, step.recordId);
       const id = clash({
         entity: entry.entity, record_id: step.recordId, kind: 'delete',
+        // When what kept it was a record that belongs to it, say which (e.g. a note added to the client).
+        winner_value: unseen.own ? null : json({ _child: { entity: edit.entity, id: edit.record_id } }),
         winner_actor: edit.actor, winner_device: edit.device_id, winner_hlc: edit.hlc, winner_step: edit.key,
         loser_actor: who.actor, loser_device: who.deviceId, loser_hlc: hlc, loser_step: step.key,
       });
@@ -414,10 +521,11 @@ export function createSyncService({ db, log }) {
         if (result.clashes.length) out.clashes = result.clashes;
         if (result.kept) out.kept = true;
         if (result.alreadyDeleted) out.alreadyDeleted = true;
+        if (result.revived?.length) out.revived = result.revived;
         return out;
       })();
     } catch (err) {
-      if (err instanceof StepError) return { key, status: 'rejected', code: err.code, reason: err.message };
+      if (err instanceof StepError) return { key, status: 'rejected', code: err.code, reason: err.message, ...(err.details ?? {}) };
       if (typeof err.code === 'string' && err.code.startsWith('SQLITE_CONSTRAINT')) {
         return { key, status: 'rejected', code: 'constraint', reason: err.message };
       }
@@ -527,13 +635,24 @@ export function createSyncService({ db, log }) {
   /**
    * Write a synced record from server code (an import, an automation): same rules,
    * same log, made by the server's own device id. Returns the step result plus recordId.
+   * stampMs: stamp the change at that (past) time instead of now — for seeds, so any real edit
+   * made on a device, even one re-sent after a restore, is later and wins.
    */
-  function applyLocal({ actor = SYSTEM_ACTOR, entity, op, recordId, fields }) {
+  function applyLocal({ actor = SYSTEM_ACTOR, entity, op, recordId, fields, stampMs }) {
     if (actor !== SYSTEM_ACTOR && !ACTORS.includes(actor)) throw new Error(`applyLocal: unknown actor ${actor}`);
+    if (stampMs !== undefined && !(Number.isSafeInteger(stampMs) && stampMs >= 0 && stampMs <= Date.now())) {
+      throw new Error('applyLocal: stampMs must be a past time in ms');
+    }
     const id = recordId ?? (op === 'create' ? newId() : undefined);
+    // Like a device, server code normalises formatted values (emails, phones…) before the step.
+    const entry = registry.get(entity);
+    const clean = entry && isPlainObject(fields)
+      ? Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, entry.fields.has(k) ? normalizeFieldValue(entry.fields.get(k), v) : v]))
+      : fields;
     const step = {
-      key: newId(), entity, recordId: id, op, hlc: clock.now(), seen: makeCursor(currentSeq()),
-      ...(op === 'delete' ? {} : { fields }),
+      key: newId(), entity, recordId: id, op, seen: makeCursor(currentSeq()),
+      hlc: stampMs === undefined ? clock.now() : encodeHlc({ ms: stampMs, counter: 0, node: serverDeviceId }),
+      ...(op === 'delete' ? {} : { fields: clean }),
     };
     return { ...applyStep(step, { actor, deviceId: serverDeviceId, server: true }), recordId: id };
   }
@@ -631,6 +750,7 @@ export function createSyncService({ db, log }) {
 
   return {
     registerEntity: registry.registerEntity,
+    checkRefs: registry.checkRefs,
     push,
     pull,
     applyLocal,

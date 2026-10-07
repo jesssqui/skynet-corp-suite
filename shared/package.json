@@ -9,7 +9,9 @@
     "./time": "./time.js",
     "./hlc": "./hlc.js",
     "./actors": "./actors.js",
-    "./fields": "./fields.js"
+    "./fields": "./fields.js",
+    "./normalize": "./normalize.js",
+    "./crm": "./crm.js"
   },
   "scripts": {
     "test": "node --test \"test/*.test.js\""
