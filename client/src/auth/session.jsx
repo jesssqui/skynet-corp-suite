@@ -6,8 +6,9 @@ import { clearLocalData, getDeviceId, setDeviceId, readSessionCache, saveSession
 // 'signed-in'; until then the sign-in screen does (AuthGate below).
 //   status: 'loading' | 'signed-out' | 'signed-in' | 'unreachable'
 //   session: { user, device, session } from GET /api/auth/session
-//   offline: true while signed in from the remembered session because the server can't be reached
-//            (the app runs from its offline copy; the session is checked again once it can be)
+//   offline: true while signed in from the remembered session (saved at the last good check) and
+//            the server hasn't confirmed it yet: the app opens at once from its offline copy, and
+//            the session is checked as soon as the server can be reached
 //   notice: why we're signed out ({ tone, text }) or null
 const AuthContext = createContext(null);
 
@@ -23,7 +24,14 @@ const NOTICES = {
 };
 
 export function AuthProvider({ children }) {
-  const [state, setState] = useState({ status: 'loading', session: null, offline: false, notice: null, error: null });
+  // Someone was signed in here before: open the app straight away from the offline copy (no
+  // waiting on a slow or missing connection); the check below confirms or ends the session.
+  const [state, setState] = useState(() => {
+    const cached = readSessionCache();
+    return cached
+      ? { status: 'signed-in', session: cached, offline: true, notice: null, error: null }
+      : { status: 'loading', session: null, offline: false, notice: null, error: null };
+  });
   const status = useRef(state.status);
   status.current = state.status;
 
