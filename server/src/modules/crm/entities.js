@@ -22,14 +22,18 @@ const TAGS = { type: 'text', max: 1000, format: 'tags' };
 
 export const CRM_ENTITIES = [
   {
+    // Never deleted (relationships, consent and tasks belong to it; code names the seeded ones by
+    // id): archive one to hide it from pickers and lists instead.
     entity: 'business',
     table: 'crm_businesses',
+    ops: ['create', 'update'],
     fields: {
       name: { type: 'text', max: 100, required: true },
       color: { type: 'text', max: 20 },
       logo: { type: 'text', max: 2000 },
       default_owner: { type: 'enum', values: OWNERS, required: true },
       position: { type: 'integer' },
+      archived: { type: 'boolean' },
     },
   },
   {
@@ -83,6 +87,9 @@ export const CRM_ENTITIES = [
       withdrawn: { type: 'boolean', required: true },
       date: { type: 'date', required: true },
       kind: { type: 'enum', values: CONSENT_KINDS },
+      // The day an implied consent lapses: consentExpiresOn({ kind, date }) from @suite/shared/crm,
+      // set by the writer (editable); readers fall back to it when empty.
+      expires_on: { type: 'date' },
       source: { type: 'text', max: 500 },
     },
   },

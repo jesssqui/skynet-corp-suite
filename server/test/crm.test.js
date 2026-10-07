@@ -4,9 +4,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { newId } from '@suite/shared/ids';
-import { nowIso } from '@suite/shared/time';
+import { nowIso, localDate } from '@suite/shared/time';
 import { createHlc } from '@suite/shared/hlc';
-import { OUR_BUSINESSES, BUSINESS_IDS, CRM_ENTITY_NAMES } from '@suite/shared/crm';
+import { OUR_BUSINESSES, BUSINESS_IDS, CRM_ENTITY_NAMES, addMonths, consentExpiresOn } from '@suite/shared/crm';
 import { modules } from '../src/modules/index.js';
 import { runBackup } from '../src/backup/backup.js';
 import { restoreBackup } from '../src/backup/restore.js';
@@ -139,7 +139,11 @@ test('the CRM registers nine record types with sync: fields, refs, formats, appe
     assert.deepEqual(by[e].ops, ['create'], e);
   }
   assert.deepEqual(by.link.ops, ['create', 'delete']);
-  for (const e of ['business', 'client', 'account', 'contact', 'relationship', 'service']) {
+  assert.deepEqual(by.business.ops, ['create', 'update'], 'businesses are archived, never deleted');
+  assert.deepEqual(by.business.fields.archived, { type: 'boolean' });
+  assert.deepEqual(by.consent.fields.kind.values, ['express', 'implied_purchase', 'implied_inquiry']);
+  assert.deepEqual(by.consent.fields.expires_on, { type: 'date' });
+  for (const e of ['client', 'account', 'contact', 'relationship', 'service']) {
     assert.deepEqual(by[e].ops, ['create', 'update', 'delete'], e);
   }
 });
@@ -166,6 +170,7 @@ test('our businesses are created once at first start, through sync steps, with t
   const rows = db.prepare('SELECT * FROM crm_businesses ORDER BY position').all();
   assert.deepEqual(rows.map((r) => [r.id, r.name, r.default_owner]), OUR_BUSINESSES.map((b) => [b.id, b.name, b.default_owner]));
   assert.ok(rows.every((r) => r.created_by === 'system' && r.deleted_at === null));
+  assert.ok(rows.every((r) => r.created_at.startsWith('2026-01-01T00:00:00.00')), 'stamped at the old fixed seed time');
   assert.equal(businessSteps(db), 6, 'each one is a step in the log');
 
   const { body } = await getJson(base, '/api/crm/businesses');
@@ -177,16 +182,20 @@ test('our businesses are created once at first start, through sync steps, with t
   const pulled = await phone.pull();
   assert.equal([...pulled.keys()].filter((k) => k.startsWith('business/')).length, 6);
 
-  // Renamed in the app, one deleted: a restart changes nothing and re-creates nothing.
+  // Renamed in the app, one archived: a restart changes nothing and re-creates nothing.
   assert.equal(ctx.services.sync.applyLocal({ actor: 'owner', entity: 'business', op: 'update', recordId: W, fields: { name: 'Wholesale (PouchPlug)', color: '#0a7cff' } }).status, 'applied');
-  assert.equal(ctx.services.sync.applyLocal({ actor: 'owner', entity: 'business', op: 'delete', recordId: BUSINESS_IDS.retail }).status, 'applied');
+  assert.equal(ctx.services.sync.applyLocal({ actor: 'owner', entity: 'business', op: 'update', recordId: BUSINESS_IDS.retail, fields: { archived: true } }).status, 'applied');
+  // Never deleted: relationships, consent and code (BUSINESS_IDS) depend on them.
+  const del = ctx.services.sync.applyLocal({ actor: 'owner', entity: 'business', op: 'delete', recordId: BUSINESS_IDS.retail });
+  assert.deepEqual([del.status, del.code], ['rejected', 'op_not_allowed']);
   const before = businessSteps(db);
   await env.close();
   const again = await startApp(t, env.config);
   assert.equal(businessSteps(again.db), before, 'no new steps on restart');
   assert.equal(n(again.db, 'SELECT count(*) AS n FROM crm_businesses'), 6);
   assert.equal(row(again.db, 'crm_businesses', W).name, 'Wholesale (PouchPlug)');
-  assert.ok(row(again.db, 'crm_businesses', BUSINESS_IDS.retail).deleted_at, 'a deleted one stays deleted');
+  assert.equal(row(again.db, 'crm_businesses', BUSINESS_IDS.retail).archived, 1, 'an archived one stays archived');
+  assert.equal((await getJson(again.base, '/api/crm/businesses')).body.businesses.find((b) => b.id === BUSINESS_IDS.retail).archived, true);
   assert.deepEqual(again.ctx.services.crm.seedBusinesses(), []);
 });
 
@@ -210,7 +219,8 @@ test('seeds survive a restore without duplicates; a backup from before the CRM g
   kept.push(phone.step('create', 'client', clientId, { name: 'Lefty’s', status: 'active' }));
   kept.push(phone.step('create', 'account', accountId, { client_id: clientId, name: 'Vape shop' }));
   kept.push(phone.step('create', 'relationship', newId(), { account_id: accountId, business_id: W, kind: 'wholesale', status: 'active' }));
-  assert.deepEqual((await phone.push(kept)).map((r) => r.status), ['applied', 'applied', 'applied']);
+  kept.push(phone.step('update', 'business', W, { name: 'PouchPlug wholesale', color: '#0a7cff' }));
+  assert.deepEqual((await phone.push(kept)).map((r) => r.status), ['applied', 'applied', 'applied', 'applied']);
 
   // A backup with the CRM, restored: still six, nothing new.
   const backup = await runBackup({ db: first.db, dir: config.backup.dir, offsiteDir: null, keepDays: 30 });
@@ -228,8 +238,13 @@ test('seeds survive a restore without duplicates; a backup from before the CRM g
   const third = await startApp(t, config);
   assert.deepEqual(third.db.prepare('SELECT id FROM crm_businesses ORDER BY position').all().map((r) => r.id), OUR_BUSINESSES.map((b) => b.id));
   phone.moveTo(third.base);
-  assert.deepEqual((await phone.push(kept)).map((r) => r.status), ['applied', 'applied', 'applied']);
+  const resent = await phone.push(kept);
+  assert.deepEqual(resent.slice(0, 3).map((r) => r.status), ['applied', 'applied', 'applied']);
   assert.equal(row(third.db, 'crm_relationships', kept[2].recordId).business_id, W);
+  // The rename is newer than the re-made seed (stamped at the old seed time), so it wins.
+  assert.notEqual(resent[3].status, 'rejected', JSON.stringify(resent[3]));
+  assert.deepEqual(resent[3].applied, ['name', 'color']);
+  assert.deepEqual([row(third.db, 'crm_businesses', W).name, row(third.db, 'crm_businesses', W).color], ['PouchPlug wholesale', '#0a7cff']);
 });
 
 // ---------------------------------------------------------------- every record type through sync
@@ -284,13 +299,14 @@ test('every record type is created, changed and deleted through device steps, wi
     ['consent', consent, 'update', { withdrawn: true }], ['consent', consent, 'delete'],
     ['activity', activity, 'update', { body: 'x' }], ['activity', activity, 'delete'],
     ['link', accountLink, 'update', { matched_by: 'auto' }],
+    ['business', biz, 'delete'],
   ]) {
     const r = await b.one(b.step(op, entity, id, fields));
     assert.deepEqual([r.status, r.code], ['rejected', 'op_not_allowed'], `${entity} ${op}`);
   }
 
   // Deletes (children first, the way a screen would): soft, and gone from the read API.
-  for (const [entity, id] of [['link', contactLink], ['link', accountLink], ['service', service], ['relationship', rel], ['contact', contact], ['account', account], ['client', client], ['business', biz]]) {
+  for (const [entity, id] of [['link', contactLink], ['link', accountLink], ['service', service], ['relationship', rel], ['contact', contact], ['account', account], ['client', client]]) {
     const r = await b.one(b.step('delete', entity, id));
     assert.equal(r.status, 'applied', `${entity}: ${JSON.stringify(r)}`);
     assert.ok(row(db, CRM_ENTITIES.find((e) => e.entity === entity).table, id).deleted_at, entity);
@@ -351,6 +367,11 @@ test('clean contact details: the server refuses emails, phones, postal codes and
     ['contact', contact, { phone: '(519) 555-0100' }],
     ['contact', contact, { phone: '15195550100' }],
     ['contact', contact, { phone: '555' }],
+    ['contact', contact, { phone: '5550100' }], // 7 digits: the same in every area code
+    ['contact', contact, { phone: '4312345678x' }],
+    ['contact', contact, { phone: '13800138000' }], // not North American, and no country code
+    ['contact', contact, { phone: '+15195550100' }], // North America is stored without +1
+    ['contact', contact, { email: 'mike\u200b@leftys.ca' }],
     ['account', account, { postal_code: 'n3y4k3' }],
     ['client', client, { tags: 'vip,vip' }],
   ];
@@ -360,46 +381,58 @@ test('clean contact details: the server refuses emails, phones, postal codes and
   }
   const ok = await a.one(a.step('update', 'contact', contact, { email: 'mike@leftys.ca', phone: '5195550100' }));
   assert.equal(ok.status, 'applied');
+  const vienna = await a.one(a.step('update', 'contact', contact, { phone: '+4312345678' }));
+  assert.equal(vienna.status, 'applied', 'outside North America: + and the country code');
 
   // Server code (imports) passes what it got; applyLocal stores the clean form.
   const imported = ctx.services.sync.applyLocal({
     entity: 'contact', op: 'create',
-    fields: { client_id: client, name: 'Sam', email: '  SAM@Example.com ', phone: '+1 (519) 555-0123 ext. 4' },
+    fields: { client_id: client, name: 'Sam', email: '  SAM@Exam\u200bple.com\ufeff ', phone: '+1 (519) 555-0123 ext. 4' },
   });
   assert.equal(imported.status, 'applied', JSON.stringify(imported));
   const saved = row(db, 'crm_contacts', imported.recordId);
   assert.deepEqual([saved.email, saved.phone], ['sam@example.com', '5195550123']);
+  const abroad = ctx.services.sync.applyLocal({ entity: 'contact', op: 'create', fields: { client_id: client, name: 'Anna', phone: '0043 1 2345678' } });
+  assert.equal(row(db, 'crm_contacts', abroad.recordId).phone, '+4312345678');
+  const local7 = ctx.services.sync.applyLocal({ entity: 'contact', op: 'create', fields: { client_id: client, name: 'X', phone: '555-0100' } });
+  assert.deepEqual([local7.code, /10 digits for North America/.test(local7.reason)], ['invalid_value', true]);
   const bad = ctx.services.sync.applyLocal({ entity: 'contact', op: 'create', fields: { client_id: client, name: 'X', email: 'nope' } });
   assert.deepEqual([bad.status, bad.code], ['rejected', 'invalid_value']);
 });
 
 // ---------------------------------------------------------------- consent
 
-test('consent per business is append-only; the latest one counts', async (t) => {
+test('consent per business is append-only; the latest counts, a same-day withdrawal wins, implied consent lapses', async (t) => {
   const { base } = await setup(t);
   const a = makeDevice(base, 'owner');
   const client = await a.create('client', { name: 'Mike’s group', status: 'active' });
   const contact = await a.create('contact', { client_id: client, name: 'Mike', email: 'mike@leftys.ca' });
+  const consentOf = async () => (await getJson(base, `/api/crm/clients/${client}`)).body.contacts[0].consent;
   const given = await a.create('consent', { contact_id: contact, business_id: W, withdrawn: false, date: '2026-01-15', kind: 'express', source: 'trade show sign-up' });
-  await a.create('consent', { contact_id: contact, business_id: AGENCY, withdrawn: false, date: '2026-02-01', kind: 'implied' });
-  let c = (await getJson(base, `/api/crm/clients/${client}`)).body.contacts[0];
-  assert.equal(c.consent[W].given, true);
-  assert.equal(c.consent[W].id, given);
-  assert.equal(c.consent[W].source, 'trade show sign-up');
-  assert.equal(c.consent[W].recordedBy, 'owner');
-  assert.equal(c.consent[AGENCY].kind, 'implied');
-  assert.equal(c.consent[CONSULTING], undefined, 'never asked: nothing');
+  let c = await consentOf();
+  assert.deepEqual([c[W].given, c[W].id, c[W].source, c[W].recordedBy, c[W].expiresOn], [true, given, 'trade show sign-up', 'owner', null]);
+  assert.equal(c[CONSULTING], undefined, 'never asked: nothing');
 
-  // Withdrawn for wholesale: a new row. The agency's consent is untouched.
+  // Withdrawn for wholesale: a new row. An older sign-up form entered later doesn't undo it.
   const withdrawn = await a.create('consent', { contact_id: contact, business_id: W, withdrawn: true, date: '2026-06-30' });
-  c = (await getJson(base, `/api/crm/clients/${client}`)).body.contacts[0];
-  assert.deepEqual([c.consent[W].given, c.consent[W].id, c.consent[W].date], [false, withdrawn, '2026-06-30']);
-  assert.equal(c.consent[AGENCY].given, true);
+  await a.create('consent', { contact_id: contact, business_id: W, withdrawn: false, date: '2026-03-01', kind: 'express' });
+  c = await consentOf();
+  assert.deepEqual([c[W].given, c[W].withdrawn, c[W].id, c[W].date], [false, true, withdrawn, '2026-06-30']);
+  // A sign-up the same day, recorded after the unsubscribe, doesn't win either: the withdrawal does.
+  await a.create('consent', { contact_id: contact, business_id: W, withdrawn: false, date: '2026-06-30', kind: 'express' });
+  assert.equal((await consentOf())[W].given, false);
 
-  // An older sign-up form entered later doesn't undo the withdrawal.
-  await a.create('consent', { contact_id: contact, business_id: W, withdrawn: false, date: '2026-03-01' });
-  c = (await getJson(base, `/api/crm/clients/${client}`)).body.contacts[0];
-  assert.equal(c.consent[W].given, false);
+  // Implied consent lapses: 2 years after a purchase, 6 months after an inquiry (a row without
+  // expires_on still lapses: readers work it out from kind and date).
+  const today = localDate();
+  const longAgo = addMonths(today, -25);
+  await a.create('consent', { contact_id: contact, business_id: AGENCY, withdrawn: false, date: longAgo, kind: 'implied_purchase' });
+  c = await consentOf();
+  assert.deepEqual([c[AGENCY].given, c[AGENCY].expired, c[AGENCY].expiresOn], [false, true, addMonths(longAgo, 24)]);
+  const recent = addMonths(today, -1);
+  await a.create('consent', { contact_id: contact, business_id: CONSULTING, withdrawn: false, date: recent, kind: 'implied_inquiry', expires_on: consentExpiresOn({ kind: 'implied_inquiry', date: recent }) });
+  c = await consentOf();
+  assert.deepEqual([c[CONSULTING].given, c[CONSULTING].expiresOn], [true, addMonths(recent, 6)]);
 
   const r = await a.one(a.step('create', 'consent', newId(), { contact_id: contact, business_id: W, date: '2026-07-01' }));
   assert.deepEqual([r.status, r.code], ['rejected', 'invalid_value'], 'withdrawn is required: say yes or no');
@@ -418,6 +451,9 @@ test('references: a record that isn\'t there yet is not_found (retried later); a
   const r1 = await b.one(early);
   assert.deepEqual([r1.status, r1.code], ['rejected', 'not_found']);
   assert.match(r1.reason, /client_id/);
+  assert.deepEqual(r1.missing, { field: 'client_id', entity: 'client', id: client }, 'names what it waits for');
+  const own = await b.one(b.step('update', 'contact', newId(), { name: 'x' }));
+  assert.deepEqual([own.code, own.missing.entity, own.missing.field], ['not_found', 'contact', null], 'its own record');
   assert.equal(n(db, 'SELECT count(*) AS n FROM crm_accounts'), 0, 'nothing written');
   await a.create('client', { name: 'Lefty’s', status: 'active' }, client);
   assert.equal((await b.one(early)).status, 'applied', 'the same step, retried unchanged, applies');
@@ -562,8 +598,8 @@ test('a delete of what the device had fully seen just deletes, even with notes o
   assert.equal(n(db, 'SELECT count(*) AS n FROM sync_clashes'), 0);
 });
 
-test('links: exactly one target, and one live link per outside record and kind of target', async (t) => {
-  const { base } = await setup(t);
+test('links: exactly one target, one live link per outside record and kind; a link under a deleted record frees it', async (t) => {
+  const { base, ctx } = await setup(t);
   const a = makeDevice(base, 'owner');
   const client = await a.create('client', { name: 'Mike’s group', status: 'active' });
   const account = await a.create('account', { client_id: client, name: 'Vape shop' });
@@ -575,15 +611,36 @@ test('links: exactly one target, and one live link per outside record and kind o
   const first = await a.create('link', { account_id: account, app: 'wom', external_id: '7', matched_by: 'auto' });
   await a.create('link', { contact_id: contact, app: 'wom', external_id: '7', matched_by: 'auto' });
   const twice = await a.one(a.step('create', 'link', newId(), { account_id: account, app: 'wom', external_id: '7', matched_by: 'approved' }));
-  assert.equal(twice.code, 'constraint');
+  assert.deepEqual([twice.status, twice.code], ['rejected', 'already_linked']);
+  assert.match(twice.reason, new RegExp(`account ${account}`));
+  const local = ctx.services.sync.applyLocal({ entity: 'link', op: 'create', fields: { account_id: account, app: 'wom', external_id: '7', matched_by: 'auto' } });
+  assert.equal(local.code, 'already_linked', 'server code (D2) gets the same answer');
   const unknownApp = await a.one(a.step('create', 'link', newId(), { account_id: account, app: 'quickbooks', external_id: '7', matched_by: 'auto' }));
   assert.equal(unknownApp.code, 'invalid_value');
   // Undo (delete) the link, then link again.
   assert.equal((await a.one(a.step('delete', 'link', first))).status, 'applied');
-  await a.create('link', { account_id: account, app: 'wom', external_id: '7', matched_by: 'approved' });
-  const page = (await getJson(base, `/api/crm/clients/${client}`)).body;
+  const again = await a.create('link', { account_id: account, app: 'wom', external_id: '7', matched_by: 'approved' });
+  let page = (await getJson(base, `/api/crm/clients/${client}`)).body;
   assert.deepEqual(page.accounts[0].links.map((l) => l.matched_by), ['approved']);
   assert.deepEqual(page.contacts[0].links.map((l) => [l.app, l.external_id]), [['wom', '7']]);
+
+  // The account is deleted (its link stays in the table, nothing cascades): the Order Manager
+  // customer can now be linked to another account — the orphan link no longer counts.
+  await a.pull();
+  assert.equal((await a.one(a.step('delete', 'account', account))).status, 'applied');
+  const other = await a.create('account', { client_id: client, name: 'Vape shop (new)' });
+  assert.equal((await a.one(a.step('create', 'link', newId(), { account_id: other, app: 'wom', external_id: '7', matched_by: 'approved' }))).status, 'applied');
+  assert.equal(ctx.services.crm.liveLinks('wom', '7').filter((l) => l.account_id).length, 1);
+  assert.notEqual(ctx.services.crm.liveLinks('wom', '7').find((l) => l.account_id).id, again);
+  // Same when the whole client goes: its contact link stops counting.
+  await a.pull();
+  assert.equal((await a.one(a.step('delete', 'client', client))).status, 'applied');
+  assert.deepEqual(ctx.services.crm.liveLinks('wom', '7'), []);
+  const client2 = await a.create('client', { name: 'Mike (again)', status: 'active' });
+  const contact2 = await a.create('contact', { client_id: client2, name: 'Mike' });
+  assert.equal((await a.one(a.step('create', 'link', newId(), { contact_id: contact2, app: 'wom', external_id: '7', matched_by: 'auto' }))).status, 'applied');
+  page = (await getJson(base, `/api/crm/clients/${client2}`)).body;
+  assert.equal(page.contacts[0].links.length, 1);
 });
 
 // ---------------------------------------------------------------- the plan's example and the read API
@@ -604,7 +661,7 @@ async function threeBusinesses(a) {
   const retainer = await a.create('service', { relationship_id: social, name: 'Social media retainer', status: 'active', billing: 'flat', amount_cents: 80000, period: 'monthly', renewal_date: '2027-09-01' });
   const growth = await a.create('service', { relationship_id: consulting, name: 'Growth consulting', status: 'active', billing: 'hourly', rate_cents: 15000, sessions: 6, scope: 'Q4 plan' });
   await a.create('consent', { contact_id: owner, business_id: AGENCY, withdrawn: false, date: '2026-08-01', kind: 'express' });
-  await a.create('consent', { contact_id: manager, business_id: W, withdrawn: false, date: '2025-04-01', kind: 'implied' });
+  await a.create('consent', { contact_id: manager, business_id: W, withdrawn: false, date: '2025-04-01', kind: 'implied_purchase' });
   const times = ['2026-09-01T15:00:00.000Z', '2026-09-20T15:00:00.000Z', '2026-10-01T15:00:00.000Z'];
   await a.create('activity', { client_id: client, account_id: dispensary, business_id: AGENCY, type: 'milestone', body: 'Homepage design approved', at: times[1] });
   await a.create('activity', { client_id: client, account_id: vape, business_id: W, type: 'order', body: 'Order: 40 tins', at: times[0] });
@@ -673,26 +730,23 @@ test('deletes don\'t cascade: what belongs to a deleted record is hidden with it
   const a = makeDevice(base, 'owner');
   const x = await threeBusinesses(a);
   await a.pull();
-  // Our consulting business is deleted: its relationship (and service) and consents disappear from reads.
-  await a.create('consent', { contact_id: x.owner, business_id: CONSULTING, withdrawn: false, date: '2026-10-01' });
-  await a.pull();
-  assert.equal((await a.one(a.step('delete', 'business', CONSULTING))).status, 'applied');
-  let page = (await getJson(base, `/api/crm/clients/${x.client}`)).body;
-  const parent = page.accounts.find((r) => r.id === x.parent);
-  assert.deepEqual(parent.relationships, []);
-  const mike = page.contacts.find((c) => c.id === x.owner);
-  assert.deepEqual(Object.keys(mike.consent), [AGENCY]);
+  // The vape shop account is deleted: its relationship, link and the client's wholesale business go from reads.
+  assert.equal((await a.one(a.step('delete', 'account', x.vape))).status, 'applied');
+  const page = (await getJson(base, `/api/crm/clients/${x.client}`)).body;
+  assert.deepEqual(page.accounts.map((r) => r.id).sort(), [x.dispensary, x.parent].sort());
+  const dana = page.contacts.find((c) => c.id === x.manager);
+  assert.equal(dana.account_id, x.vape, 'a non-parent ref keeps naming it (read it as none)');
   const list = (await getJson(base, '/api/crm/clients')).body.clients[0];
-  assert.deepEqual(list.businessIds, [W, AGENCY].sort());
-  assert.equal(row(db, 'crm_relationships', x.consulting).deleted_at, null, 'the relationship itself is untouched');
-  assert.equal(row(db, 'crm_services', x.growth).deleted_at, null);
+  assert.deepEqual(list.businessIds, [AGENCY, CONSULTING].sort());
+  assert.equal((await getJson(base, `/api/crm/clients?business=${W}`)).body.total, 0);
+  assert.equal(row(db, 'crm_relationships', x.wholesale).deleted_at, null, 'the relationship itself is untouched');
 
   // The client is deleted: everything under it goes from the reads, nothing is deleted with it.
   await a.pull();
   assert.equal((await a.one(a.step('delete', 'client', x.client))).status, 'applied');
   assert.equal((await getJson(base, `/api/crm/clients/${x.client}`)).status, 404);
   assert.equal((await getJson(base, '/api/crm/clients')).body.total, 0);
-  assert.equal(n(db, 'SELECT count(*) AS n FROM crm_accounts WHERE deleted_at IS NULL'), 3, 'its accounts are still there');
+  assert.equal(n(db, 'SELECT count(*) AS n FROM crm_accounts WHERE deleted_at IS NULL'), 2, 'its other accounts are still there');
   assert.equal(n(db, 'SELECT count(*) AS n FROM crm_activities'), 3);
 });
 
@@ -743,4 +797,47 @@ test('client list: search by name, email or phone however typed; filter by our b
     method: 'POST', headers: { 'content-type': 'application/json', cookie: apps.get(base).observer.cookie, origin: base }, body: '{}',
   });
   assert.equal(post.status, 404);
+});
+
+test('the read API stays quick with 5,000 clients (search, business filter, paging)', async (t) => {
+  const { base, db, ctx } = await setup(t);
+  const sync = ctx.services.sync;
+  const ours = [W, AGENCY, CONSULTING];
+  const made = [];
+  db.transaction(() => {
+    for (let i = 0; i < 5000; i += 1) {
+      const local = (entity, fields) => sync.applyLocal({ entity, op: 'create', fields }).recordId;
+      const m = {
+        name: `Client ${String(i).padStart(4, '0')}`, status: i % 10 ? 'active' : 'closed', business: ours[i % 3],
+        shop: `Shop ${i}`, person: `Person ${i}`, email: `p${i}@example.ca`, phone: `519555${String(i).padStart(4, '0')}`,
+      };
+      made.push(m);
+      const c = local('client', { name: m.name, status: m.status });
+      const acc = local('account', { client_id: c, name: m.shop });
+      local('contact', { client_id: c, account_id: acc, name: m.person, email: m.email, phone: m.phone });
+      local('relationship', { account_id: acc, business_id: m.business, kind: 'wholesale', status: 'active' });
+    }
+  })();
+  const has = (text, part) => text.toLowerCase().includes(part.toLowerCase());
+  const cases = [
+    ['', () => true],
+    [`business=${CONSULTING}`, (m) => m.business === CONSULTING],
+    ['q=person%2042', (m) => has(m.person, 'person 42')],
+    [`business=${W}&q=shop%201`, (m) => m.business === W && has(m.shop, 'shop 1')],
+    [`q=${encodeURIComponent('(519) 555-0042')}`, (m) => m.phone === '5195550042'],
+    ['q=p4999%40example', (m) => has(m.email, 'p4999@example')],
+    [`status=closed&business=${AGENCY}&offset=100`, (m) => m.status === 'closed' && m.business === AGENCY],
+  ];
+  for (const [qs, match] of cases) {
+    const t0 = performance.now();
+    const r = await getJson(base, `/api/crm/clients?${qs}`);
+    const ms = performance.now() - t0;
+    assert.equal(r.status, 200, qs);
+    assert.equal(r.body.total, made.filter(match).length, qs);
+    assert.ok(ms < 250, `${qs || 'all'}: ${ms.toFixed(0)} ms (was seconds when each filter ran per client)`);
+  }
+  // The page is the right one: sorted by name, offset applied, counts filled in.
+  const page = (await getJson(base, `/api/crm/clients?business=${CONSULTING}&limit=2&offset=1`)).body.clients;
+  assert.deepEqual(page.map((c) => c.name), made.filter((m) => m.business === CONSULTING).slice(1, 3).map((m) => m.name));
+  assert.deepEqual([page[0].accountCount, page[0].contactCount, page[0].businessIds], [1, 1, [CONSULTING]]);
 });

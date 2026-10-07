@@ -10,7 +10,7 @@
 -- reads show a record only while it and its parents up the chain are live (deleted_at IS NULL).
 -- No CHECK lists on enum columns: sync checks the values, and new values then need no rebuild.
 
--- Our own businesses, and Personal. Seeded at first start (fixed ids, @suite/shared/crm).
+-- Our own businesses, and Personal. Seeded at first start (fixed ids, @suite/shared/crm); never deleted.
 CREATE TABLE crm_businesses (
   id            TEXT PRIMARY KEY,
   name          TEXT NOT NULL,
@@ -18,6 +18,7 @@ CREATE TABLE crm_businesses (
   logo          TEXT,              -- URL or path of the logo (a file record once files exist)
   default_owner TEXT NOT NULL,     -- owner | partner | shared: who new and automated tasks go to
   position      INTEGER,           -- display order
+  archived      INTEGER,           -- hidden from pickers and lists (businesses are never deleted)
   created_at    TEXT,
   created_by    TEXT,
   updated_at    TEXT,
@@ -90,14 +91,16 @@ CREATE INDEX crm_contacts_email ON crm_contacts (email);
 CREATE INDEX crm_contacts_phone ON crm_contacts (phone);
 
 -- Email consent of one contact for one of our businesses (CASL), append-only: withdrawing adds a
--- row with withdrawn = 1. The latest (date, then id) counts — latestConsents() in @suite/shared/crm.
+-- row with withdrawn = 1. The latest counts (date; same day: a withdrawal; then id), until it
+-- lapses (expires_on) — consentStatus() in @suite/shared/crm.
 CREATE TABLE crm_consents (
   id          TEXT PRIMARY KEY,
   contact_id  TEXT NOT NULL,
   business_id TEXT NOT NULL,
   withdrawn   INTEGER NOT NULL,
   date        TEXT NOT NULL,        -- the day it was given (or withdrawn)
-  kind        TEXT,                 -- express | implied
+  kind        TEXT,                 -- express | implied_purchase | implied_inquiry
+  expires_on  TEXT,                 -- the day an implied consent lapses
   source      TEXT,                 -- how: "signed up at the trade show", "replied yes by email"
   created_at  TEXT,
   created_by  TEXT,
@@ -171,7 +174,10 @@ CREATE INDEX crm_activities_client ON crm_activities (client_id, at);
 CREATE INDEX crm_activities_account ON crm_activities (account_id, at);
 
 -- Another app's record that is this account or contact (D2 matching makes them). Create or
--- delete only (undoing a link deletes it). Exactly one of account_id / contact_id.
+-- delete only (undoing a link deletes it). Exactly one of account_id / contact_id. "One live link
+-- per (app, external_id) and kind of target" is checked in code (crm service, sync `check`), not
+-- by a UNIQUE index: a link whose account/contact or client was deleted no longer counts, so the
+-- outside record can be linked again elsewhere.
 CREATE TABLE crm_links (
   id          TEXT PRIMARY KEY,
   account_id  TEXT,
@@ -189,9 +195,4 @@ CREATE TABLE crm_links (
 );
 CREATE INDEX crm_links_account ON crm_links (account_id);
 CREATE INDEX crm_links_contact ON crm_links (contact_id);
--- One live link per outside record and kind of target (an Order Manager customer can be both an
--- account and its contact person).
-CREATE UNIQUE INDEX crm_links_external_account ON crm_links (app, external_id)
-  WHERE account_id IS NOT NULL AND deleted_at IS NULL;
-CREATE UNIQUE INDEX crm_links_external_contact ON crm_links (app, external_id)
-  WHERE contact_id IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX crm_links_external ON crm_links (app, external_id);

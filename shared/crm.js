@@ -3,6 +3,7 @@
 // types themselves are registered by the server's crm module (server/src/modules/crm/entities.js)
 // and reach devices through GET /api/sync/info. See CLAUDE.md, "CRM (crm module, C3a)".
 import { OWNERS, SHARED } from './actors.js';
+import { localDate } from './time.js';
 
 export { OWNERS, SHARED };
 
@@ -21,8 +22,14 @@ export const SERVICE_BILLING = Object.freeze(['flat', 'hourly']);
 export const SERVICE_PERIODS = Object.freeze(['once', 'monthly', 'quarterly', 'yearly']);
 export const ACTIVITY_TYPES = Object.freeze(['note', 'call', 'email', 'meeting', 'order', 'milestone']);
 export const CONTACT_CHANNELS = Object.freeze(['email', 'call', 'text', 'social', 'in_person']);
-/** CASL: express (they said yes) or implied (e.g. an existing business relationship; expires). */
-export const CONSENT_KINDS = Object.freeze(['express', 'implied']);
+/**
+ * CASL: express (they said yes: never lapses until withdrawn) or implied by an existing business
+ * relationship, which lapses — 2 years after their last purchase, 6 months after an inquiry.
+ * (Other implied grounds — a published or handed-over address — use implied_inquiry or set
+ * expires_on by hand.) A given row with no kind counts as express.
+ */
+export const CONSENT_KINDS = Object.freeze(['express', 'implied_purchase', 'implied_inquiry']);
+const CONSENT_LAPSE_MONTHS = Object.freeze({ implied_purchase: 24, implied_inquiry: 6 });
 /** How a link was made: a strong match linked on its own, or one of you approved it. */
 export const LINK_MATCHED_BY = Object.freeze(['auto', 'approved']);
 /** Apps whose records link to accounts and contacts (D2 matching). 'wom' = the Wholesale Order Manager. */
@@ -46,23 +53,60 @@ export const OUR_BUSINESSES = Object.freeze([
 /** key -> id, e.g. BUSINESS_IDS.wholesale */
 export const BUSINESS_IDS = Object.freeze(Object.fromEntries(OUR_BUSINESSES.map((b) => [b.key, b.id])));
 
+/** "YYYY-MM-DD" plus whole months, on the calendar (Aug 31 + 6 months = Feb 28/29). */
+export function addMonths(date, months) {
+  const [y, m, d] = date.split('-').map(Number);
+  const total = y * 12 + (m - 1) + months;
+  const year = Math.floor(total / 12);
+  const month = (total % 12) + 1;
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${year}-${String(month).padStart(2, '0')}-${String(Math.min(d, last)).padStart(2, '0')}`;
+}
+
+/**
+ * The day an implied consent lapses (it counts on the days before it), from its kind and date:
+ * implied_purchase: date + 2 years, implied_inquiry: date + 6 months; express or withdrawn: null.
+ * Writers store it in `expires_on` (screens prefill it, editable); readers fall back to this
+ * when a row has none, so an implied consent always lapses.
+ */
+export function consentExpiresOn({ kind, date, withdrawn = false }) {
+  const months = CONSENT_LAPSE_MONTHS[kind];
+  return withdrawn || !months || !date ? null : addMonths(date, months);
+}
+
 /**
  * Consent is append-only: giving or withdrawing it adds a row. The one that counts for a contact
- * and one of our businesses is the latest: by `date`, then by `id` (a UUIDv7, so the one recorded
- * later wins a same-day tie). Rows: consent records ({ id, business_id, withdrawn, date, … }).
+ * and one of our businesses is the latest by `date`; on the same day a withdrawal wins (an
+ * unsubscribe is never undone by a same-day sign-up entered later); then the later `id` (a
+ * UUIDv7: recorded later). Rows: consent records ({ id, business_id, withdrawn, date, … }).
  * @returns {Map<string, object>} business id -> the consent row that counts
  */
 export function latestConsents(rows) {
   const out = new Map();
+  const later = (r, cur) => r.date !== cur.date ? r.date > cur.date
+    : Boolean(r.withdrawn) !== Boolean(cur.withdrawn) ? Boolean(r.withdrawn) : r.id > cur.id;
   for (const r of rows ?? []) {
     const cur = out.get(r.business_id);
-    if (!cur || r.date > cur.date || (r.date === cur.date && r.id > cur.id)) out.set(r.business_id, r);
+    if (!cur || later(r, cur)) out.set(r.business_id, r);
   }
   return out;
 }
 
-/** May this business email this contact? Only with a latest consent that isn't withdrawn. */
-export function hasConsent(rows, businessId) {
-  const r = latestConsents(rows).get(businessId);
-  return Boolean(r && !r.withdrawn);
+/**
+ * Where a contact stands with one of our businesses on `today` ("YYYY-MM-DD", the device's local date):
+ * { given, withdrawn, expired, expiresOn, row } — given = may be emailed: a latest row that isn't
+ * withdrawn and hasn't lapsed. No row: nothing given.
+ */
+export function consentStatus(rows, businessId, today = localDate()) {
+  const row = latestConsents(rows).get(businessId) ?? null;
+  if (!row) return { given: false, withdrawn: false, expired: false, expiresOn: null, row: null };
+  const withdrawn = Boolean(row.withdrawn);
+  const expiresOn = withdrawn ? null : (row.expires_on ?? consentExpiresOn(row));
+  const expired = Boolean(expiresOn && today >= expiresOn);
+  return { given: !withdrawn && !expired, withdrawn, expired, expiresOn, row };
+}
+
+/** May this business email this contact today? */
+export function hasConsent(rows, businessId, today = localDate()) {
+  return consentStatus(rows, businessId, today).given;
 }

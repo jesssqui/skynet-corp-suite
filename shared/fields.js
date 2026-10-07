@@ -51,7 +51,7 @@ export function checkFieldValue(field, value) {
     const fmt = FORMATS[field.format];
     if (!fmt) return `${field.name}: unknown format ${field.format}`;
     if (fmt.normalize(value) !== value) return `${field.name}: not stored as a clean ${fmt.label} (${fmt.stored})`;
-    if (!fmt.valid(value)) return `${field.name}: not a valid ${fmt.label}`;
+    if (!fmt.valid(value)) return `${field.name}: not a valid ${fmt.label} (${fmt.stored})`;
   }
   return null;
 }
