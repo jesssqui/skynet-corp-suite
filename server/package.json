@@ -9,7 +9,8 @@
     "dev": "node --watch-path=src --watch-path=../shared src/index.js",
     "test": "node --test --test-concurrency=1 \"test/*.test.js\"",
     "backup": "node scripts/backup.js",
-    "restore": "node scripts/restore.js"
+    "restore": "node scripts/restore.js",
+    "users": "node scripts/users.js"
   },
   "dependencies": {
     "@suite/shared": "*",

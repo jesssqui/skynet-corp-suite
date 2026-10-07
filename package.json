@@ -19,6 +19,10 @@
     "build": "npm run build -w client",
     "test": "npm test -w shared && npm test -w server && npm run build -w client",
     "backup": "npm run backup -w server --",
-    "restore": "npm run restore -w server --"
+    "restore": "npm run restore -w server --",
+    "user:add": "npm run users -w server -- add",
+    "user:list": "npm run users -w server -- list",
+    "user:password": "npm run users -w server -- password",
+    "user:reset-2fa": "npm run users -w server -- reset-2fa"
   }
 }
