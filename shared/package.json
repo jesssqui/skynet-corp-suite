@@ -11,7 +11,8 @@
     "./actors": "./actors.js",
     "./fields": "./fields.js",
     "./normalize": "./normalize.js",
-    "./crm": "./crm.js"
+    "./crm": "./crm.js",
+    "./planner": "./planner.js"
   },
   "scripts": {
     "test": "node --test \"test/*.test.js\""
