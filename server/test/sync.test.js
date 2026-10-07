@@ -630,6 +630,7 @@ test('module tables are written only through sync, and only a module\'s own tabl
   assert.throws(() => sync.registerEntity(f({ phone: { type: 'text', format: 'fax' } })), /format fax needs a text field and one of email, phone/);
   assert.throws(() => sync.registerEntity(f({ phone: { type: 'text', ref: 'item' } })), /ref needs an id field/);
   assert.throws(() => sync.registerEntity(f({ phone: { type: 'text', parent: true } })), /parent \(true\) needs a ref/);
+  assert.throws(() => sync.registerEntity({ ...f({}), check: 'no' }), /check must be a function/);
 
   const info = sync.info();
   assert.deepEqual(info.entities.map((e) => e.entity), ['item', 'note']);

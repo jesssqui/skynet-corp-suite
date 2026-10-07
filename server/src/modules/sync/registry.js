@@ -15,6 +15,9 @@
 // chain: a change under a record deleted concurrently keeps it (flagged), and a delete of a record
 // whose subtree changed unseen is kept (flagged). See service.js, "belonging".
 // `format` (text fields): the value is stored normalised (@suite/shared/normalize); see fields.js.
+// `check({ op, recordId, fields, current })` (optional): a module's own rule, run in the step's
+// transaction before it is written (after the field and reference checks); return null, or
+// { code, reason } to refuse the step (devices put it in Needs attention). Reads only.
 //
 // The table needs `id TEXT PRIMARY KEY` and `deleted_at TEXT` (deletes are soft).
 // Optional columns the sync module fills when present: created_at, created_by,
@@ -76,7 +79,7 @@ export function createRegistry(db) {
    * so a bad definition stops the server instead of half-working.
    */
   function registerEntity(def) {
-    const { module, entity, table, fields = {}, appendOnly = false } = def ?? {};
+    const { module, entity, table, fields = {}, appendOnly = false, check = null } = def ?? {};
     const where = `sync.registerEntity(${entity})`;
     if (!NAME_RE.test(module ?? '')) throw new Error(`${where}: module must be a module name`);
     if (!NAME_RE.test(entity ?? '')) throw new Error(`${where}: entity must match ${NAME_RE}`);
@@ -86,6 +89,7 @@ export function createRegistry(db) {
     if (!table.startsWith(`${module}_`)) throw new Error(`${where}: table ${table} does not belong to module ${module}`);
     if (table.startsWith('sync_') || table === 'schema_migrations') throw new Error(`${where}: ${table} can't be synced`);
 
+    if (check !== null && typeof check !== 'function') throw new Error(`${where}: check must be a function`);
     const ops = new Set(appendOnly ? ['create'] : (def.ops ?? OPS));
     for (const op of ops) if (!OPS.includes(op)) throw new Error(`${where}: unknown op ${op}`);
     if (!ops.has('create')) throw new Error(`${where}: 'create' must be allowed`);
@@ -133,7 +137,7 @@ export function createRegistry(db) {
 
     const parents = [...fieldDefs.values()].filter((f) => f.parent);
     const entry = {
-      module, entity, table, fields: fieldDefs, ops, appendOnly: Boolean(appendOnly), parents,
+      module, entity, table, fields: fieldDefs, ops, appendOnly: Boolean(appendOnly), parents, check,
       selectParents: parents.length ? db.prepare(`SELECT ${parents.map((f) => q(f.name)).join(', ')} FROM ${q(table)} WHERE id = ?`) : null,
       liveChildren: new Map(), // field name -> statement: live ids whose field names a record
       standard: new Set(STANDARD_COLUMNS.filter((c) => columns.includes(c))),

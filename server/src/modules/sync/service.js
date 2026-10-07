@@ -26,11 +26,12 @@ const STEP_KEYS = new Set(['key', 'entity', 'recordId', 'op', 'fields', 'hlc', '
 const CURSOR_RE = /^([0-9a-f-]{36})\.(\d{1,15})$/;
 const RESOLUTIONS = ['keep_winner', 'keep_loser'];
 
-/** A step that can't be applied; becomes { status: 'rejected', code, reason }. */
+/** A step that can't be applied; becomes { status: 'rejected', code, reason, ...details }. */
 class StepError extends Error {
-  constructor(code, message) {
+  constructor(code, message, details = null) {
     super(message);
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -276,7 +277,7 @@ export function createSyncService({ db, log }) {
     for (const [name, value] of Object.entries(fields)) {
       const f = entry.fields.get(name);
       if (f.ref && value !== null && !getRecord.get(f.ref, value)) {
-        throw new StepError('not_found', `${name}: there is no ${f.ref} ${value} (yet)`);
+        throw new StepError('not_found', `${name}: there is no ${f.ref} ${value} (yet)`, { missing: { field: name, entity: f.ref, id: value } });
       }
     }
     const out = { clashes: [], revived: [] };
@@ -328,10 +329,18 @@ export function createSyncService({ db, log }) {
     return newest;
   }
 
+  /** The module's own rule for this record type (registerEntity `check`), if it has one. */
+  function moduleCheck({ entry, step, fields }, current) {
+    if (!entry.check) return;
+    const problem = entry.check({ op: step.op, recordId: step.recordId, fields, current });
+    if (problem) throw new StepError(problem.code ?? 'refused', problem.reason ?? `${entry.entity}: refused`);
+  }
+
   function applyCreate(ctx) {
     const { entry, step, fields, who, hlc, seq } = ctx;
     if (getRecord.get(entry.entity, step.recordId)) throw new StepError('already_exists', 'a record with this id already exists');
     const refs = checkBelonging(ctx);
+    moduleCheck(ctx, null);
     const at = hlcIso(hlc);
     const values = {};
     for (const f of entry.fields.values()) values[f.name] = registry.encode(f, fields[f.name] ?? null);
@@ -352,8 +361,9 @@ export function createSyncService({ db, log }) {
   function applyUpdate(ctx) {
     const { entry, step, fields, who, hlc, seq, seen } = ctx;
     const rec = getRecord.get(entry.entity, step.recordId);
-    if (!rec) throw new StepError('not_found', 'no such record');
+    if (!rec) throw new StepError('not_found', 'no such record', { missing: { field: null, entity: entry.entity, id: step.recordId } });
     const refs = checkBelonging(ctx, entry.selectParents?.get(step.recordId) ?? null);
+    moduleCheck(ctx, registry.decodeRow(entry, entry.selectRow.get(step.recordId)));
     const clashes = [...refs.clashes];
     const me = { actor: who.actor, device: who.deviceId, hlc, step: step.key };
 
@@ -515,7 +525,7 @@ export function createSyncService({ db, log }) {
         return out;
       })();
     } catch (err) {
-      if (err instanceof StepError) return { key, status: 'rejected', code: err.code, reason: err.message };
+      if (err instanceof StepError) return { key, status: 'rejected', code: err.code, reason: err.message, ...(err.details ?? {}) };
       if (typeof err.code === 'string' && err.code.startsWith('SQLITE_CONSTRAINT')) {
         return { key, status: 'rejected', code: 'constraint', reason: err.message };
       }
@@ -625,9 +635,14 @@ export function createSyncService({ db, log }) {
   /**
    * Write a synced record from server code (an import, an automation): same rules,
    * same log, made by the server's own device id. Returns the step result plus recordId.
+   * stampMs: stamp the change at that (past) time instead of now — for seeds, so any real edit
+   * made on a device, even one re-sent after a restore, is later and wins.
    */
-  function applyLocal({ actor = SYSTEM_ACTOR, entity, op, recordId, fields }) {
+  function applyLocal({ actor = SYSTEM_ACTOR, entity, op, recordId, fields, stampMs }) {
     if (actor !== SYSTEM_ACTOR && !ACTORS.includes(actor)) throw new Error(`applyLocal: unknown actor ${actor}`);
+    if (stampMs !== undefined && !(Number.isSafeInteger(stampMs) && stampMs >= 0 && stampMs <= Date.now())) {
+      throw new Error('applyLocal: stampMs must be a past time in ms');
+    }
     const id = recordId ?? (op === 'create' ? newId() : undefined);
     // Like a device, server code normalises formatted values (emails, phones…) before the step.
     const entry = registry.get(entity);
@@ -635,7 +650,8 @@ export function createSyncService({ db, log }) {
       ? Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, entry.fields.has(k) ? normalizeFieldValue(entry.fields.get(k), v) : v]))
       : fields;
     const step = {
-      key: newId(), entity, recordId: id, op, hlc: clock.now(), seen: makeCursor(currentSeq()),
+      key: newId(), entity, recordId: id, op, seen: makeCursor(currentSeq()),
+      hlc: stampMs === undefined ? clock.now() : encodeHlc({ ms: stampMs, counter: 0, node: serverDeviceId }),
       ...(op === 'delete' ? {} : { fields: clean }),
     };
     return { ...applyStep(step, { actor, deviceId: serverDeviceId, server: true }), recordId: id };
