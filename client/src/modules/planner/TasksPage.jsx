@@ -31,7 +31,9 @@ export default function TasksPage() {
   useEffect(() => setShown(PAGE), [owner, business, client, due]);
 
   const setParam = (key, value, fallback = '') => {
-    const next = new URLSearchParams(params);
+    // From the address bar, not this render's params: two quick changes (a tap, then a pick) must
+    // not undo each other while the router re-renders.
+    const next = new URLSearchParams(window.location.search);
     if (!value || value === fallback) next.delete(key);
     else next.set(key, value);
     setParams(next, { replace: true });

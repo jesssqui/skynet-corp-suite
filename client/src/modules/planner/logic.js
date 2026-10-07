@@ -48,7 +48,7 @@ export function formatTime(hhmm) {
   return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
-/** A due date for a list row: "Today · 9:30 AM", "Tomorrow", "Yesterday", "Thu, Oct 9, 2026". */
+/** A due date for a list row: "Today · 9:30 AM", "Tomorrow", "Yesterday", "Thu, Oct 9" (the year only when it isn’t this one). */
 export function dueLabel(task, today) {
   if (!task?.due_date) return '';
   const time = dueTimeOf(task);
@@ -56,6 +56,7 @@ export function dueLabel(task, today) {
   if (task.due_date === today) day = 'Today';
   else if (task.due_date === addDays(today, 1)) day = 'Tomorrow';
   else if (task.due_date === addDays(today, -1)) day = 'Yesterday';
+  else if (task.due_date.slice(0, 4) === today.slice(0, 4)) day = shortDay(task.due_date);
   else day = formatDate(task.due_date, { weekday: true });
   return time ? `${day} · ${formatTime(time)}` : day;
 }

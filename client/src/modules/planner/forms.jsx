@@ -166,7 +166,7 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
               onChange={set('due_time')}
               disabled={!v.due_date}
               error={problems.due_time}
-              hint={v.due_date ? undefined : 'Pick a date first'}
+              title={v.due_date ? undefined : 'Pick a date first'}
             />
             <SelectField
               id="task-estimate"

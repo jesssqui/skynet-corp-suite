@@ -54,7 +54,7 @@ function NoNextStep({ flagged, data, onAdd }) {
                 <Link to={`/crm/clients/${client?.id}`} style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{client?.name}</Link>
                 <span style={{ ...muted, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                   <BusinessChip business={data.businessesById.get(r.business_id)} short />
-                  {KIND_LABELS[r.kind] ?? r.kind} · {account?.name}
+                  <span>{account?.name} · {KIND_LABELS[r.kind] ?? r.kind}</span>
                 </span>
               </span>
               <TextButton onClick={() => onAdd(r, account)} aria-label={`Add a next step for ${account?.name}`}><Icon name="plus" size={14} />Next step</TextButton>

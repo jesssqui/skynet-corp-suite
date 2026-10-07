@@ -418,9 +418,9 @@ export function ActivityForm({ clientId, type: initialType = 'note', accountId =
       </div>
       <TextField id="act-at" label="When" type="datetime-local" value={v.at} onChange={set('at')} error={whenError} hint="Now, or earlier for a call you’re logging late" />
       <fieldset style={{ border: 0, borderTop: '1px solid var(--border)', margin: 0, padding: 'var(--space-3) 0 0', display: 'grid', gap: 'var(--space-3)', minWidth: 0 }}>
-        <legend style={{ fontSize: 'var(--text-sm)', fontWeight: 650, padding: '0 var(--space-2) 0 0' }}>Next step (optional)</legend>
+        <legend style={{ fontSize: 'var(--text-sm)', fontWeight: 650, padding: '0 var(--space-2) 0 0' }}>Next step (optional) <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>· becomes a task for you</span></legend>
         <div style={{ display: 'grid', gap: 'var(--space-3)', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
-          <TextField id="act-next-title" label="What’s next" value={v.next_title} onChange={set('next_title')} maxLength={300} error={nextProblems.title} hint="Becomes a task for you" />
+          <TextField id="act-next-title" label="What’s next" value={v.next_title} onChange={set('next_title')} maxLength={300} error={nextProblems.title} />
           <TextField id="act-next-date" label="By" type="date" value={v.next_date} onChange={set('next_date')} error={nextProblems.date} />
         </div>
         {active.length ? (
