@@ -1,6 +1,6 @@
 // This browser's (or home-screen app's) device id, and the local copy that goes with it.
 //
-// The server gives the id at sign-in (POST /api/auth/login/code|enroll -> device.id) and it is
+// The server gives the id at sign-in (POST /api/auth/login/code -> device.id) and it is
 // also this device's sync id (C2b stamps its changes with it). It is sent back at the next
 // sign-in so an expired session continues as the same device, unsent changes and all.
 //

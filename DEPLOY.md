@@ -229,11 +229,14 @@ Sign-in:
   `loopback, uniquelocal`). As a last resort add the exact address to `.env`, e.g.
   `ALLOWED_ORIGINS=https://mac-mini.tail1234.ts.net:8443`, then `docker compose up -d`. On the Devices page every device
   should show a `100.x.y.z` address; a `172.x` or `192.168.x` one means the forwarded headers are being ignored.
-- **“Too many attempts”** → wrong passwords or codes lock that account *on that device* for 1 minute, then 2, 4… up
-  to an hour; the same account still signs in from your other devices. 30 failures within an hour from several
-  devices lock the whole account for 15 minutes, and 20 failures from one device (any usernames) lock that device.
-  To lift a lock now, on the Mac mini: `docker compose exec suite node server/scripts/users.js unlock <username>`
-  (`password` and `reset-2fa` also unlock).
+- **“Too many attempts”** → wrong passwords or codes lock that account *from that address* (each tailnet device has
+  its own `100.x.y.z` address) for 1 minute, then 2, 4… up to an hour; the same account still signs in from your other
+  devices. 30 failures within an hour from several addresses lock the whole account for 15 minutes, and 20 failures
+  from one address (any usernames) lock that address for both accounts.
+  To lift locks now, on the Mac mini:
+  `docker compose exec suite node server/scripts/users.js unlock <username>` — that account's locks, plus the
+  address locks of every device that failed on it (`password` and `reset-2fa` do the same);
+  `docker compose exec suite node server/scripts/users.js unlock --all` — every lock, all accounts and addresses.
 - **Codes don't work** → the phone's clock must be right (Settings → General → Date & Time → Set Automatically). A code
   works once; wait for the next one.
 - **Lost phone** → sign in on another device with a **recovery code** instead of the code, then Account → *Move to a new

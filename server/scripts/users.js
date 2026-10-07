@@ -5,7 +5,9 @@
 //   npm run user:list
 //   npm run user:password -- jessy     new password; signs that person out everywhere, unlocks the account
 //   npm run user:reset-2fa -- jessy    new authenticator + recovery codes (lost phone AND lost codes); same
-//   npm run user:unlock -- jessy       clear "Too many attempts" locks on that account
+//   npm run user:unlock -- jessy       clear "Too many attempts" locks on that account, and on the addresses
+//                                      that failed on it (those devices are unblocked for both accounts)
+//   npm run user:unlock -- --all       clear every lock (all accounts, all addresses)
 //
 // In Docker:  docker compose exec suite node server/scripts/users.js add --actor owner --username jessy --name "Jessy"
 //
@@ -31,7 +33,7 @@ const USAGE = `Usage:
   users.js list
   users.js password <username>
   users.js reset-2fa <username>
-  users.js unlock <username>`;
+  users.js unlock <username> | --all`;
 
 const tty = Boolean(process.stdin.isTTY);
 let rl;
@@ -129,6 +131,7 @@ async function main() {
       actor: { type: 'string' },
       username: { type: 'string' },
       name: { type: 'string' },
+      all: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -180,9 +183,13 @@ async function main() {
       console.log('Signed out everywhere (their data stays) and unlocked.');
       printRecoveryCodes(codes);
     } else if (command === 'unlock') {
-      const u = find(target);
-      const n = accounts.unlock(u.username);
-      console.log(`Unlocked ${u.username} (${n} lock/counter record${n === 1 ? '' : 's'} cleared).`);
+      const plural = (n) => `${n} lock/counter record${n === 1 ? '' : 's'} cleared`;
+      if (values.all) {
+        console.log(`Unlocked every account and address (${plural(accounts.unlockAll())}).`);
+      } else {
+        const u = find(target);
+        console.log(`Unlocked ${u.username} and the addresses that failed on it (${plural(accounts.unlock(u.username))}).`);
+      }
     } else {
       throw new Error(USAGE);
     }

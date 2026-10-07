@@ -109,7 +109,8 @@ Code `server/src/modules/auth/`, client `client/src/auth/` + `client/src/modules
   `auth_totp` can't sign in (it gets the same `bad_credentials` as a wrong password; the server log says why).
   `reset-2fa` (lost phone *and* lost codes) works the same way and replaces the authenticator and codes only after the
   new code is confirmed; `password` sets a new password. Both sign the person out everywhere and unlock the account;
-  `unlock` only clears rate-limit locks.
+  `unlock <username>` only clears rate-limit locks (the account's, and those of addresses that failed on it);
+  `unlock --all` clears every lock.
 - **Factors**: password (scrypt N=2^16 r=8 p=1, parameters stored in each hash, at most 2 hashes at once) **and**
   an authenticator code (TOTP RFC 6238: SHA-1, 6 digits, 30 s, ±1 step, each step usable once — `auth_totp.last_step`)
   or one of 10 one-time recovery codes (60 bits, stored as SHA-256). All secret comparisons are constant-time.
@@ -148,13 +149,16 @@ Code `server/src/modules/auth/`, client `client/src/auth/` + `client/src/modules
 - **Rate limiting** (`throttle.js`, table `auth_throttle`, survives restarts): every password or code attempt — sign-in
   and re-checks — is charged *before* checking (refunded if right, including any lock it set, so parallel guesses can't
   slip past) to three keys, all keyed by the username as typed (unknown usernames too: no enumeration):
-  `acct-ip:<user>@<ip>` — 5 failures lock it 1 min, doubling to 1 h; `acct:<user>` — 30 failures within an hour lock
-  the account 15 min; `ip:<ip>` — 20 failures (any usernames) lock that address 1 min, doubling to 1 h. So someone
-  guessing from their own device locks only that device out of the account (one guess an hour keeps *them* at the
-  1-hour cap, never the account's owner on other devices), and one device can't reach the account-wide limit (~5 the
-  first hour, ~1 an hour after). 429 `too_many_attempts` + `Retry-After`. A full sign-in clears that device's keys;
-  counts start again once a key's window (24 h / 1 h) has passed. `users.js unlock|password|reset-2fa` clear an
-  account's keys from every address. Relies on `req.ip` being the device's tailnet address (trust proxy, below).
+  `acct-ip:<user>@<ip>` (the strict limit is per account **+ address**, not per device id) — 5 failures lock it 1 min,
+  doubling to 1 h; `acct:<user>` — 30 failures within an hour lock the account 15 min; `ip:<ip>` — 20 failures (any
+  usernames) lock that address 1 min, doubling to 1 h. Each tailnet device has its own address, so someone guessing
+  from their device locks only that address out of the account (one guess an hour keeps *them* at the 1-hour cap,
+  never the account's owner at other addresses), and one address can't reach the account-wide limit (~5 the first
+  hour, ~1 an hour after). 429 `too_many_attempts` + `Retry-After`. A full sign-in clears that address's keys for the
+  account; counts start again once a key's window (24 h / 1 h) has passed. `users.js unlock|password|reset-2fa`
+  clear the account's keys from every address plus the `ip:` keys of each address that failed on it; `unlock --all`
+  clears everything. Relies on `req.ip` being the device's tailnet address (trust proxy, below); if it weren't, every
+  device would share one address and these limits would apply to all of them together.
 - **Devices** (`auth_devices`): one per browser / home-screen install; its id **is** its sync device id. Default name
   from the User-Agent (+ "Home screen app" when standalone); either person can rename. At sign-in the browser sends the
   id it has: kept if it is this person's and not signed out (an expired session continues as the same device, with

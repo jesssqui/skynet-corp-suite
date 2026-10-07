@@ -8,7 +8,7 @@ import { ACTORS } from '@suite/shared/actors';
 import {
   hashPassword, passwordProblem, newRecoveryCode, normalizeRecoveryCode, hashRecoveryCode, RECOVERY_CODE_COUNT,
 } from './crypto.js';
-import { clearAccountThrottle } from './throttle.js';
+import { clearAccountThrottle, clearAllThrottle } from './throttle.js';
 
 export const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,31}$/;
 export const normalizeUsername = (u) => (typeof u === 'string' ? u.trim().toLowerCase() : '');
@@ -124,8 +124,10 @@ export function createAccounts(db, { scryptN, now = Date.now }) {
     setPassword,
     newRecoveryCodes,
     replaceTwoFactor,
-    /** Clear sign-in locks and failure counts for this account (all addresses). */
+    /** Clear sign-in locks and failure counts for this account and the addresses that failed on it. */
     unlock: (username) => clearAccountThrottle(db, username),
+    /** Clear every sign-in lock and failure count (all accounts and addresses). */
+    unlockAll: () => clearAllThrottle(db),
     getTotp: (userId) => getTotp.get(userId),
     replaceTotp: (userId, secret, step) => replaceTotp.run(userId, secret, step, iso()),
     /** Record that a TOTP step was used; false if it (or a later one) already was (replay). */

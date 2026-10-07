@@ -33,12 +33,28 @@ export function throttleKeys(username, ip) {
   ];
 }
 
-/** Remove every lock and count for an account (all addresses). Returns how many were removed. */
+/**
+ * Remove every lock and count for an account: its own keys (from every address) and the per-address
+ * keys of each address that failed on it (an address locked while guessing at it, which also blocks
+ * that device for the other account). Returns how many records were removed.
+ */
 export function clearAccountThrottle(db, username) {
   const u = userPart(username);
   const prefix = `acct-ip:${u}@`;
-  return db.prepare('DELETE FROM auth_throttle WHERE key = ? OR substr(key, 1, ?) = ?')
-    .run(`acct:${u}`, prefix.length, prefix).changes;
+  return db.transaction(() => {
+    const addresses = db.prepare('SELECT substr(key, ?) AS addr FROM auth_throttle WHERE substr(key, 1, ?) = ?')
+      .all(prefix.length + 1, prefix.length, prefix).map((r) => r.addr);
+    let n = db.prepare('DELETE FROM auth_throttle WHERE key = ? OR substr(key, 1, ?) = ?')
+      .run(`acct:${u}`, prefix.length, prefix).changes;
+    const delIp = db.prepare('DELETE FROM auth_throttle WHERE key = ?');
+    for (const addr of addresses) n += delIp.run(`ip:${addr}`).changes;
+    return n;
+  })();
+}
+
+/** Remove every lock and count there is (all accounts, all addresses). */
+export function clearAllThrottle(db) {
+  return db.prepare('DELETE FROM auth_throttle').run().changes;
 }
 
 /**

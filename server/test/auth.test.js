@@ -312,6 +312,20 @@ test('rate limiting: many addresses lock the account for 15 minutes; one address
   }
   assert.equal((await sprayer.post('/api/auth/login', { username: 'sam', password: TEST_PASSWORD })).status, 429);
   assert.equal((await from('100.64.0.11').post('/api/auth/login', { username: 'sam', password: TEST_PASSWORD })).status, 200);
+  // unlock --all clears every lock, including addresses that never tried a real account.
+  assert.ok(env.ctx.services.auth.accounts.unlockAll() > 0);
+  assert.equal((await sprayer.post('/api/auth/login', { username: 'sam', password: TEST_PASSWORD })).status, 200);
+
+  // unlock <username> also frees the addresses that failed on that account (for both accounts).
+  const mixed = from('100.64.8.8');
+  for (let i = 0; i < RULES.acctIp.threshold - 1; i++) await mixed.post('/api/auth/login', { username: 'jessy', password: 'nope nope nope' });
+  for (let i = 0; i < RULES.ip.threshold - RULES.acctIp.threshold + 1; i++) {
+    await mixed.post('/api/auth/login', { username: `other${i}`, password: 'nope nope nope' });
+  }
+  assert.equal((await mixed.post('/api/auth/login', { username: 'sam', password: TEST_PASSWORD })).status, 429, 'address locked');
+  env.ctx.services.auth.accounts.unlock('jessy');
+  assert.equal((await mixed.post('/api/auth/login', { username: 'sam', password: TEST_PASSWORD })).status, 200);
+  assert.equal((await mixed.post('/api/auth/login', { username: 'jessy', password: 'another long passphrase' })).status, 200);
 });
 
 test('sessions end after the idle limit and after the absolute limit', async (t) => {
@@ -706,6 +720,7 @@ test('users.js add sets up two-factor before saving; reset-2fa, password and unl
   assert.equal((await mac.post('/api/auth/login', { username: 'jessy', password: TEST_PASSWORD })).status, 429);
   const unlocked = await runCli(dir, ['unlock', 'jessy']);
   assert.match(unlocked.out, /Unlocked jessy/);
+  assert.match((await runCli(dir, ['unlock', '--all'])).out, /Unlocked every account and address/);
   assert.equal((await mac.post('/api/auth/login', { username: 'jessy', password: TEST_PASSWORD })).status, 200);
 
   // reset-2fa: a new authenticator, confirmed; the old one stops working, everyone signs in again, unlocked.
