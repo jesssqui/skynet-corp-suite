@@ -143,7 +143,8 @@ export function matchTotp(secret, code, ms, afterStep = -1) {
 export function otpauthUrl({ secret, account, issuer }) {
   const label = encodeURIComponent(`${issuer}:${account}`);
   const qs = new URLSearchParams({ secret, issuer, algorithm: 'SHA1', digits: String(TOTP.digits), period: String(TOTP.period) });
-  return `otpauth://totp/${label}?${qs}`;
+  // %20, not '+', for spaces: some authenticator apps show a '+' literally.
+  return `otpauth://totp/${label}?${qs.toString().replace(/\+/g, '%20')}`;
 }
 
 // ---- recovery codes -------------------------------------------------------------

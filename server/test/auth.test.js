@@ -123,6 +123,7 @@ test('enrolment on first sign-in, then password + code on the iPhone and the Mac
   const { secret, otpauthUrl } = first.body.enroll;
   assert.match(otpauthUrl, /^otpauth:\/\/totp\/Skynet%20Corp%20Suite%3Ajessy\?/);
   assert.match(otpauthUrl, new RegExp(`secret=${secret}`));
+  assert.match(otpauthUrl, /issuer=Skynet%20Corp%20Suite/);
   assert.equal(phone.cookie, null, 'no session before the second factor');
   assert.equal((await phone.get('/api/auth/session')).status, 401);
 

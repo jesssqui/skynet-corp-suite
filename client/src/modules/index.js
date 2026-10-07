@@ -3,12 +3,13 @@
 //
 // Module shape:
 //   id      matches the server module name where there is one
-//   nav     { label, icon, order } — omit to stay out of the nav
+//   nav     { label, icon, order, path? } — omit to stay out of the nav (path defaults to the first route)
 //   routes  [{ path, element }] — paths are absolute ('/', '/clients/:id')
 import home from './home/index.jsx';
 import health from './health/index.jsx';
+import auth from './auth/index.jsx';
 
-export const modules = [home, health];
+export const modules = [home, health, auth];
 
 export const navItems = modules
   .filter((m) => m.nav)
