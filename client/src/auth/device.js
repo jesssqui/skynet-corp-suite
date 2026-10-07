@@ -10,7 +10,8 @@
 // It deletes everything stored for the signed-in person: the offline database (records,
 // the outbox including unsent changes — on purpose, a signed-out phone may be lost — the kept
 // sent steps, changes that need attention, the HLC and the pull cursors), the remembered
-// session, and every service-worker cache. The theme choice is not personal data and stays.
+// session, and every Cache Storage cache except the public app shell. The theme choice is not
+// personal data and stays.
 import { deleteLocalDb } from '../sync/localdb.js';
 
 const DEVICE_KEY = 'suite.deviceId';
@@ -61,16 +62,43 @@ export function saveSessionCache(session) {
   }
 }
 
+const PENDING_KEY = 'suite.signOutPending';
+
+/**
+ * Signing out without a connection can't tell the server, and the session cookie (HttpOnly) stays
+ * in the browser: remember the device id so the sign-out is sent before anything else next time,
+ * instead of the old session quietly resuming. Kept apart from clearLocalData on purpose.
+ */
+export function readPendingSignOut() {
+  try {
+    return storage()?.getItem(PENDING_KEY) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function setPendingSignOut(deviceId) {
+  try {
+    if (deviceId) storage()?.setItem(PENDING_KEY, deviceId);
+    else storage()?.removeItem(PENDING_KEY);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 const CLEAR_TIMEOUT_MS = 5000;
 
-/** Delete every Cache Storage cache, then ask the service worker to fetch the public app shell again. */
+/**
+ * Delete every Cache Storage cache except the app shell (`suite-shell-*`). The shell holds only the
+ * public built app — the same files the server gives anyone — and is what lets the app open with no
+ * signal, including a new version waiting to take over, so it stays.
+ */
 async function clearServiceWorkerCaches() {
   const caches = globalThis.caches;
   if (!caches?.keys) return;
-  for (const name of await caches.keys()) await caches.delete(name);
-  // The shell (HTML/JS/CSS/icons) is public — the same files the server gives anyone — but it is
-  // what lets the app open with no signal, so the service worker downloads it again.
-  globalThis.navigator?.serviceWorker?.controller?.postMessage({ type: 'RECACHE' });
+  for (const name of await caches.keys()) {
+    if (!name.startsWith('suite-shell-')) await caches.delete(name);
+  }
 }
 
 /** Remove everything stored on this device for the signed-in person. */

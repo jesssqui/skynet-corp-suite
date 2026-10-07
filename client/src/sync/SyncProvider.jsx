@@ -9,7 +9,7 @@ import { SyncContext } from './hooks.js';
  * syncing; the data stays unless clearLocalData() deletes it (device_signed_out, Sign out).
  */
 export default function SyncProvider({ children }) {
-  const { session } = useAuth();
+  const { session, recheck } = useAuth();
   const deviceId = session?.device?.id ?? null;
   const [engine, setEngine] = useState(null);
 
@@ -17,11 +17,17 @@ export default function SyncProvider({ children }) {
     if (!deviceId) return undefined;
     const e = acquireSync(deviceId);
     setEngine(e);
+    // The offline copy was deleted under us — another tab signed out, was told this device was
+    // signed out, or someone else signed in there: ask the server who (if anyone) is signed in now.
+    const off = e.subscribe((ev) => {
+      if (ev.type === 'status' && ev.status.phase === 'stopped' && ev.status.stoppedBy === 'closed') recheck();
+    });
     return () => {
+      off();
       releaseSync(e);
       setEngine(null);
     };
-  }, [deviceId]);
+  }, [deviceId, recheck]);
 
   return <SyncContext.Provider value={engine}>{children}</SyncContext.Provider>;
 }

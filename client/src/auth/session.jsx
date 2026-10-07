@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api, SESSION_CODES, SESSION_LOST_EVENT } from '../api/client.js';
-import { clearLocalData, getDeviceId, setDeviceId, readSessionCache, saveSessionCache } from './device.js';
+import {
+  clearLocalData, getDeviceId, setDeviceId, readSessionCache, saveSessionCache, readPendingSignOut, setPendingSignOut,
+} from './device.js';
 
 // Who is signed in on this device. The app shell renders only once this says
 // 'signed-in'; until then the sign-in screen does (AuthGate below).
@@ -45,6 +47,20 @@ export function AuthProvider({ children }) {
   }, []);
 
   const check = useCallback(async () => {
+    // A sign-out made offline goes to the server first; until it does, nobody is signed in here.
+    if (readPendingSignOut()) {
+      try {
+        await api.post('/api/auth/logout');
+      } catch (err) {
+        if (err.status !== 401) {
+          setState((s) => (s.status === 'signed-out' ? s : { status: 'signed-out', session: null, offline: false, notice: NOTICES.signed_out, error: null }));
+          return;
+        }
+      }
+      setPendingSignOut(null);
+      setState((s) => (s.status === 'signed-out' ? s : { status: 'signed-out', session: null, offline: false, notice: NOTICES.signed_out, error: null }));
+      return;
+    }
     try {
       const session = await api.get('/api/auth/session');
       if (!getDeviceId()) setDeviceId(session.device.id);
@@ -56,7 +72,12 @@ export function AuthProvider({ children }) {
       // offline copy. Anything the server would refuse (a sign-out from the other device) is
       // found out on the next request that reaches it.
       setState((s) => {
-        if (s.status === 'signed-in') return { ...s, offline: true };
+        if (s.status === 'signed-out') return s; // the sign-in screen stays (it reports its own errors)
+        if (s.status === 'signed-in') {
+          // Still the device whose copy this is? (Another tab may have signed out and cleared it.)
+          if (getDeviceId() === s.session.device.id) return { ...s, offline: true };
+          return { status: 'signed-out', session: null, offline: false, notice: NOTICES.signed_out, error: null };
+        }
         const cached = readSessionCache();
         if (cached) return { status: 'signed-in', session: cached, offline: true, notice: null, error: null };
         return { status: 'unreachable', session: null, offline: false, notice: null, error: err.message };
@@ -73,14 +94,18 @@ export function AuthProvider({ children }) {
     const recheckIfIn = () => status.current === 'signed-in' && check();
     const onVisible = () => document.visibilityState === 'visible' && recheckIfIn();
     // Back online: confirm the session (it may have ended, or the device been signed out, meanwhile).
-    const onOnline = () => (status.current === 'signed-in' || status.current === 'unreachable') && check();
+    const onOnline = () => (status.current === 'signed-in' || status.current === 'unreachable' || readPendingSignOut()) && check();
+    // Another tab signed out, cleared this device or signed someone else in (the device id changed).
+    const onStorage = (e) => (e.key === 'suite.deviceId' || e.key === null) && check();
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('online', onOnline);
+    window.addEventListener('storage', onStorage);
     const timer = setInterval(recheckIfIn, RECHECK_MS);
     return () => {
       window.removeEventListener(SESSION_LOST_EVENT, onLost);
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onOnline);
+      window.removeEventListener('storage', onStorage);
       clearInterval(timer);
     };
   }, [check, sessionLost]);
@@ -91,6 +116,12 @@ export function AuthProvider({ children }) {
     // A different device id means what this browser holds belongs to another (signed-out, or the
     // other person's) device: drop it before carrying on as the new one.
     if (previous && previous !== result.device.id) await clearLocalData();
+    // A sign-out made offline that never reached the server: sign that device out from here now.
+    const pending = readPendingSignOut();
+    if (pending) {
+      if (pending !== result.device.id) api.post(`/api/auth/devices/${pending}/sign-out`).catch(() => {});
+      setPendingSignOut(null);
+    }
     setDeviceId(result.device.id);
     const session = { user: result.user, device: result.device, session: result.session };
     saveSessionCache(session);
@@ -98,12 +129,17 @@ export function AuthProvider({ children }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    const deviceId = getDeviceId();
+    let told = false;
     try {
       await api.post('/api/auth/logout');
-    } catch {
-      /* already signed out or offline: clear here anyway */
+      told = true;
+    } catch (err) {
+      told = err.status === 401; // already signed out
     }
     await clearLocalData();
+    // Offline: the server still has the session; send the sign-out as soon as it can be reached.
+    if (!told) setPendingSignOut(deviceId);
     setState({ status: 'signed-out', session: null, offline: false, notice: NOTICES.signed_out, error: null });
   }, []);
 

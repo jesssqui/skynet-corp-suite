@@ -20,6 +20,20 @@ async function fill() {
   await cache.addAll(MANIFEST.files.map((url) => new Request(url, { cache: 'reload' })));
 }
 
+/** Put back any file missing from this version's cache (best effort: needs the network). */
+async function refill() {
+  const cache = await caches.open(SHELL);
+  await Promise.all(MANIFEST.files.map(async (url) => {
+    if (await cache.match(url)) return;
+    try {
+      const res = await fetch(new Request(url, { cache: 'reload' }));
+      if (res.ok) await cache.put(url, res);
+    } catch {
+      /* offline: the next activate or fetch tries again */
+    }
+  }));
+}
+
 self.addEventListener('install', (event) => {
   // No skipWaiting: an open app keeps the version it started with until the person reloads.
   // (The very first install has no app to replace and takes over at activate.)
@@ -28,6 +42,9 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
+    // Own cache complete first (something may have emptied it while this version waited),
+    // then drop older versions'.
+    await refill();
     for (const name of await caches.keys()) {
       if (name.startsWith(PREFIX) && name !== SHELL) await caches.delete(name);
     }
@@ -38,14 +55,17 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('message', (event) => {
   const type = event.data?.type;
   if (type === 'SKIP_WAITING') self.skipWaiting(); // the person tapped Reload
-  else if (type === 'RECACHE') event.waitUntil(fill().catch(() => {})); // after clearLocalData emptied the caches
   else if (type === 'VERSION') event.ports?.[0]?.postMessage({ version: MANIFEST.version });
 });
 
 async function fromShell(path, request) {
   const cache = await caches.open(SHELL);
   const hit = await cache.match(path);
-  return hit ?? fetch(request); // not cached (just cleared): the network, if there is one
+  if (hit) return hit;
+  // Missing (cleared by the browser or by hand): from the network, and kept again for next time.
+  const res = await fetch(path === INDEX ? new Request(INDEX, { cache: 'reload' }) : request);
+  if (res.ok) await cache.put(path, res.clone()).catch(() => {});
+  return res;
 }
 
 self.addEventListener('fetch', (event) => {

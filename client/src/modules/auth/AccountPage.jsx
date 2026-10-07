@@ -219,6 +219,7 @@ function SignOutButton() {
 }
 
 export default function AccountPage() {
+  const { session } = useAuth();
   const [info, setInfo] = useState(null);
   const [error, setError] = useState(null);
 
@@ -255,6 +256,14 @@ export default function AccountPage() {
           <TwoFactorCard info={info} reload={load} />
           <PasswordCard />
         </div>
+      ) : error && session ? (
+        // No connection: the rest needs the server, but signing out of this device must still work.
+        <Card title="You" style={{ maxWidth: 480 }}>
+          <KeyValue rows={[['Name', session.user.displayName], ['This device', session.device.name]]} />
+          <div style={{ marginTop: 'var(--space-4)' }}>
+            <SignOutButton />
+          </div>
+        </Card>
       ) : null}
     </>
   );
