@@ -45,6 +45,14 @@ test('GET /api/health reports version and a working database', async (t) => {
   assert.ok(res.headers.get('content-security-policy'));
 });
 
+test('no Strict-Transport-Security header (it would leak to other apps on the same ts.net host)', async (t) => {
+  const { base } = await startApp(t, testConfig(tmpDir(t)));
+  for (const url of [`${base}/api/health`, `${base}/api/nope`]) {
+    const res = await fetch(url);
+    assert.equal(res.headers.get('strict-transport-security'), null, url);
+  }
+});
+
 test('the database keeps its instance id across restarts', async (t) => {
   const config = testConfig(tmpDir(t));
   const first = await startApp(t, config);

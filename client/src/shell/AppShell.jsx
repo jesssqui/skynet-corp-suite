@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { Icon } from '../ui/index.js';
 import { navItems } from '../modules/index.js';
+import BackupBanner from './BackupBanner.jsx';
 import './shell.css';
 
 const linkClass = (base) => ({ isActive }) => `${base}${isActive ? ' active' : ''}`;
@@ -22,7 +23,10 @@ export default function AppShell({ children }) {
       </nav>
 
       <main className="shell-main">
-        <div className="shell-content">{children}</div>
+        <div className="shell-content">
+          <BackupBanner />
+          {children}
+        </div>
       </main>
 
       <nav className="shell-tabbar" aria-label="Main">

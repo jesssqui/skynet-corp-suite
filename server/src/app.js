@@ -29,6 +29,10 @@ export async function createApp({ config, db, log, modules = registeredModules }
   const app = express();
   app.disable('x-powered-by');
   app.use(helmet({
+    // No HSTS: it would apply to the whole ts.net hostname on every port and force
+    // other apps on this Mac (e.g. the Order Manager on http://…ts.net:3000) to https.
+    // Tailscale Serve already makes the suite HTTPS-only.
+    strictTransportSecurity: false,
     contentSecurityPolicy: {
       directives: {
         // Pages are reached over plain http on localhost as well as https via Tailscale Serve.

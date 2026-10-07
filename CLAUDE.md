@@ -75,6 +75,8 @@ There is **no sign-in yet**. The server binds `127.0.0.1` by default; in Docker 
 container but compose publishes it on the Mac's `127.0.0.1:3100` only, and Tailscale Serve is the only way in from other
 devices (tailnet members only). Don't publish the port on other interfaces, and don't enable Tailscale Funnel, before C1.
 helmet sets a strict CSP (`script-src 'self'`): no inline scripts, no third-party script/style hosts.
+**No HSTS** (helmet's is off): browsers apply it to the whole ts.net hostname on every port, which would force the
+Order Manager's plain-http port on the same Mac to https. Tailscale Serve already makes the suite HTTPS-only.
 
 ## Backups
 Design (code in `server/src/backup/`, tests in `server/test/backup.test.js`):
@@ -88,7 +90,8 @@ Design (code in `server/src/backup/`, tests in `server/test/backup.test.js`):
 - `data/backups/status.json` records the last attempt/success/error; `GET /api/health` → `backup.ok` is false when the
   last good backup is older than 26 h or the off-machine copy failed. The System page shows it.
 - **Scheduling: inside the server process** (`schedule.js`), daily at `BACKUP_TIME` in the container's `TZ`, plus a
-  catch-up run 2 min after start if the last success is over 25 h old. Chosen over launchd because it needs no host
+  catch-up run 2 min after start if the last success is over 25 h old. A failed run is retried hourly until one succeeds.
+  While `backup.ok` is false (and the schedule is on), `shell/BackupBanner.jsx` shows a red banner on every page. Chosen over launchd because it needs no host
   setup, no Node on the Mac and no `docker exec` from a plist; it ships with the image and moves with it (e.g. to Fly.io).
   Trade-off: no backups while the app is down — but then nothing changes either; the catch-up covers restarts.
 - **Restore** (`restore.js`) refuses while the server's heartbeat file (`<db>.server-lock`, refreshed every 15 s, removed

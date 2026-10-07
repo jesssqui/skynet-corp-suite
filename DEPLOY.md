@@ -24,13 +24,25 @@ Commands are run in Terminal on the Mac mini, in the repo folder, unless it says
 ## 1. Pick the off-machine backup folder
 
 Backups must end up somewhere that survives the Mac mini dying. Pick one folder on the Mac that is either synced to the
-cloud or lives on another device:
+cloud or lives on another device. **Use iCloud Drive or Google Drive unless you have a reason not to** — they are
+ordinary folders on the Mac's own disk, so they are always there when Docker starts.
 
 | Option | Folder on the Mac | Notes |
 |---|---|---|
 | iCloud Drive | `/Users/<you>/Library/Mobile Documents/com~apple~CloudDocs/Suite Backups` | Simplest. Check the files appear on another device. |
 | Google Drive (Drive for desktop) | `/Users/<you>/Library/CloudStorage/GoogleDrive-<account>/My Drive/Suite Backups` | Set Drive to *Mirror files* or *Stream* — both work. |
-| Network share / NAS | `/Volumes/<share>/suite-backups` | Must be mounted at login (System Settings → General → Login Items). Add `/Volumes` in Docker Desktop → Settings → Resources → File sharing. |
+| Network share / NAS (not recommended) | `/Volumes/<share>/suite-backups` | See the warning below. Add `/Volumes` in Docker Desktop → Settings → Resources → File sharing. |
+
+**If you use a network share anyway:** Docker Desktop can start before the share is mounted at login. The container
+then either fails to start or gets an empty stand-in folder instead of the share, and macOS sometimes remounts the share
+as `/Volumes/<share>-1`, so the path in `.env` silently points at the wrong place. The marker file below makes backups
+fail loudly (and the app shows a red banner) rather than write to the wrong place, but you have to fix it by hand:
+after every restart of the Mac, once the share shows up in Finder at the exact path in `.env`, run
+
+```bash
+docker compose up -d --force-recreate
+docker compose exec suite node server/scripts/backup.js     # must end with "copied off-machine"
+```
 
 Create the folder and the marker file that tells the backup "this is the real folder" (if the drive or share is not
 mounted, the marker is missing and the backup fails loudly instead of writing to the Mac's own disk):
@@ -50,7 +62,7 @@ open -e .env                            # set SUITE_OFFSITE_DIR to the folder fr
 APP_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
 ```
 
-Check it:
+Check it (if you changed `SUITE_PORT` in `.env`, use that port instead of 3100 here and in every `curl` below):
 
 ```bash
 docker compose ps                       # STATUS should become "healthy"
@@ -116,7 +128,8 @@ docker compose exec suite node server/scripts/backup.js
 ls -l "<your SUITE_OFFSITE_DIR>"
 ```
 
-Each morning, the **System** page in the suite (or `curl -s http://127.0.0.1:3100/api/health`) shows the last good
+If a backup fails, it is retried every hour until one works, and a red banner appears across the top of every page of
+the suite until the problem is fixed. The **System** page in the suite (or `curl -s http://127.0.0.1:3100/api/health`) shows the last good
 backup; `backup.ok: false` means it is over a day old or the off-machine copy failed, with the reason in
 `backup.lastError`. Local copies are also kept inside the volume at `/app/data/backups` for quick restores.
 
@@ -161,4 +174,5 @@ Once there is real data, also spot-check a few records you remember in the app a
 - Backup error mentioning `.suite-backup-target` → the drive/share isn't mounted, or step 1's `touch` was skipped.
 - Permission denied writing `/offsite` → in Docker Desktop → Settings → Resources → File sharing, make sure the folder's
   parent (`/Users` or `/Volumes`) is listed, then `docker compose up -d`.
-- Port 3100 already in use → set `SUITE_PORT` in `.env` and use that port in the `tailscale serve` command.
+- Port 3100 already in use → set `SUITE_PORT` in `.env` and use that port in the `tailscale serve` command and the
+  `curl` checks.
