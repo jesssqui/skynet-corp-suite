@@ -140,7 +140,8 @@ test/e2e/                  Playwright end-to-end tests (npm run test:e2e); proxy
 ## Modules
 One folder per module on each side, same name on both (`server/src/modules/health`, `client/src/modules/health`).
 - **Server shape** (`modules/<name>/index.js`): `{ name, migrationsDir, createService(ctx), createRouter(ctx, service),
-  createPublicRouter?, start?, bodyLimits? }`. `bodyLimits: { '/import': '8mb' }` lets a path take JSON bodies bigger
+  createPublicRouter?, start?, bodyLimits?, keepOnRestore? }`. `keepOnRestore: ['table', …]` (C8): those tables keep the
+  current rows across a restore (`restore.js` copies them into the restored copy) — for switches, never for data. `bodyLimits: { '/import': '8mb' }` lets a path take JSON bodies bigger
   than the app's 1 MB (signed in only; crm's CSV import). `start(ctx, service)` runs once every service exists (auth uses it to notice a
   restore). Routes mount at `/api/<name>`. **Every `createRouter` route requires a signed-in session**
   (app.js puts `auth.requireSession` in front; `req.auth = { user: { id, actor, username, displayName }, device: { id,
