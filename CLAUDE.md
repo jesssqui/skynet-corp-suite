@@ -19,7 +19,9 @@ automation framework (module `automations`: trigger, on/off, silent/alert, runs,
 alerts) with the first two automations (the planner's Friday review list and relationships with no next step), and
 from **D1** the wholesale connection (module `wholesale`: the signed receiver for the Order Manager's outbox, a
 holding area for everything it sends, linking its customers to accounts, and their orders, payments, returns and
-refunds on the client timeline with spend and last order).
+refunds on the client timeline with spend and last order), and from **D3** the wholesale automations (same module:
+check-ins for quiet regulars, balance reminders over 30 days with a drafted email, ready-to-ship tasks on packed
+orders, and the "Quiet regular" flag on the client list and page).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -88,7 +90,9 @@ server/src/
                            project, link/create/unlink, lists, the 'wom' connection), events.js (A10 envelope + data
                            checks, pure), figures.js (spend/paid/credit rules, pure), secret.js (secret, AES-GCM with
                            the key file, HMAC check), entities.js (synced wholesale_customer/_order/_entry, server-only
-                           check), routes.js (POST /api/wom/events + /api/wholesale/*), migrations/001
+                           check), routes.js (POST /api/wom/events + /api/wholesale/*), migrations/001..003.
+                           D3: automations.js (wholesale-check-in, wholesale-balances, wholesale-ready-to-ship), figures.js
+                           also holds orderRhythm / owingByOrder / overdueOrders (pure)
   backup/                  backup.js, restore.js (+ carryKeptTables: modules' keepOnRestore), schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file)
 server/scripts/            backup.js, restore.js, users.js (CLIs)
@@ -124,7 +128,8 @@ client/src/
   modules/sync/            /sync (Offline data), /sync/attention (Needs attention), /sync/data/:entity (plain records view)
   modules/wholesale/       D1: WholesalePage (/wholesale: waiting for a client / linked; lazy), ConnectionPanel.jsx (the
                            wom card's address + secret, via connections/panels.js; lazy), parts.jsx (timeline rows,
-                           account and client figures on the client page), logic.js (no React; client/test/wholesale.test.js)
+                           account and client figures on the client page; D3: QuietRegularBadge), logic.js (no React;
+                           D3: isQuietRegular, quietRegularText, quietFromByClient; client/test/wholesale.test.js)
   modules/crm/             C3b screens: ClientListPage (/crm), ClientPage (/crm/clients/:id), BusinessesPage
                            (/crm/businesses), forms.jsx (add/edit sheets), parts.jsx (chips, RecordSync, FormSheet),
                            data.js (cached offline reads), formFields.js (form values -> changed fields), logic.js (search, timeline filters, money, consent, errors — no
@@ -923,8 +928,8 @@ only its own tables and has **no HTTP routes**: devices use their offline copy, 
 - **No next step** (`relationshipsWithoutNextStep`, shared): an **active** relationship whose account and client are
   live, with no **open** task naming it (`relationship_id`) that has a **due date** (overdue still counts: it shows as
   overdue instead). **Wholesale relationships are never flagged** (`NO_NEXT_STEP_EXEMPT_KINDS`, D1): every account
-  linked to an Order Manager customer gets one, and they are followed by their orders — until D3's wholesale
-  check-ins exist; the client page, Today, the review and the C8 automation all use this one rule. Any owner's task counts. Shown on the client page's relationship rows ("No next step · Add" →
+  linked to an Order Manager customer gets one, and they are followed by their orders and (D3) the wholesale
+  check-ins and balance reminders instead; the client page, Today, the review and the C8 automation all use this one rule. Any owner's task counts. Shown on the client page's relationship rows ("No next step · Add" →
   task sheet with the relationship, its account, the client and its business) and on Today (count + list).
   Add note / Log call take an optional **Next step** (title + day) and create the task in the same save (two store
   writes, activity first; a retry after a failure doesn't repeat what was saved), owner = whoever logs it, for the
@@ -1127,6 +1132,7 @@ it uses.
     id: 'friday-review', name, description, module: 'planner',
     trigger: { type: 'schedule', every: 'week', day: 'fri', at: '08:00' }   // or every: 'day', at: '07:30'
           // or { type: 'event', event: 'order.placed', key: (data) => data.orderId, label? }
+          // or { type: 'event', events: ['order.packed', 'order.shipped'], key, accept: (data) => bool, label? } (D3)
     defaults: { enabled: true, alert: false }, alertLink?: '/plan/review',
     run(ctx, { now, nowMs, today, period, trigger, actor, data, made, create }) {
       if (made(period.key).length) return { summary: 'Already there' };
@@ -1152,13 +1158,18 @@ it uses.
   its run key) the first time the scheduler looks afterwards — the page shows it; no late task is made for a week
   that is over; nothing is noted for an automation that had never run before. A failed scheduled run is retried no sooner than 15 min later (`RETRY_MS`).
   `run` also gets `update(entity, id, fields)` (sync, as `system`) for records it made before; an alert is raised
-  when a run created **or updated** something.
+  when a run created **or updated** something. D3 added `madeLike(prefix)` (everything made under keys starting with
+  it, with `key`: "every task for this customer" when keys are `<customer uid>:<…>`) and `remember(key, entity, id)`
+  (file something made earlier under one more key), and `automations.made(id, key)` for reads outside a run.
   Every `run` must also be idempotent by content (`made(key)` = what it made before): **Run now** (`POST …/run`) relies
   on that. A successful Run now after the period's time claims the period (the scheduler won't run it again); one
   before the time doesn't. Event runs use `<id>:<trigger.key(data)>` (a re-delivered event is a no-op).
 - **Scheduler**: `startScheduler()` (from `src/index.js` when `AUTOMATIONS_ENABLED`, on by default in production) —
   one look 15 s after start, then every minute; runs are synchronous so looks never overlap. Tests call `tick()` and
-  move `ctx.now` (all run times use the module's clock). `emit(event, data)` is the event hook (no events exist yet).
+  move `ctx.now` (all run times use the module's clock). `emit(event, data)` is the event hook (D1's wholesale module
+  emits the Order Manager's events). An event trigger may list several `events` (D3) and an `accept(data)` filter: an
+  event it doesn't accept runs nothing and leaves **no run row** (so a backfill of thousands of events, or events for
+  unlinked customers, don't fill the run log); an `accept` that throws is logged and skipped.
 - **Switches**: `automations_settings` (no row = the automation's defaults), changes logged in
   `automations_changes` (who, device); kept across restores like the connections' (`keepOnRestore`). Off = the
   scheduler and events skip it; Run now still works.
@@ -1333,6 +1344,77 @@ relationship on undo, pruning `wholesale_events` (see the rule above). D2's auto
 `reconcileAll()` (chunked) rather than `reconcile()`. Other modules read "last order per client" with
 `wholesale.lastOrderAtByClient()`.
 
+## Wholesale automations (wholesale module, D3)
+Code `server/src/modules/wholesale/automations.js` (registered from the wholesale service when automations and planner
+exist), the rules in `figures.js` (pure: `orderRhythm`, `isQuiet`, `owingByOrder`, `overdueOrders`, `daysBetween`,
+`RHYTHM`, `OVERDUE_AFTER_DAYS`), the card fields in migration `003_rhythm.sql`, the flag on devices in
+`client/src/modules/wholesale/logic.js` + `parts.jsx`; tests `server/test/wholesale-automations.test.js` (TZ Toronto),
+`client/test/wholesale.test.js`, `test/e2e/wholesale-automations.e2e.test.js`.
+All three only make or change **tasks** (and C8 in-app alerts when set to alert): nothing is ever sent outside the
+suite. Every task: business **wholesale**, owner `planner.automatedOwnerFor(wholesale)` (the business's default
+owner), `client_id`, `account_id`, and the account's wholesale relationship (an active one first) as
+`relationship_id`; due today. Only **linked** (attached) Order Manager customers are looked at. Tasks are never deleted
+by the suite: when their reason is gone they are **finished** (`done_at`) with a line in their notes saying why
+("… — finished by the suite on Oct 17, 2026."). Reads: the holding area (own tables), `crm.liveAccount`,
+`crm.accountRelationships`, `crm.accountContacts` (D3: an account's contacts, then its client's with no account),
+`crm.getBusiness`, `planner.taskState` (now with `notes`, `doneAt`).
+- **The rhythm** (`orderRhythm`, one rule for the check-in and the flag): counting orders (active, not deleted;
+  history-only count), one per ordering **day**. A **regular** has ≥ 4 ordering days and a usual gap ≤ 90 days; the
+  usual gap = the **median of the last 8 gaps** between ordering days (rounded). Quiet when the days since the last
+  order exceed `max(ceil(1.5 × usual), usual + 7)` — i.e. from `quiet_from = last order date + that + 1`.
+  (Weekly: quiet from day 15; monthly: day 46.)
+- **wholesale-check-in** (every day 07:40; **on**, **silent**): each quiet regular whose client is **active** (closed =
+  no next steps) and not deleted in the Order Manager gets "Check in with <account>: no order in N days (usually every
+  M)" (+ the customer's name when an account has several linked) with the rhythm and last order in its notes. Key
+  `<customer uid>:<last counting order uid>` — **once per quiet spell** (a finished or deleted check-in isn't made
+  again for that spell). A newer last order means a new spell: a check-in still open for an older key is finished
+  ("Ordered again (order #N on …)"). At most **10 new a run** (most past their quiet day first; the rest come on the
+  next days). Archived wholesale business: no new ones. No events involved, so backfill events can't trigger it.
+- **wholesale-balances** (every day 07:45; **on**, **alert**): **what "owing" means** (`owingByOrder`, the Order
+  Manager's A8 balance — `PAID_ROWS_SQL`): per counting order (active, not deleted; history-only included, as the Order
+  Manager's balances do) `total_cents − live payments on it − store credit applied on it`. **Refunds and credit notes
+  are not taken off**: a credit note is credit held until applied (then it is "store credit applied" — taking off both
+  would count it twice) and a refund is money already given back; the email mentions store credit the customer holds
+  (`credit_cents` of the card). Money not tied to a counting order goes to the **oldest owing orders first** (the Order
+  Manager's aging): payments on account (no order, or an order not held), an overpaid order's extra, and what was paid on
+  a cancelled/deleted order minus what was given back on it (never below 0). Cancelled and deleted orders never owe.
+  **Overdue** = owing on an order whose `order_date` is **more than 30 days** before today. Per customer with overdue
+  orders: one task "Balance owing over 30 days: <account>, $X (N orders)" whose notes hold a **drafted plain-text
+  email** (To: the account's first contact with an email, else the Order Manager's email, else a "no email on file"
+  line; subject; each overdue order's number, date, amount owing and total; the total; store credit; signed with the
+  wholesale business's name) **above `NOTES_MARK`**; what a person writes below that line is kept. Key
+  `<customer uid>:<oldest overdue order uid>`. While a task is open it is **updated** (title, the draft above the line)
+  instead of making a second — only when the money changed (no daily churn, no daily alert) — and filed under the
+  current key too (`remember`); a person who deletes the line takes the notes over (only the title is updated). When
+  nothing over 30 days is owed any more (paid, or credited by the Order Manager) the open task is **finished**
+  ("Nothing owing over 30 days any more"). A task finished or deleted by a person isn't made again while the same
+  order is the oldest overdue one; a different oldest overdue order makes a new one. At most **10 new a run**
+  (biggest first). Closed clients still get them (money is owed either way).
+- **wholesale-ready-to-ship** (event; **on**, **silent**): listens to `order.packed`, `order.shipped`,
+  `order.cancelled`, `order.deleted`, `order.restored`, run key = the event's key (a re-delivered or replayed event is a
+  no-op; the receiver doesn't emit duplicates either). `accept`: never for `backfill: true`; for an order **ready to
+  ship** (active, not deleted, `packing.state === 'packed'`) only when the customer is linked; otherwise only when this
+  automation made a task for that order (to finish it). Ready + no open task for the order (`made(orderUid)`) → "Ship
+  order #N for <account>" (packed by/when, reference, total, items in notes). Not ready (shipped, cancelled, deleted,
+  unpacked, put back) → the open one is finished with the reason. Packed again after an unpack, unshipped, or restored
+  packed → a new task. **Unlinked customers get nothing, and linking one later replays nothing** (only new events
+  count). Run now does nothing (it runs on events).
+- **The "Quiet regular" flag**: `wholesale_customer` cards carry `usual_gap_days` and `quiet_from` (nullable; null =
+  not a regular or deleted in the Order Manager), computed in `desiredCustomer` by `orderRhythm`. `quiet_from` is a
+  **date**, so a device shows the flag from that day on with its own `localDate()` (`isQuietRegular(card, today)`) —
+  no daily server refresh is needed; a new or changed order dirties the customer and re-projects the card (a new
+  `quiet_from`), so the flag goes away. Shown on the client list row (chip, `useClientListData().quietFrom` →
+  `buildClientIndex` → `row.quietFrom`; the list now also reads `wholesale_customer`), the client header and the
+  account's wholesale card ("Usually orders every 14 days; none for 32"). **Existing cards**: at start
+  `checkCardVersion()` marks every held customer dirty once when `wholesale_status.card_version` < `CARD_VERSION` (2),
+  and the start's `reconcileAll` projects them through `applyLocal`, so devices pull the new fields (sync rule 7). Raise
+  `CARD_VERSION` whenever a package adds card fields.
+- **For D5 and later**: more wholesale automations go in `automations.js` with the same patterns (`taskBase`,
+  `finishTask`, keys prefixed by customer uid + `madeLike`). The rules are pure in `figures.js` — reuse
+  `owingByOrder` for statements and `orderRhythm` for reorder predictions. Open: per-customer overrides of the rhythm
+  (a customer who pauses for winter), a "snooze" for a check-in, and emailing for real (would need consent per
+  business and an explicit person's send — never automatic).
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
@@ -1354,15 +1436,22 @@ relationship on undo, pruning `wholesale_events` (see the rule above). D2's auto
     `automations.emit` (no automations listen yet).
   - **C6** (Apple Calendar) registers `calendar` (CalDAV pull: last success, error; pausing stops the pull and the
     feed's refresh, never deletes anything); **D16** registers `stockroom` (read-only pull) the same way.
-  - **D3 and later** add automations with `register()` in their own module (wholesale check-ins, balances, renewals…):
-    tasks via `automatedOwnerFor`, `made(key)` for "once per order/customer/period", event triggers with a `key`.
+  - **D3** (done, see "Wholesale automations"): check-ins, balances, ready to ship in the wholesale module. **Later
+    packages** add automations with `register()` in their own module (renewals…): tasks via `automatedOwnerFor`,
+    `made(key)` / `madeLike(prefix)` for "once per order/customer/period", event triggers with a `key` (and `accept`).
   - **C5** turns alerts into phone notifications through `onAlert` (and adds quiet hours / the morning digest); until
     then "alert" means the in-app alert.
 - **D1 (wholesale receiver)**: done — see "Wholesale". The receiver is a signed route outside the guard (one exact
   path); the Order Manager's data is held server-side by uid and shown as server-written synced records for linked
   customers (order + money entries + a figures card), never as activities; spend is computed on the server with the
   Order Manager's own rules; attaching follows the live CRM links (reconcile), so D2 only has to make or delete links.
-  Next: D2 matching and the review list; D3 automations on the emitted events; pruning `wholesale_events`.
+  Next: D2 matching and the review list; pruning `wholesale_events`.
+- **D3 (wholesale automations)**: done — see "Wholesale automations". Tasks only (a drafted email in a task's notes,
+  never sent); one rhythm rule (`orderRhythm`) for the check-in and the "Quiet regular" flag, stored on the card as a
+  date (`quiet_from`) so devices decide "today" themselves; "owing" is the Order Manager's own balance (credit notes
+  and refunds not taken off); ship tasks are finished, never deleted; backfill events and unlinked customers trigger
+  nothing. D2: linking customers in bulk makes them eligible for check-ins/balances on the next daily run (10 new a
+  day each). D5: build on `figures.js` and `automations.js`.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -1376,7 +1465,8 @@ the crm module (nor the planner, which needs it, nor the automations with their 
 shift their counts; `startServer(t, config, { crm: true })` includes them. A restore of a broken live database still
 works with `--force`: carrying the switches is best effort (a warning, then the backup's switches) and the restored
 copy must pass `integrity_check`. Tests that depend on local time set
-`process.env.TZ = 'America/Toronto'` at the top (automations.test.js). The e2e `startServer(t, { extraModules })` adds
+`process.env.TZ = 'America/Toronto'` at the top (automations.test.js, wholesale-automations.test.js). automations.test.js
+switches D3's two scheduled wholesale automations off in its setup (they're on by default) so its ticks stay about C8. The e2e `startServer(t, { extraModules })` adds
 test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager checkout>` (D1) runs the real Order
 Manager (needs `npm ci` in its `server/`) against a real suite and checks the timeline and spend against its own;
 `--capture <file>` writes the events it sent (the fixture `server/test/fixtures/wom-captured-events.json`). `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
