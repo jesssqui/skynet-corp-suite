@@ -8,6 +8,7 @@ import {
 } from '@suite/shared/planner';
 import { ACTORS } from '@suite/shared/actors';
 import { PLANNER_ENTITIES } from './entities.js';
+import { registerPlannerAutomations } from './automations.js';
 
 /**
  * Rules for a task step that are right in any arrival order: they look only at the step's own
@@ -97,9 +98,14 @@ export function createPlannerService({ db, services, log }) {
     openInbox: db.prepare('SELECT count(*) AS n FROM planner_inbox_items WHERE deleted_at IS NULL AND cleared_at IS NULL'),
     goals: db.prepare(`SELECT * FROM planner_goals WHERE deleted_at IS NULL AND kind = ? AND period = ?
       ORDER BY business_id, position IS NULL, position, id`),
+    overdue: db.prepare(`SELECT count(*) AS n FROM planner_tasks
+      WHERE deleted_at IS NULL AND done_at IS NULL AND due_date IS NOT NULL AND due_date < ?`),
+    relTasks: db.prepare(`SELECT id, relationship_id, due_date, done_at FROM planner_tasks
+      WHERE deleted_at IS NULL AND done_at IS NULL AND relationship_id IS NOT NULL`),
+    task: db.prepare('SELECT id, deleted_at, done_at FROM planner_tasks WHERE id = ?'),
   };
 
-  return {
+  const service = {
     /**
      * Who a task made by an automation for this business goes to (D packages): the business's
      * default owner, else the shared list. Tasks made by hand default to their maker (screens).
@@ -131,5 +137,21 @@ export function createPlannerService({ db, services, log }) {
       if (made.length) log?.info?.(`created ${made.length} workday settings`);
       return made;
     },
+    // ---- reads for the planner's automations (C8) ----
+    /** Open tasks (both people and the shared list) due before `today`. */
+    overdueCount: (today) => q.overdue.get(today).n,
+    /** Open tasks that name a relationship (for C4a's "no next step" rule on the server). */
+    openRelationshipTasks: () => q.relTasks.all(),
+    /** { live, open } for a task id (live = not deleted; open = live and not done), or null. */
+    taskState(id) {
+      const t = q.task.get(id);
+      if (!t) return null;
+      const live = t.deleted_at === null;
+      return { live, open: live && t.done_at === null };
+    },
   };
+
+  // C8: the Friday review list and "no next step" (when the automations module is registered).
+  if (services.automations) registerPlannerAutomations({ automations: services.automations, crm: services.crm, planner: service });
+  return service;
 }

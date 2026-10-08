@@ -249,6 +249,23 @@ export function createCrmService({ db, services, log }) {
     return { activities: rows.map((r) => view('activity', r, { withSync: false })), total, limit, offset };
   }
 
+  // ---- reads for other modules (C8: the planner's automations) -----------------------------
+  const live = {
+    relationships: db.prepare(`SELECT r.*, a.name AS account_name, a.client_id AS client_id, c.name AS client_name,
+        c.status AS client_status, b.name AS business_name
+      FROM crm_relationships r ${REL_PARENTS}
+      JOIN crm_clients c ON c.id = a.client_id AND c.deleted_at IS NULL
+      WHERE r.deleted_at IS NULL ORDER BY c.name COLLATE NOCASE, a.name COLLATE NOCASE, r.id`),
+    renewals: db.prepare(`SELECT s.*, a.name AS account_name, a.client_id AS client_id, r.business_id AS business_id
+      FROM crm_services s JOIN crm_relationships r ON r.id = s.relationship_id AND r.deleted_at IS NULL ${REL_PARENTS}
+      JOIN crm_clients c ON c.id = a.client_id AND c.deleted_at IS NULL
+      WHERE s.deleted_at IS NULL AND s.renewal_date BETWEEN ? AND ? AND (s.status IS NULL OR s.status NOT IN ('done', 'cancelled'))
+      ORDER BY s.renewal_date, s.id`),
+    clientsActivity: db.prepare(`SELECT c.id, c.name, c.status, c.created_at,
+        (SELECT max(t.at) FROM crm_activities t WHERE t.client_id = c.id AND t.deleted_at IS NULL) AS last_activity_at
+      FROM crm_clients c WHERE c.deleted_at IS NULL AND c.status = 'active' ORDER BY c.name COLLATE NOCASE, c.id`),
+  };
+
   /** The live links of one outside record (D2): normally at most one per kind of target. */
   function liveLinks(app, externalId) {
     return [...liveLink.account.all(app, externalId), ...liveLink.contact.all(app, externalId)].map((r) => view('link', r));
@@ -264,5 +281,16 @@ export function createCrmService({ db, services, log }) {
     listClients,
     getClient,
     listActivities,
+    /**
+     * Every live relationship (its account, client and business live) with its account's and
+     * client's names, the client's status and the business's name — rows as stored (snake_case),
+     * plus account_name, client_id, client_name, client_status, business_name. For server-side
+     * rules like C4a's "no next step" (the planner's automations).
+     */
+    liveRelationships: () => live.relationships.all(),
+    /** Live services (not done or cancelled) whose renewal_date is from..to (YYYY-MM-DD, inclusive). */
+    renewalsBetween: (from, to) => live.renewals.all(from, to),
+    /** Live active clients with created_at and the time of their latest activity (null when none). */
+    activeClientsWithLastActivity: () => live.clientsActivity.all(),
   };
 }
