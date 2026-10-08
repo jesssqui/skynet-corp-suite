@@ -158,7 +158,10 @@ One folder per module on each side, same name on both (`server/src/modules/healt
   (D1): exact POST/PUT `/api/...` routes that authenticate each request themselves (a signature over the raw body),
   mounted **before** the Origin/JSON guard and the JSON parser; any other method or path still goes through the guard.
   Only for server-to-server calls (the Order Manager's outbox); never for anything a browser calls. `keepOnRestore: ['table', …]` (C8): those tables keep the
-  current rows across a restore (`restore.js` copies them into the restored copy) — for switches, never for data. `bodyLimits: { '/import': '8mb' }` lets a path take JSON bodies bigger
+  current rows across a restore (`restore.js` copies them into the restored copy) — for switches, never for data. **One
+  exception (D1)**: the wholesale module's holding area, event keys and receiver status are kept too — they mirror
+  another app (the Order Manager), which never re-sends what it already delivered, so rolling them back would lose its
+  changes (deletes above all) for good; the synced records are rebuilt from them at start. `bodyLimits: { '/import': '8mb' }` lets a path take JSON bodies bigger
   than the app's 1 MB (signed in only; crm's CSV import). `start(ctx, service)` runs once every service exists (auth uses it to notice a
   restore). Routes mount at `/api/<name>`. **Every `createRouter` route requires a signed-in session**
   (app.js puts `auth.requireSession` in front; `req.auth = { user: { id, actor, username, displayName }, device: { id,
@@ -402,6 +405,8 @@ gets 401 `device_signed_out`):
      device, re-sent after a restore). With SQL FKs it would be `constraint` → Needs attention instead.
    - `parent: true` (with `ref`): what the record **belongs to**. See "Belonging" below.
    A `not_found` rejection says what is missing: `missing: { field, entity, id }` (`field` null = the record itself).
+   `readOnly: true` (D1): written by server code only — `/info` says so (devices get no ops: the store refuses with
+   `op_not_allowed`, `/sync/data` offers no add/edit/delete) and the server refuses every device step.
    Also on registerEntity: `check({ op, recordId, fields, current, actor, server })` — the module's own rule (since D1
    it runs for deletes too, with `fields` null; every earlier hook lets deletes by)
    (`actor`: who made the step, from the session or `system`; `server`: true for `applyLocal`, false for a device's
@@ -917,7 +922,9 @@ only its own tables and has **no HTTP routes**: devices use their offline copy, 
   once (one or two fields).
 - **No next step** (`relationshipsWithoutNextStep`, shared): an **active** relationship whose account and client are
   live, with no **open** task naming it (`relationship_id`) that has a **due date** (overdue still counts: it shows as
-  overdue instead). Any owner's task counts. Shown on the client page's relationship rows ("No next step · Add" →
+  overdue instead). **Wholesale relationships are never flagged** (`NO_NEXT_STEP_EXEMPT_KINDS`, D1): every account
+  linked to an Order Manager customer gets one, and they are followed by their orders — until D3's wholesale
+  check-ins exist; the client page, Today, the review and the C8 automation all use this one rule. Any owner's task counts. Shown on the client page's relationship rows ("No next step · Add" →
   task sheet with the relationship, its account, the client and its business) and on Today (count + list).
   Add note / Log call take an optional **Next step** (title + day) and create the task in the same save (two store
   writes, activity first; a retry after a failure doesn't repeat what was saved), owner = whoever logs it, for the
@@ -1041,8 +1048,9 @@ Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (
   and that month's week goals grouped by week (tick from here).
 - **Friday review** `/plan/review` (this week): overdue (both people), this week's goals (one-tap done), renewals
   (services not done/cancelled with `renewal_date` today…+30, `renewalsDue`), active clients quiet for 60 days
-  (`quietClients`: last activity — C3b's `lastActivityByClient`, shared via `lastActivityOf` — or, with none, when the
-  client was made, ≥ 60 days ago), hand work over (Yours / Partner's: open tasks due by the end of next week or
+  (`quietClients`: last activity — C3b's `lastActivityByClient`, shared via `lastActivityOf`, **and (D1) the client's
+  latest Order Manager order, whichever is later** (`reviewLastActivity`; the server's review numbers read the same
+  through `wholesale.lastOrderAtByClient()`) — or, with none, when the client was made, ≥ 60 days ago), hand work over (Yours / Partner's: open tasks due by the end of next week or
   undated; one tap gives/takes, Undo), relationships with no next step (C4a's rule), and two "Not connected yet"
   lines (duplicate matches → D2; this week's order entry → the Order Manager connection). Each step has a "reviewed"
   tick kept per week on this device (`prefs.js`, localStorage, last 8 weeks) — a convenience, not data.
@@ -1201,18 +1209,27 @@ Registered last (after crm, planner, connections, automations); reads/writes onl
 `clientNames(ids)`) and `sync.applyLocal` (writes).
 
 **The receiver** — `POST /api/wom/events` (a `signedRoutes` entry, so the only route outside the guard):
-- Raw body (≤ 10 MB) → paused? **503** `paused` (nothing read or applied, nothing logged as a failure; the Order Manager
-  keeps the events and resends them in order — its backoff caps at 5 min) → no secret / unreadable one → 401
-  `not_set_up` → signature: hex HMAC-SHA256(secret, `${ts}\nPOST\n${req.originalUrl}\n${sha256hex(raw)}`), constant-time,
+- **From the headers, before any of the body is read** (`precheck`): paused? **503** `paused` (nothing read or applied,
+  nothing logged as a failure; the Order Manager keeps the events and resends them in order — its backoff caps at
+  5 min) → `x-wom-timestamp` / `x-wom-signature` malformed → 401 → no secret / unreadable one → 401 `not_set_up`. Only
+  then the raw body (≤ **2 MB**: a batch of 50 is typically 50–150 KB; 413 beyond, which the Order Manager retries —
+  raise `RECEIVER_BODY_LIMIT` if an outsized order ever sticks there) → signature: hex HMAC-SHA256(secret, `${ts}\nPOST\n${req.originalUrl}\n${sha256hex(raw)}`), constant-time,
   then `|now − ts| ≤ 300 s` (401 `bad_signature` / `stale` / `no_signature` / `no_timestamp`) → JSON body
   `{ source?: 'wom', events: [1–50] }` (400 otherwise) → **200 `{ results: [{ key, status, reason? }] }`, one per event
   in order**.
 - Per event: `eventProblem` (events.js: exactly the A10 envelope, version 1, a UUIDv7 key, known name, each data's uids
-  and cents) → **refused + plain-English reason** (never a 500; a bug while applying is refused "The suite couldn't
-  apply it: …" and logged); key already in `wholesale_events` → **duplicate**; else **applied**: its holding rows and its
-  key in **one transaction** (exactly once). Applied in the order received, never by `time`. Refused keys aren't kept.
-- Refused requests (bad signature, stale, malformed) are counted and shown as the Connections row's last error
-  ("… (N refused since the last good request)") — never the secret. After the batch: `reconcile({ only: touched })`,
+  and cents) → **refused + plain-English reason** (only for events that are themselves wrong: the Order Manager parks
+  them); key already in `wholesale_events` → **duplicate**; else **applied**: its holding rows and its key in **one
+  transaction** (exactly once). Applied in the order received, never by `time`. Refused keys aren't kept. **An
+  unexpected error while applying** (SQLITE_BUSY, a full disk, a bug) is never `refused`: the answer stops at the
+  events before it (a prefix, which A10 allows), so the Order Manager sends it and the rest again, in order.
+- Refused requests (bad signature, stale, malformed) are counted in memory and shown as the Connections row's last
+  error ("… (N refused since the last good request)") — never the secret; `wholesale_status` is written and a warning
+  logged **at most once a minute** (the route has no session); a good request clears it.
+- **`wholesale_events` keys must never be pruned while the Order Manager could still re-send them**: it re-sends an
+  event (same key) until it has an answer, with no time limit (an outage, a pause, a lost reply) — so only prune keys of
+  events whose subject has a later applied event, or that are older than the longest outage you'd tolerate (e.g. a
+  year), and never a key the Order Manager still lists as waiting. Not pruned yet (one small row per event). After the batch: `reconcile({ only: touched })`,
   then `automations.emit(name, { key, name, time, backfill, by, customerUid, orderUid, accountId, clientId, linked, data })`
   for each applied event (D3 hangs automations off these; a duplicate emits nothing).
 
@@ -1230,10 +1247,21 @@ deleted → `gone`. **Creation events make a record live again**: `customer.crea
 (no `order.placed` needed ahead of it), payment `recorded`/`edited`, refund/return/credit note issued. An order for an
 unknown customer makes a stub from the order's customer summary. Every touched row is `dirty`.
 
+**Restores** (D1 review): the holding area, `wholesale_events` and `wholesale_status` are `keepOnRestore` (with the
+secret) — the exception to "switches only", because they mirror the Order Manager: it never re-sends what it delivered,
+and its "Forget everything + Send existing" can't repair deletes (it sends only what still exists). At start,
+`checkRestore()` sees the sync generation changed (`wholesale_status.sync_generation`), marks every held row dirty, and
+the background `reconcileAll()` re-projects: each synced record is **adopted by its uid** (`order_uid` / `uid` /
+`customer_uid`, oldest live one; extras deleted; missing ones re-made), statuses and deletions put back as the Order
+Manager last said, links re-checked. No resend is needed. (A new Mac with the volume lost restores an older holding
+area from the backup: then a resend is needed and deletes made meanwhile can't be known — DEPLOY.md step 6.)
+
 **Attaching** (`reconcile`): a held customer is attached to an account when its uid has **exactly one live `wom`
 account link** (`crm.liveAccountLinks`: link, account and client live); several → detached and flagged
 `several_links` (listed, never one picked); none → detached. Runs after each request (touched customers), after each
-link/unlink here, at start, and every minute (`startReconciler`, src/index.js) — so links made by D2 or by a device
+link/unlink here, at start, and every minute (`startReconciler`, src/index.js; the full passes are `reconcileAll()`:
+50 customers per transaction, projecting in 200-row transactions, yielding to the event loop in between — one pass
+at a time) — so links made by D2 or by a device
 are picked up within a minute (D2: call `ctx.services.wholesale.reconcile({ only: [uid], actor })` after linking to
 attach at once). **A new attachment** sets the account `age_restricted: true` when it isn't true, and creates an active
 `wholesale` relationship (start = first order date) when the account has no relationship with our wholesale business
@@ -1255,7 +1283,9 @@ moves the records (`client_id` kept in step).
   asks for, and replays (upserts by uid) can never duplicate them. **Why cards**: the figures need the whole holding
   area (orders that still count, refunds on them, tax shares), so they are worked out once on the server and the
   device only adds cards up (an account with two Order Manager customers; a client's accounts).
-- `project()` brings each dirty row's record up to date through `applyLocal` (actor `system`): create, update only what
+- All three are `readOnly` (devices get no ops) as well as `checkServerOnly`.
+- `project()` brings each dirty row's record up to date through `applyLocal` (actor `system`): the record is the
+  remembered `record_id` or else the oldest live one with its uid (extras deleted); create, update only what
   differs, or **delete when detached**. A failure is logged and left dirty (tried again next time).
 
 **Spend** (`figures.js`, the Order Manager's own A8 rules — the cross-app run checks it equals its `total_spent`):
@@ -1263,9 +1293,10 @@ orders count while active and not deleted (history-only ones count); sales = Σ 
 shipping; given back = credit notes' own `subtotal_cents` + other refunds with an amount (money or store credit) ×
 goods / (goods + tax) of their order, only on orders that count (so no tax is taken off twice; store credit *used* never
 counts); spend = sales − given back. paid = live payments. credit = store-credit refunds + credit notes + payments
-**moved to store credit** by a delete − store credit used (a restore brings the payment back: the credit goes). Known
-difference: a money refund made by a return with shipping added is netted by the proportion, not the return's own
-subtotal (A10's `return.received` has no subtotal — see the Order Manager notes in the D1 report).
+**moved to store credit** by a delete − store credit used (a restore brings the payment back: the credit goes).
+**Returns**: a refund or credit note made by a return (`return_uid`) whose `return.received` carries
+`subtotal_cents` (the Order Manager's additive A10 change) counts that subtotal — exact even when shipping went back
+too; older returns without it fall back to the proportion (off by the shipping share when shipping was refunded).
 
 **Never removed from the timeline**: cancelled/deleted orders show their status (struck through), removed payments
 and refunds show "Removed …" / "Kept as store credit when its order was deleted". Only **unlinking** detaches records
@@ -1284,12 +1315,11 @@ the header the client's total; the client list's "last activity" counts orders. 
 the client list, the client page and the Connections card; needs a connection — the lists are server data; picking a
 client uses the device's copy). The `wom` card on System → Connections: the address to enter
 (`config.wholesale.connectUrl`: `WOM_CONNECT_URL`, else `http://host.docker.internal:<SUITE_PORT>`), the secret's
-state, **Make the secret / New secret…** (shown once, Copy). After a suite restore the card says to "Forget
-everything" + "Send existing" in the Order Manager until backfill events arrive (`last_backfill_at > lastRestoreAt`).
+state, **Make the secret / New secret…** (shown once, Copy).
 
 **Connection row**: last success = last good request; last error = last refused request with a count; queue = held
 orders + money of unlinked, not-gone customers ("N records from M customers waiting for a client"); detail = linked
-count, refused events, several-links problems, the restore notice. pause()/resume() only log (the receiver reads the
+count, refused events, several-links problems. pause()/resume() only log (the receiver reads the
 switch on every request).
 
 **For D2**: links are CRM `link` records (app `wom`, external_id = customer_uid). Create/delete them with `applyLocal`,
@@ -1297,7 +1327,9 @@ then `wholesale.reconcile({ only: [uid], actor })`; undo = delete the link (reco
 everything). `wholesale.list('waiting')` / `GET /api/wholesale/waiting` give the unlinked customers with clean
 email/phone for matching (`=` on the stored forms; `contactProblems` are never matched). Contact links (an Order Manager
 customer as a contact) aren't used by D1. Not built: a review list, "not the same", restoring the age flag /
-relationship on undo, pruning `wholesale_events`.
+relationship on undo, pruning `wholesale_events` (see the rule above). D2's auto-links in bulk: call
+`reconcileAll()` (chunked) rather than `reconcile()`. Other modules read "last order per client" with
+`wholesale.lastOrderAtByClient()`.
 
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
