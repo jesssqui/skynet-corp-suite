@@ -330,9 +330,12 @@ export function createSyncService({ db, log }) {
   }
 
   /** The module's own rule for this record type (registerEntity `check`), if it has one. */
-  function moduleCheck({ entry, step, fields }, current) {
+  function moduleCheck({ entry, step, fields, who }, current) {
     if (!entry.check) return;
-    const problem = entry.check({ op: step.op, recordId: step.recordId, fields, current });
+    // actor: who made the step ('owner' | 'partner' | 'system'); server: made by server code
+    // (applyLocal, incl. settling a clash) rather than pushed by a device. Both come from the
+    // session / the server itself, never from the step, so a rule may rely on them (C8).
+    const problem = entry.check({ op: step.op, recordId: step.recordId, fields, current, actor: who.actor, server: Boolean(who.server) });
     if (problem) throw new StepError(problem.code ?? 'refused', problem.reason ?? `${entry.entity}: refused`);
   }
 
