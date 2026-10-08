@@ -55,6 +55,13 @@ export async function createApp({ config, db, log, modules = registeredModules, 
   }));
   // Origin/CSRF check, JSON-only bodies, and the session (req.auth) for every API request.
   app.use('/api', auth.guard);
+  // A module may take bigger JSON bodies on some paths (`bodyLimits: { '/import': '8mb' }`): signed in
+  // only, parsed before the default 1 MB parser (which then leaves the parsed body alone).
+  for (const mod of modules) {
+    for (const [at, limit] of Object.entries(mod.bodyLimits ?? {})) {
+      app.use(`/api/${mod.name}${at}`, auth.requireSession, express.json({ limit }));
+    }
+  }
   app.use(express.json({ limit: '1mb' }));
 
   for (const mod of modules) {

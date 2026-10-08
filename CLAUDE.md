@@ -11,7 +11,9 @@ clients, accounts, contacts, consent, relationships, services, activities, links
 **C3b** (client list and search, the client page with its timeline, quick notes and call logs — all offline), and the
 planner from **C4a** (module `planner`: tasks, the shared list, the capture inbox, each person's Today with the morning
 plan, and the "No next step" flag on relationships — all synced and offline), and planning from **C4b** (same module:
-week goals and month priorities, the Monday and monthly plans, the Friday review, Focus, the overbooked-day warning).
+week goals and month priorities, the Monday and monthly plans, the Friday review, Focus, the overbooked-day warning),
+and client intake from **C7** (Quick add — a one-line-per-client brain dump saved offline — and the accounting CSV
+import, which runs on the server and never overwrites or creates anything twice).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -47,7 +49,10 @@ shared/                    @suite/shared — ids.js (UUIDv7), time.js, hlc.js (s
                            normalize.js (clean emails/phones/postal codes/tags), crm.js (CRM value lists, our
                            businesses' fixed ids, the consent rule), planner.js (task/inbox value lists, "HH:MM"
                            times, automatedTaskOwner, the "no next step" rule; C4b: GOAL_KINDS, goal periods,
-                           addDays/weekStart/monthStart, WORKDAY_IDS + dayMinutesOf, isUnplannedTask); tests in shared/test
+                           addDays/weekStart/monthStart, WORKDAY_IDS + dayMinutesOf, isUnplannedTask);
+                           C7: csv.js (CSV reader: quotes, BOM, ; and tab, line ends), intake.js (rows from a brain dump
+                           or a CSV: cleanRow, nameKey/similarNames, buildMatchIndex/findMatch/flagRows, planRow,
+                           fingerprintText/rowKey, detectMapping/rowFromCells); tests in shared/test
 server/src/
   index.js                 start: open db, createApp, listen, heartbeat, backup schedule, shutdown
   app.js                   createApp({config, db, log}) — migrations, services, routes, static client, errors
@@ -60,7 +65,9 @@ server/src/
                            service.js (sessions, devices, the request guard, restore check), routes.js, deviceName.js
   modules/sync/            offline sync: registry.js, service.js, routes.js, identity.js (session -> actor + device)
   modules/crm/             CRM core records: entities.js (the record types), service.js (registration, seeds, reads),
-                           routes.js (read API), migrations/001_create_crm.sql
+                           routes.js (read API + C7's import routes), import.js (C7: the CSV import — preview, commit
+                           in chunks through applyLocal, remembered rows, batches), migrations/001_create_crm.sql,
+                           002_import.sql (crm_import_batches, crm_import_rows: not synced)
   modules/planner/         tasks + inbox (C4a), goals + workdays (C4b): entities.js, service.js (registration,
                            checkTask/checkGoal/checkWorkday, automatedOwnerFor, goals(), seedWorkdays),
                            migrations/001_create_planner.sql, 002_goals.sql; no routes
@@ -91,7 +98,10 @@ client/src/
   modules/crm/             C3b screens: ClientListPage (/crm), ClientPage (/crm/clients/:id), BusinessesPage
                            (/crm/businesses), forms.jsx (add/edit sheets), parts.jsx (chips, RecordSync, FormSheet),
                            data.js (cached offline reads), formFields.js (form values -> changed fields), logic.js (search, timeline filters, money, consent, errors — no
-                           React, tested in client/test/clients.test.js), crm.css (layout media queries)
+                           React, tested in client/test/clients.test.js), crm.css (layout media queries).
+                           C7: QuickAddPage (/crm/quick-add) + quickAdd.js (the line parser, rows, no React;
+                           client/test/quickadd.test.js), ImportPage (/crm/import); both lazy-loaded (React.lazy in crm/index.jsx; the
+                           service worker caches their chunks, so they open offline)
   modules/planner/         C4a screens: TodayPage (/), InboxPage (/inbox), TasksPage (/tasks), PlanSheet (Plan my day),
                            ClientTasksCard.jsx (the client page's Tasks card + "No next step · Add"), forms.jsx
                            (TaskSheet, InboxNoteSheet, newTaskInitial), parts.jsx (TaskRow, tick, CaptureBar, useToday),
@@ -113,7 +123,8 @@ test/e2e/                  Playwright end-to-end tests (npm run test:e2e); proxy
 ## Modules
 One folder per module on each side, same name on both (`server/src/modules/health`, `client/src/modules/health`).
 - **Server shape** (`modules/<name>/index.js`): `{ name, migrationsDir, createService(ctx), createRouter(ctx, service),
-  createPublicRouter?, start? }`. `start(ctx, service)` runs once every service exists (auth uses it to notice a
+  createPublicRouter?, start?, bodyLimits? }`. `bodyLimits: { '/import': '8mb' }` lets a path take JSON bodies bigger
+  than the app's 1 MB (signed in only; crm's CSV import). `start(ctx, service)` runs once every service exists (auth uses it to notice a
   restore). Routes mount at `/api/<name>`. **Every `createRouter` route requires a signed-in session**
   (app.js puts `auth.requireSession` in front; `req.auth = { user: { id, actor, username, displayName }, device: { id,
   name }, session }`). `createPublicRouter` is only for routes that must work signed out (sign-in, the minimal health
@@ -602,8 +613,9 @@ client `client/src/modules/crm/`; tests `server/test/crm.test.js`, `client/test/
 Value lists live in `@suite/shared/crm` (use them for labels/pickers). New fields: nullable, never renamed (rule 5).
 
 **Rules for C3b, C4a and the D packages**
-- **Writes**: devices `store.create/update/remove` (C2b engine), server code `sync.applyLocal`. No write routes;
-  `crm_*` tables refuse any other write (guard triggers, tested per table).
+- **Writes**: devices `store.create/update/remove` (C2b engine), server code `sync.applyLocal`. No write routes
+  except C7's CSV import (`POST /api/crm/import/commit`, which writes through applyLocal — see "Client intake");
+  synced `crm_*` tables refuse any other write (guard triggers, tested per table).
 - **Our businesses** are seeded at first start through `applyLocal` (actor `system`) with **fixed ids**
   (`OUR_BUSINESSES` / `BUSINESS_IDS` in `@suite/shared/crm`: wholesale, agency = Great White North Design, consulting,
   save_point, retail, personal), only when that id has never existed — no duplicates on restart or restore, and a
@@ -719,6 +731,104 @@ one-owner, three-business example entered and filtered on iPhone and desktop, ph
 - For **C4a** (done, see "Planner"): reuse `Sheet`, `FormSheet`, `useAction`/`errorText`, `BusinessChip`, `pickableBusinesses`, `actorLabel`
   and `ui/format.js`. The client page has room for a Tasks card in the left column (or above the timeline); the timeline
   filter state is the natural default for a new task's business/account, as quick capture does.
+
+## Client intake (C7: Quick add and the CSV import)
+Shared logic `shared/intake.js` + `shared/csv.js` (tests `shared/test/intake.test.js`); Quick add
+`client/src/modules/crm/QuickAddPage.jsx` + `quickAdd.js` (tests `client/test/quickadd.test.js`); the import
+`server/src/modules/crm/import.js` + `routes.js` + `ImportPage.jsx` (tests `server/test/import.test.js`); both in
+`test/e2e/intake.e2e.test.js` (iPhone and Mac). Linked from the client list (Quick add button; links under the list).
+
+**One row shape for both** (`intake.js`): `{ client: { name, tags, notes }, account: { name, street, city, region,
+postal_code, country, website }, relationships: [{ business_id, kind, notes }], contact: { name, role, email, phone,
+notes } }`. `cleanRow` gives stored forms (`normalize.js`) + `warnings` + `problems` (no client name = can't save).
+The account is named like the client unless given; the contact's name defaults to the client's when only an email or
+phone is given. **What can't be stored goes into notes, with a warning** — never guessed, never dropped: a phone the
+normaliser refuses (7 digits, foreign without a country code) → the contact's notes "Phone as typed: …"; an extension
+→ "Ext. 22"; a bad email → "Email as typed: …"; a bad postal code → the account's notes. Values are clipped to field lengths.
+- **Matching** (the plan's rule, applied to new rows — nothing is linked or merged; that is D2):
+  same clean email or phone as a live contact of a live client → `same` "Already here: <client>"; a similar client or
+  **account** name → `similar` "Maybe the same as <client>" (`nameKey`: accents/apostrophes/punctuation/legal words
+  like Inc, Ltd, Co, The dropped; `similarNames`: same key, the shorter's words side by side inside the longer, or the
+  same letters without spaces; under 4 letters never); the same email/phone/name key as an **earlier row** of the batch
+  → `duplicate`. Exact name ≠ "already here" (two "Mike"s). `buildMatchIndex` indexes names by word, so 10,000 rows
+  against thousands of clients stays fast.
+- **Choices** (`actionsFor`, first = default): new → create | skip; same/similar (and changed) → **skip** | add |
+  create anyway; duplicate/imported → skip | create. A choice is stored with the state it was made for and counts only
+  while the row is still in that state (anything that changed since the preview falls back to skip).
+- **`planRow`** (create or "add only what's missing"): create = client (active) → account → a relationship per
+  (business, kind) (status active; extra words like "retainer" in its notes) → contact. Add = on the existing client:
+  the account with the same or a similar name, else its first account when the row named none of its own, else a new
+  account; relationships the client doesn't have (on an existing account: none of its accounts has that business and
+  kind); the contact unless one with the same email or phone (or, with neither, name) exists. **Nothing existing is
+  ever updated**: imports and quick add only create (server test: no `update` step after an import).
+- **Our businesses**: defaults are agency (GWND · Website) for both; Social, Consulting and Wholesale selectable per
+  row / per import, or None. Wholesale customers proper come through the Order Manager connection (A10/D1).
+
+**Quick add** (`/crm/quick-add`, offline): one client per line; separators ` - `, `—`, `–`, `;`, `|`, tab, and `,`
+**only on a line with none of those** ("Smith, Jones & Associates - consulting" keeps its name; a keyword list like
+"website, social retainer" still splits); a `:` after the client's name too ("Brantford Auto Body: website"); hyphens
+inside words don't split; bullets/numbering dropped. Keywords (whole segments of keywords + fillers):
+website/web/site/design/seo/agency → GWND website; social/social media/instagram/facebook → GWND social;
+consulting/consult/coaching → consulting; wholesale → wholesale. Emails and phones anywhere (the words beside them are
+the contact); phones only when they read as one (+/00/011/bracketed area code, 10 digits, 11 starting with 1, or a
+7-digit "555-0100" kept as typed with a warning — never "15000 2026", never across a ` - `); `Client (Account)`,
+`account:`, `contact:`/`owner:`/`manager:` (role), `role:`, "Name, owner" (a role word), `#tag`, `tags:` (to the next
+separator other than a comma), `notes:` (rest of the line; separators before it are trimmed). Other leftovers: a
+person's name (capitalised words, particles like "de"/"van", "&": "Pat", "Jan de Vries", "Amy & Tom Baker") → the
+contact if there is none yet; **everything else → the client's notes** ("2 sessions", "net 30", a town) — only
+`#word` and `tags:` make tags, and nothing typed is dropped (`cleanRow` also keeps contact notes on the client when
+there is no contact). The preview shows role, client notes and contact notes per row. Lines without a keyword get the
+page's default (marked "No business named"). The preview updates as you type: cards with an Edit sheet on phones,
+an editable table on wide screens (≥ 1000 px; "More…" opens the sheet for notes/role). Matching uses the device's
+copy (`useClientListData`). **Save** creates through `store.create` with ids **made once per line** (`session`, module
+state keyed by line text + copy number): a double tap is ignored (ref guard) and a retry after a partial failure
+re-uses the ids (`already_exists` = done), and a row's own records never flag it. Saving stops at the first failure
+and says which line. Text, edits and choices survive navigating away (module state, this app session); "Start a new
+list" forgets them, after which the same list again shows "Already here".
+
+**CSV import** (`/crm/import`, **needs a connection**: says so offline and disables Preview/Import). The page reads the
+file (UTF-8, else Windows-1252; `readTable` skips report title rows — up to 10 leading records with fewer than two
+filled cells, when a real header follows — and a trailing date/time footer, as in QuickBooks Online reports; row
+numbers stay those of the file), shows the detected mapping (`detectMapping`: QuickBooks Online/Desktop, Wave, Xero,
+FreshBooks headers; `source` guessed) with a sample per column, and the business for the new clients. Then:
+- `POST /api/crm/import/preview { text, fileName, mapping, business, kind }` → every row flagged
+  (`invalid | imported | changed | same | similar | duplicate | new`), with `actions`, `match`, `previous` (the earlier
+  import) and `adds` (what "add only what's missing" would make). Writes nothing.
+- `POST /api/crm/import/commit { batchId, …, choices: { [row]: { action, status } } }` → **202** `{ batch }`, running in
+  the background; the page polls `GET /import/batches/:id` and then calls `store.syncNow()`. The same `batchId` again
+  with the same request → 200 with that batch (a retried request never imports twice); with a different request
+  (`request_hash`: SHA-256 of the text, file name, mapping, business and choices, migration 003) → **409
+  `batch_mismatch`**, so a lost reply can never be answered with another file's result. The page makes a new batch id
+  whenever the file, mapping, business, choices or preview change. One import at a time (409 `import_running`).
+  `GET /import/batches` lists the last 20 (who, when, file, source, counts, problems) on the page.
+- Limits: text ≤ 5 MB (413 `too_big`; route body limit 8 MB), ≤ 10,000 data rows (413 `too_many_rows`), a name column
+  (400 `no_name_column`), `business` one of ours with a `kind`.
+- **Writes**: `sync.applyLocal` as the person (`actor`, also `created_by`), each record a sync step (devices pull them),
+  plus one timeline **note** per row that made anything ("Imported from “file.csv” (accounting customer list).", or
+  "Added from … : contact X, GWND (website). Nothing existing was changed."), with the import's business. Rows go in
+  **chunks of 100** (one transaction per chunk, each row in its own savepoint: all its records + note + remembered row,
+  or none — a refused step fails only that row), yielding to the event loop between chunks (2,500 rows ≈ 1.5 s here,
+  health answered meanwhile). **Preview and the start of a commit are synchronous**: parsing, cleaning, matching and
+  the fingerprint lookups for a 10,000-row file block the server briefly (on the order of a second or two), as does
+  each 100-row chunk; fine for two people, but don't call them from anything that runs often.
+- Several addresses in one email cell ("a@x.ca; b@x.ca", also in quick add): the first valid one is the email, the
+  rest go in the contact's notes ("Also: …").
+- **CSV exports (any future one)**: escape values starting with `=`, `+`, `-` or `@` (prefix a `'`, or a tab) so a
+  spreadsheet doesn't run them as formulas — imported names and notes are typed by anyone. Nothing exports CSV yet.
+- **Idempotent**: `crm_import_rows` remembers every committed row by **fingerprint** (SHA-256 of `fingerprintText`:
+  every clean value except relationships — the business picked is a choice, not data) → client id, record ids, batch,
+  row number. Same values again → `imported` (skipped; even for another business, typed differently or with `;`);
+  same customer (`rowKey` = client name key) with other values → `changed` "Changed since last import — not applied";
+  "add" there — and on an `imported` row — adds only what's missing to the client it made (e.g. the relationship for
+  another business chosen this time). A row whose client was later deleted stays "imported"
+  (shown "since deleted"; "Create anyway" is there). A restart mid-import marks the batch `interrupted`
+  (`markInterrupted` at start); importing the same file again finishes it.
+- These tables are not synced and not guarded (the module's own); backups carry them with the records.
+
+**For D2 (matching and links)**: reuse `nameKey`/`similarNames`/`buildMatchIndex` for "similar business name"
+suggestions and the normalised email/phone equality for auto-links; C7 only flags at entry time and links nothing.
+`crm_import_rows` tells which clients came from the accounting list (client ids) if D2 wants a source per client.
+Not built: address matching ("same street and postal code"), a review list, "not the same" memory, undo of links.
 
 ## Planner (planner module, C4a)
 Code `server/src/modules/planner/` (record types in `entities.js`), shared facts `shared/planner.js`, client
@@ -927,6 +1037,8 @@ Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (
 - **C4a (tasks, inbox, Today)**: done — see "Planner". Tasks belong to a business (Personal included) and only point at
   a client/account/relationship; the shared list is `owner: 'shared'`; hand-made tasks default to their maker,
   automated ones to the business's `default_owner`.
+- **C7 (client intake)**: done — see "Client intake". The brain dump is device-side (offline); the CSV import is
+  server-side (applyLocal, chunked, fingerprints in `crm_import_rows`). Neither overwrites nor links.
 - **C4b (planning)**: done — see "Planning". Goals are one entity with `kind` (week | month) rather than two; a task
   belongs to a day **or** a goal (plain `goal_id`), and "unplanned" is derived, never stored; each person's day length
   is a synced `workday` record with a fixed id. Next: C5 capture by Siri and the share sheet (`inbox_item.source`), C8

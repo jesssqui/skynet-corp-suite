@@ -87,7 +87,12 @@ export default function ClientListPage() {
       <PageHeader
         title="Clients"
         subtitle={data ? `${rows.length} ${rows.length === 1 ? 'client' : 'clients'}${filtered ? ' found' : ' active'}` : ' '}
-        actions={<Button variant="primary" onClick={() => setAdding(true)}><Icon name="plus" size={18} />New client</Button>}
+        actions={(
+          <>
+            <Button onClick={() => navigate('/crm/quick-add')}><Icon name="list" size={18} />Quick add</Button>
+            <Button variant="primary" onClick={() => setAdding(true)}><Icon name="plus" size={18} />New client</Button>
+          </>
+        )}
       />
       <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
         <div className="crm-filters">
@@ -128,7 +133,9 @@ export default function ClientListPage() {
               <button type="button" className="crm-link-button" onClick={() => setParams(new URLSearchParams(), { replace: true })}>Clear the search and filters</button>
             </EmptyState>
           ) : (
-            <EmptyState title="No clients yet">Add the first one with New client. It works offline too.</EmptyState>
+            <EmptyState title="No clients yet">
+              Add the first one with New client, type a list in <Link to="/crm/quick-add">Quick add</Link>, or <Link to="/crm/import">import your customer list</Link>.
+            </EmptyState>
           )}
           {rows.length > shown ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap', padding: 'var(--space-3) var(--space-4)', borderTop: '1px solid var(--border)' }}>
@@ -138,6 +145,8 @@ export default function ClientListPage() {
           ) : null}
         </Card>
         <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-muted)', display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap' }}>
+          <Link to="/crm/quick-add">Quick add (a list, one per line)</Link>
+          <Link to="/crm/import">Import a customer list (CSV)</Link>
           <Link to="/crm/businesses">Our businesses</Link>
           <Link to="/sync">Records on this device (Offline data)</Link>
         </p>

@@ -6,6 +6,7 @@ import { localDate } from '@suite/shared/time';
 import { normalizePhone } from '@suite/shared/normalize';
 import { OUR_BUSINESSES, consentStatus } from '@suite/shared/crm';
 import { CRM_ENTITIES, CRM_ENTITY } from './entities.js';
+import { createImportService } from './import.js';
 
 export const LIMITS = { listDefault: 50, listMax: 200, recentActivities: 20 };
 // Seeds are stamped at this old, fixed time (+ position ms): any real edit is later and wins.
@@ -255,6 +256,8 @@ export function createCrmService({ db, services, log }) {
 
   return {
     seedBusinesses,
+    // C7: the accounting CSV import (preview, commit in chunks, batches). See import.js.
+    imports: createImportService({ db, sync, log }),
     liveLinks,
     listBusinesses,
     getBusiness: (id) => (isId(id) ? view('business', q.business.get(id)) : null),

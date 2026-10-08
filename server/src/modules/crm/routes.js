@@ -1,5 +1,6 @@
-// Read API for the CRM (signed in, like every createRouter route). There are no write routes:
-// devices change records with sync steps (the offline store), server code with sync.applyLocal.
+// Read API for the CRM (signed in, like every createRouter route). There are no write routes for
+// records: devices change them with sync steps (the offline store), server code with
+// sync.applyLocal — including the CSV import (C7) below, which writes through applyLocal.
 import { Router } from 'express';
 import { isId } from '@suite/shared/ids';
 import { CLIENT_STATUSES, ACTIVITY_TYPES } from '@suite/shared/crm';
@@ -74,6 +75,32 @@ export function createCrmRouter(_ctx, service) {
     });
     if (!out) throw new HttpError(404, 'No such client');
     res.json(out);
+  });
+
+  // ---- C7: the accounting CSV import (import.js). Needs a connection; writes via applyLocal. ----
+
+  // POST /api/crm/import/preview { text, fileName?, mapping?, business?, kind? } — the rows flagged; nothing written.
+  router.post('/import/preview', (req, res) => {
+    res.json(service.imports.preview(req.body));
+  });
+
+  // POST /api/crm/import/commit { batchId, text, fileName?, mapping?, business?, kind?, choices? }
+  // -> 202 { batch } (running in the background), or 200 { batch } when that batch id exists.
+  router.post('/import/commit', (req, res) => {
+    const { batch, started } = service.imports.commit({ actor: req.auth.user.actor, body: req.body });
+    res.status(started ? 202 : 200).json({ batch });
+  });
+
+  // GET /api/crm/import/batches — the latest imports (who, when, file, counts), and the running one.
+  router.get('/import/batches', (_req, res) => {
+    res.json(service.imports.listBatches());
+  });
+
+  // GET /api/crm/import/batches/:id — one import's progress and result.
+  router.get('/import/batches/:id', (req, res) => {
+    const batch = service.imports.getBatch(req.params.id);
+    if (!batch) throw new HttpError(404, 'No such import');
+    res.json({ batch });
   });
 
   return router;
