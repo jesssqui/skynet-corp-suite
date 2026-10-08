@@ -70,7 +70,7 @@ function Header({ client, onEdit, onStatus, wholesale, wholesaleCards = [], toda
             <h1 style={{ fontSize: 'var(--text-xl)', fontWeight: 650, letterSpacing: '-0.01em', overflowWrap: 'anywhere' }} data-testid="client-name">{client.name}</h1>
             <Badges record={client}>
               <StatusBadge status={client.status} />
-              <QuietRegularBadge cards={wholesaleCards} today={today} />
+              {closed ? null : <QuietRegularBadge cards={wholesaleCards} today={today} />}
               <Tags value={client.tags} />
             </Badges>
           </div>
@@ -135,7 +135,7 @@ function RelationshipItem({ rel, business, services, onEdit, onAddService, onEdi
   );
 }
 
-function AccountItem({ account, rels, servicesByRel, links, businessesById, open, noNextStep, businesses, wholesaleCards, today }) {
+function AccountItem({ account, rels, servicesByRel, links, businessesById, open, noNextStep, businesses, wholesaleCards, today, clientClosed }) {
   const lines = addressLines(account);
   const href = websiteHref(account.website);
   return (
@@ -158,7 +158,7 @@ function AccountItem({ account, rels, servicesByRel, links, businessesById, open
       ) : null}
       {account.notes ? <p style={{ ...preWrap, ...muted }}>{account.notes}</p> : null}
       {links.map((l) => <LinkLine key={l.id} link={l} />)}
-      <AccountWholesale cards={wholesaleCards} figures={sumCards(wholesaleCards)} today={today} />
+      <AccountWholesale cards={wholesaleCards} figures={sumCards(wholesaleCards)} today={today} hideQuiet={clientClosed} />
       <RecordSync record={account} what="account" />
       {rels.length ? (
         <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 'var(--space-2)' }}>
@@ -451,6 +451,7 @@ function ClientScreen({ clientId }) {
                     businesses={businesses}
                     wholesaleCards={cardsByAccount.get(a.id) ?? []}
                     today={today}
+                    clientClosed={client.status === 'closed'}
                   />
                 ))}
               </ul>

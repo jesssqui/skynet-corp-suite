@@ -125,8 +125,10 @@ test('quiet regular: the card’s quiet_from against the device’s today; per c
   assert.equal(isQuietRegular({ ...card, quiet_from: null, usual_gap_days: null }, '2026-10-14'), false, 'not a regular');
   const m = quietFromByClient([card, { ...card, id: 'c2', quiet_from: '2026-10-01' }, { ...card, id: 'c3', client_id: 'k2', gone: true }]);
   assert.deepEqual([...m], [['k1', '2026-10-01']]);
-  const index = buildClientIndex({ clients: [{ id: 'k1', name: 'A' }, { id: 'k2', name: 'B' }], quietFrom: m });
+  const index = buildClientIndex({ clients: [{ id: 'k1', name: 'A', status: 'active' }, { id: 'k2', name: 'B', status: 'active' }], quietFrom: m });
   assert.deepEqual(index.map((r) => [r.client.id, r.quietFrom]), [['k1', '2026-10-01'], ['k2', null]]);
+  const closed = buildClientIndex({ clients: [{ id: 'k1', name: 'A', status: 'closed' }], quietFrom: m });
+  assert.equal(closed[0].quietFrom, null, 'never on a closed client (check-ins skip them too)');
   assert.equal(daysBetween('2026-10-31', '2026-11-02'), 2);
 });
 

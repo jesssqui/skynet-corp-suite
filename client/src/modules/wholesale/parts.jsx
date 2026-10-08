@@ -60,9 +60,10 @@ export function QuietRegularBadge({ card, today, cards }) {
 }
 
 /** An account's Order Manager customer(s) and figures, under the account on the client page. */
-export function AccountWholesale({ cards, figures, today }) {
+export function AccountWholesale({ cards, figures, today, hideQuiet = false }) {
   if (!cards?.length) return null;
-  const quiet = cards.filter((c) => isQuietRegular(c, today));
+  // Never for a closed client's account (closing a client means "no next steps", as the check-ins do).
+  const quiet = hideQuiet ? [] : cards.filter((c) => isQuietRegular(c, today));
   return (
     <div
       data-testid="account-wholesale"

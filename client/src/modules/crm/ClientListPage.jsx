@@ -29,7 +29,7 @@ function ClientRow({ row, businessesById, today }) {
           <span style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
             <strong style={{ overflowWrap: 'anywhere' }}>{client.name}</strong>
             {client.status === 'closed' ? <Badge>Closed</Badge> : null}
-            {row.quietFrom && today >= row.quietFrom ? <span data-testid="quiet-regular" title="An Order Manager regular who has gone longer than usual without ordering"><Badge tone="warn">Quiet regular</Badge></span> : null}
+            {row.quietFrom && client.status !== 'closed' && today >= row.quietFrom ? <span data-testid="quiet-regular" title="An Order Manager regular who has gone longer than usual without ordering"><Badge tone="warn">Quiet regular</Badge></span> : null}
             {client._sync?.pending ? <Badge>Waiting to sync</Badge> : null}
             {client._sync?.flagged || client._sync?.clashes?.length ? <Badge tone="warn">Check this</Badge> : null}
           </span>

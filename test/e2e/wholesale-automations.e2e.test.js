@@ -25,14 +25,15 @@ async function setup(t) {
   make('contact', { client_id: clientId, account_id: accountId, name: 'Robin Ortega', email: 'robin@maple.example' });
   const other = make('client', { name: 'Birch Trading', status: 'active' });
   make('account', { client_id: other, name: 'Birch Trading' });
-  // A weekly regular (usually every 7 days) whose last order was 30 days ago; the oldest order is unpaid.
+  // A weekly regular (usually every 7 days) whose last order was 30 days ago; paid for two orders, so (oldest
+  // first, as the Order Manager's Balances page) the order from 37 days ago is owing over 30 days.
   const today = localDate();
   const om = womKit();
   const c = om.customer({ business_name: 'Maple Corner Store' });
   const order = (d) => om.order(c, [{ name: 'Velo Freeze 10mg', quantity: 4, unit_price_cents: 500 }], { order_date: d });
   const orders = [51, 44, 37, 30].map((n) => order(addDays(today, -n)));
   const packed = order(today);
-  const events = [om.customerCreated(c), ...orders.map((o) => om.orderPlaced(o)), ...orders.slice(1).map((o) => om.paymentRecorded(om.payment(o, 2260)))];
+  const events = [om.customerCreated(c), ...orders.map((o) => om.orderPlaced(o)), ...orders.slice(2).map((o) => om.paymentRecorded(om.payment(o, 2260)))];
   assert.equal((await postEvents(server.direct, secret, events)).status, 200);
   ctx.services.wholesale.linkToClient(c.customer_uid, { clientId, accountId }, { actor: 'owner' });
   return { server, ctx, secret, om, c, clientId, accountId, today, order, packed };
@@ -84,7 +85,7 @@ test('Mac: the quiet-regular flag on the list and the client page; the automatio
   assert.deepEqual(await page.evaluate(() => window.__cspViolations), []);
 });
 
-test('iPhone: the quiet-regular flag on the list and the client page', async (t) => {
+test('iPhone: the quiet-regular flag on the list and the client page; never on a closed client', async (t) => {
   const s = await setup(t);
   const browser = await launch(t);
   const context = await browser.newContext(iphone());
@@ -92,5 +93,14 @@ test('iPhone: the quiet-regular flag on the list and the client page', async (t)
   const page = await context.newPage();
   await signIn(page, s.server.base, 'sam', s.server.users.partner.totpSecret);
   await checkFlag(page, s.server, { clientId: s.clientId, label: 'iphone' });
+  // A closed client never shows it (check-ins skip closed clients too).
+  assert.equal(s.ctx.services.sync.applyLocal({ actor: 'owner', entity: 'client', op: 'update', recordId: s.clientId, fields: { status: 'closed' } }).status, 'applied');
+  await page.goto(`${s.server.base}/crm?status=all`);
+  await page.locator(`[data-client-row="${s.clientId}"]`).getByText('Closed').waitFor(WAIT);
+  assert.equal(await page.getByTestId('quiet-regular').count(), 0);
+  await page.goto(`${s.server.base}/crm/clients/${s.clientId}`);
+  await page.getByTestId('account-wholesale-figures').waitFor(WAIT);
+  assert.equal(await page.getByTestId('quiet-regular').count(), 0);
+  assert.equal(await page.getByTestId('quiet-regular-text').count(), 0);
   assert.deepEqual(errors, []);
 });
