@@ -62,8 +62,8 @@ export function createImportService({ db, sync, log, limits: limitsIn = {} }) {
       VALUES (@fingerprint, @row_key, @batch_id, @row_number, @action, @client_id, @record_ids, @created_at)`),
     batch: db.prepare('SELECT * FROM crm_import_batches WHERE id = ?'),
     batches: db.prepare('SELECT * FROM crm_import_batches ORDER BY started_at DESC, id DESC LIMIT ?'),
-    insertBatch: db.prepare(`INSERT INTO crm_import_batches (id, file_name, source, actor, business_id, kind, status, total_rows, started_at)
-      VALUES (@id, @file_name, @source, @actor, @business_id, @kind, 'running', @total_rows, @started_at)`),
+    insertBatch: db.prepare(`INSERT INTO crm_import_batches (id, file_name, source, actor, business_id, kind, status, total_rows, started_at, request_hash)
+      VALUES (@id, @file_name, @source, @actor, @business_id, @kind, 'running', @total_rows, @started_at, @request_hash)`),
     progress: db.prepare(`UPDATE crm_import_batches SET processed = @processed, created_clients = @created_clients, added_to = @added_to,
       skipped = @skipped, failed = @failed, records = @records, problems = @problems WHERE id = @id`),
     finish: db.prepare('UPDATE crm_import_batches SET status = ?, error = ?, finished_at = ? WHERE id = ?'),
@@ -168,7 +168,7 @@ export function createImportService({ db, sync, log, limits: limitsIn = {} }) {
     const relationships = req.rel ? [req.rel] : [];
     const rows = req.table.rows.map((cells, i) => {
       const clean = cleanRow(rowFromCells(cells, req.mapping, { relationships }));
-      return { rowNumber: i + 2, clean, fingerprint: sha256(fingerprintText(clean)), key: rowKey(clean) };
+      return { rowNumber: req.table.skipped + i + 2, clean, fingerprint: sha256(fingerprintText(clean)), key: rowKey(clean) };
     });
     const flags = flagRows(rows.map((r) => r.clean), matchIndex());
     for (const [i, row] of rows.entries()) {
@@ -188,7 +188,9 @@ export function createImportService({ db, sync, log, limits: limitsIn = {} }) {
           row.previous = previousOf(changed);
         }
       }
-      row.targetId = row.status === 'changed' ? (row.previous.live ? row.previous.clientId : null)
+      // "Add only what's missing" goes to: the client this customer was imported into (imported /
+      // changed, while it is live), or the client it matched (same / similar).
+      row.targetId = ['changed', 'imported'].includes(row.status) ? (row.previous.live ? row.previous.clientId : null)
         : ['same', 'similar'].includes(row.status) ? row.match.clientId : null;
       row.actions = actionsFor(row.status, { canAdd: Boolean(row.targetId) });
       row.action = row.actions[0];
@@ -243,6 +245,7 @@ export function createImportService({ db, sync, log, limits: limitsIn = {} }) {
       fileName: req.fileName,
       source: req.source,
       headers: req.table.headers,
+      titleRows: req.table.skipped, // report title rows left out above the header
       delimiter: req.table.delimiter,
       mapping: req.mapping,
       total: rows.length,
@@ -337,6 +340,17 @@ export function createImportService({ db, sync, log, limits: limitsIn = {} }) {
     }
   }
 
+  /** What a commit asked for, as one hash: the file's text and name, the mapping, the business and the choices. */
+  function requestHash(body) {
+    const choices = body?.choices && typeof body.choices === 'object' ? body.choices : {};
+    const sorted = Object.keys(choices).sort().map((k) => [k, choices[k]?.action ?? null, choices[k]?.status ?? null]);
+    const mapping = body?.mapping && typeof body.mapping === 'object' ? MAPPING_KEYS.map((k) => body.mapping[k] ?? null) : null;
+    return sha256(JSON.stringify([
+      typeof body?.text === 'string' ? sha256(body.text) : null, body?.fileName ?? null, mapping,
+      body?.business ?? null, body?.kind ?? null, sorted,
+    ]));
+  }
+
   /**
    * POST /import/commit: start importing (202 + the batch), or the batch this id already started
    * (a retried request). `choices` = { [row]: { action, status } }: a choice counts only while the
@@ -347,8 +361,16 @@ export function createImportService({ db, sync, log, limits: limitsIn = {} }) {
   function commit({ actor, body }) {
     const batchId = body?.batchId;
     if (!isId(batchId)) throw new HttpError(400, 'batchId must be a record id made by the page');
+    const hash = requestHash(body);
     const existing = q.batch.get(batchId);
-    if (existing) return { batch: batchView(existing), started: false, done: null };
+    if (existing) {
+      // The same request again (its answer was lost): that batch. Another file, mapping, business
+      // or choices with this id: refused, never answered with the other import's result.
+      if (existing.request_hash !== hash) {
+        throw new HttpError(409, 'This import was started with another file or other choices. Preview again, then import.', null, { code: 'batch_mismatch' });
+      }
+      return { batch: batchView(existing), started: false, done: null };
+    }
     if (running) throw new HttpError(409, 'Another import is running. Wait for it to finish.', null, { code: 'import_running' });
     const req = readRequest(body);
     const rows = analyse(req);
@@ -359,7 +381,7 @@ export function createImportService({ db, sync, log, limits: limitsIn = {} }) {
     }
     const batch = {
       id: batchId, file_name: req.fileName, source: req.source, actor, business_id: req.rel?.business_id ?? null,
-      kind: req.rel?.kind ?? null, total_rows: rows.length, started_at: nowIso(),
+      kind: req.rel?.kind ?? null, total_rows: rows.length, started_at: nowIso(), request_hash: hash,
     };
     q.insertBatch.run(batch);
     running = batchId;

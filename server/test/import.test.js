@@ -284,3 +284,52 @@ test('a big file goes in chunks: the server answers other requests while it runs
   s.ctx.services.crm.imports.markInterrupted();
   assert.equal(s.db.prepare('SELECT status FROM crm_import_batches WHERE id = ?').get(start.body.batch.id).status, 'interrupted');
 });
+
+// ---------------------------------------------------------------- review fixes
+
+test('a batch id re-sent with another file (or mapping, business, choices) is refused, never answered with the other import', async (t) => {
+  const s = await setup(t);
+  const id = newId();
+  const body = { batchId: id, text: WAVE, fileName: 'customers.csv', business: AGENCY, kind: 'website' };
+  assert.equal((await s.call('POST', '/api/crm/import/commit', body)).status, 202);
+  await s.waitFor(id);
+  assert.equal((await s.call('POST', '/api/crm/import/commit', body)).status, 200, 'the same request: its batch');
+  for (const change of [{ text: `${WAVE}\nOther Co,o@x.test` }, { fileName: 'other.csv' }, { business: CONSULTING, kind: 'consulting' },
+    { mapping: { name: 0 } }, { choices: { 2: { action: 'skip', status: 'new' } } }]) {
+    const r = await s.call('POST', '/api/crm/import/commit', { ...body, ...change });
+    assert.deepEqual([r.status, r.body.code], [409, 'batch_mismatch'], JSON.stringify(Object.keys(change)));
+  }
+  assert.equal(s.count('crm_clients'), 4);
+});
+
+test('an imported row can add what is missing: a relationship for another business on the client it made', async (t) => {
+  const s = await setup(t);
+  await s.commit(WAVE);
+  const p = await s.preview(WAVE, { business: CONSULTING, kind: 'consulting' });
+  const harbour = p.rows[0];
+  assert.deepEqual([harbour.status, harbour.actions], ['imported', ['skip', 'add', 'create']]);
+  assert.deepEqual(harbour.adds, { account: false, contact: false, relationships: [{ business_id: CONSULTING, kind: 'consulting' }] });
+  const b = await s.commit(WAVE, { business: CONSULTING, kind: 'consulting', choices: { [harbour.row]: { action: 'add', status: 'imported' } } });
+  assert.deepEqual([b.createdClients, b.addedTo, b.skipped], [0, 1, 3]);
+  assert.equal(s.count('crm_clients'), 4);
+  const rels = s.db.prepare(`SELECT r.business_id FROM crm_relationships r JOIN crm_accounts a ON a.id = r.account_id
+    WHERE a.name = 'Harbour Lights Bakery' AND r.deleted_at IS NULL ORDER BY r.business_id`).pluck().all();
+  assert.deepEqual(rels.sort(), [AGENCY, CONSULTING].sort());
+});
+
+test('a QuickBooks Online report with title rows and a footer: rows numbered as in the file, nothing made from them', async (t) => {
+  const s = await setup(t);
+  const qbo = ['Customer Contact List', 'Harbour Holdings Inc.', 'Customer,Phone Numbers,Email,Full Name',
+    'Lakeview Dental,519-555-0101,dee@lakeview.test,Dee Eve', '', 'Monday, October 7, 2026 10:42 AM GMT-04:00'].join('\n');
+  const p = await s.preview(qbo);
+  assert.deepEqual([p.titleRows, p.total, p.rows[0].row, p.rows[0].client.name, p.rows[0].contact.phone, p.source], [2, 1, 4, 'Lakeview Dental', '5195550101', 'QuickBooks']);
+  await s.commit(qbo);
+  assert.deepEqual(s.db.prepare('SELECT name FROM crm_clients WHERE deleted_at IS NULL').pluck().all(), ['Lakeview Dental']);
+});
+
+test('several emails in one cell: the first is the email, the rest in the contact’s notes', async (t) => {
+  const s = await setup(t);
+  await s.commit('Customer,Email\nTwo Inboxes,"sales@two.test; accounts@two.test"');
+  const c = s.db.prepare("SELECT email, notes FROM crm_contacts WHERE deleted_at IS NULL").get();
+  assert.deepEqual(c, { email: 'sales@two.test', notes: 'Also: accounts@two.test' });
+});
