@@ -42,11 +42,13 @@ function Tags({ value }) {
 }
 
 function LinkLine({ link }) {
-  const app = link.app === 'wom' ? 'Order Manager customer' : `${link.app} record`;
+  // An Order Manager customer is named (and its figures shown) by the account's wholesale box (D1):
+  // its permanent id is only in the tooltip.
+  const app = link.app === 'wom' ? 'an Order Manager customer' : `${link.app} record ${link.external_id}`;
   return (
-    <div style={{ ...muted, display: 'flex', gap: 'var(--space-1)', alignItems: 'center' }} data-testid="link-line">
+    <div style={{ ...muted, display: 'flex', gap: 'var(--space-1)', alignItems: 'center' }} data-testid="link-line" title={link.external_id}>
       <Icon name="link" size={14} />
-      <span>Linked to {app} {link.external_id} · {link.matched_by === 'auto' ? 'matched automatically' : 'approved'}</span>
+      <span>Linked to {app} · {link.matched_by === 'auto' ? 'matched automatically' : 'approved'}</span>
       <Badges record={link} />
     </div>
   );

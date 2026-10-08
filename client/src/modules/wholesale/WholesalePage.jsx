@@ -212,7 +212,7 @@ export default function WholesalePage() {
         {tab === 'waiting' && counts ? (
           <p style={{ ...muted, margin: 0 }} data-testid="waiting-counts">
             {counts.customers
-              ? `${counts.customers} customer${counts.customers === 1 ? '' : 's'} waiting · ${counts.orders} order${counts.orders === 1 ? '' : 's'} and ${counts.money} payment${counts.money === 1 ? '' : 's'}, refund${counts.money === 1 ? '' : 's'} and returns kept until linked`
+              ? `${counts.customers} customer${counts.customers === 1 ? '' : 's'} waiting · their ${counts.orders} order${counts.orders === 1 ? '' : 's'} and ${counts.money} payment${counts.money === 1 ? '' : 's'}, refunds or returns are kept until they are linked`
               : 'Every customer the Order Manager has sent is linked.'}
             {' '}· {counts.linked} linked
           </p>

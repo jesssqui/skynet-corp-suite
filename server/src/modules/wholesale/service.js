@@ -198,7 +198,6 @@ export function createWholesaleService(ctx) {
     const parts = [];
     if (!sec.set) parts.push('No shared secret yet: make one below and enter it in the Order Manager');
     else if (!sec.readable) parts.push('The shared secret can’t be read on this machine (its key file is missing): make a new one');
-    else parts.push(`Secret made ${sec.setAt.slice(0, 10)}`);
     parts.push(`${w.linked} customer${w.linked === 1 ? '' : 's'} linked`);
     if (st.refused_events) parts.push(`${st.refused_events} event${st.refused_events === '1' ? '' : 's'} refused (shown in the Order Manager’s Settings)`);
     if (w.problems) parts.push(`${w.problems} linked to more than one account: undo one link`);

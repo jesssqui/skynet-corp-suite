@@ -68,10 +68,12 @@ export function AccountWholesale({ cards, figures }) {
 export function ClientWholesale({ figures }) {
   if (!figures) return null;
   return (
-    <p style={{ ...muted, margin: 0, display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }} data-testid="client-wholesale">
-      <Icon name="order" size={16} />
-      <span style={{ fontVariantNumeric: 'tabular-nums' }}>Wholesale: {figuresText(figures)}</span>
-      <Link to="/wholesale?tab=linked" style={{ fontSize: 'var(--text-xs)' }}>Order Manager links</Link>
+    <p style={{ ...muted, margin: 0, display: 'flex', gap: 'var(--space-2)', alignItems: 'flex-start' }} data-testid="client-wholesale">
+      <Icon name="order" size={16} style={{ marginTop: 2 }} />
+      <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 0 }}>
+        Wholesale: {figuresText(figures)}
+        {' · '}<Link to="/wholesale?tab=linked">Order Manager links</Link>
+      </span>
     </p>
   );
 }
