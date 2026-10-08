@@ -16,7 +16,10 @@ and client intake from **C7** (Quick add — a one-line-per-client brain dump sa
 import, which runs on the server and never overwrites or creates anything twice), and from **C8** the Connections
 screen (module `connections`: every connection's last success, queue and last error, with an off switch) and the
 automation framework (module `automations`: trigger, on/off, silent/alert, runs, the minute scheduler, synced in-app
-alerts) with the first two automations (the planner's Friday review list and relationships with no next step).
+alerts) with the first two automations (the planner's Friday review list and relationships with no next step), and
+from **D1** the wholesale connection (module `wholesale`: the signed receiver for the Order Manager's outbox, a
+holding area for everything it sends, linking its customers to accounts, and their orders, payments, returns and
+refunds on the client timeline with spend and last order).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -81,11 +84,19 @@ server/src/
                            schedule.js (triggers, triggerText, periodOf, isoWeekKey — local time, DST-safe),
                            routes.js (GET /, PUT /:id, POST /:id/run), migrations/001 (settings, changes, runs, made,
                            the synced automations_alerts)
+  modules/wholesale/        D1: index.js (signedRoutes, keepOnRestore), service.js (receive, hold, reconcile/attach,
+                           project, link/create/unlink, lists, the 'wom' connection), events.js (A10 envelope + data
+                           checks, pure), figures.js (spend/paid/credit rules, pure), secret.js (secret, AES-GCM with
+                           the key file, HMAC check), entities.js (synced wholesale_customer/_order/_entry, server-only
+                           check), routes.js (POST /api/wom/events + /api/wholesale/*), migrations/001
   backup/                  backup.js, restore.js (+ carryKeptTables: modules' keepOnRestore), schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file)
 server/scripts/            backup.js, restore.js, users.js (CLIs)
+scripts/wom-e2e.mjs        D1: the real Order Manager (a checkout) against a real suite: `npm run test:wom -- <path>`
 server/test/               node --test; helpers.js: tmpDir/testConfig/startApp/testClock/ensureTestUsers/sessionFor/dumpDb;
-                           fixtures/syncdemo = test-only synced module; fixtures/conndemo = test-only connection (C8)
+                           fixtures/syncdemo = test-only synced module; fixtures/conndemo = test-only connection (C8);
+                           fixtures/wom.js = A10 event builders + signed POST (D1), wom-captured-events.json = a
+                           real Order Manager's events (scripts/wom-e2e.mjs --capture)
 client/src/
   main.jsx, App.jsx        providers + router built from the module list, behind AuthGate and SyncProvider;
                            main.jsx registers the service worker (production builds)
@@ -111,6 +122,9 @@ client/src/
                            AlertsBell.jsx (sidebar "Alerts" + count, the phone strip, useUnreadAlerts), alerts.js +
                            logic.js (no React; client/test/automations.test.js)
   modules/sync/            /sync (Offline data), /sync/attention (Needs attention), /sync/data/:entity (plain records view)
+  modules/wholesale/       D1: WholesalePage (/wholesale: waiting for a client / linked; lazy), ConnectionPanel.jsx (the
+                           wom card's address + secret, via connections/panels.js; lazy), parts.jsx (timeline rows,
+                           account and client figures on the client page), logic.js (no React; client/test/wholesale.test.js)
   modules/crm/             C3b screens: ClientListPage (/crm), ClientPage (/crm/clients/:id), BusinessesPage
                            (/crm/businesses), forms.jsx (add/edit sheets), parts.jsx (chips, RecordSync, FormSheet),
                            data.js (cached offline reads), formFields.js (form values -> changed fields), logic.js (search, timeline filters, money, consent, errors — no
@@ -140,7 +154,10 @@ test/e2e/                  Playwright end-to-end tests (npm run test:e2e); proxy
 ## Modules
 One folder per module on each side, same name on both (`server/src/modules/health`, `client/src/modules/health`).
 - **Server shape** (`modules/<name>/index.js`): `{ name, migrationsDir, createService(ctx), createRouter(ctx, service),
-  createPublicRouter?, start?, bodyLimits?, keepOnRestore? }`. `keepOnRestore: ['table', …]` (C8): those tables keep the
+  createPublicRouter?, start?, bodyLimits?, keepOnRestore?, signedRoutes? }`. `signedRoutes: [{ method, path, handlers }]`
+  (D1): exact POST/PUT `/api/...` routes that authenticate each request themselves (a signature over the raw body),
+  mounted **before** the Origin/JSON guard and the JSON parser; any other method or path still goes through the guard.
+  Only for server-to-server calls (the Order Manager's outbox); never for anything a browser calls. `keepOnRestore: ['table', …]` (C8): those tables keep the
   current rows across a restore (`restore.js` copies them into the restored copy) — for switches, never for data. `bodyLimits: { '/import': '8mb' }` lets a path take JSON bodies bigger
   than the app's 1 MB (signed in only; crm's CSV import). `start(ctx, service)` runs once every service exists (auth uses it to notice a
   restore). Routes mount at `/api/<name>`. **Every `createRouter` route requires a signed-in session**
@@ -173,7 +190,8 @@ One folder per module on each side, same name on both (`server/src/modules/healt
   compose publishes it on the Mac's `127.0.0.1:3100` only, and Tailscale Serve is the only way in from other devices
   (tailnet members only). Keep it that way even with sign-in: don't publish the port on other interfaces, and don't
   enable Tailscale Funnel.
-- **Sign-in on everything**: every API route needs a session except `POST /api/auth/login|login/code` and
+- **Sign-in on everything**: every API route needs a session except `POST /api/auth/login|login/code`,
+  `POST /api/wom/events` (D1: no session, authenticated by its HMAC signature only — see "Wholesale") and
   `GET /api/health` (which answers anonymous callers with `{ ok, name, version, time }` only; details, backup paths
   and errors need a session). Unknown `/api` paths answer 401 to anonymous callers. The built client (HTML/JS) is public;
   it shows nothing until `GET /api/auth/session` succeeds — except on a device where someone was signed in before:
@@ -384,7 +402,8 @@ gets 401 `device_signed_out`):
      device, re-sent after a restore). With SQL FKs it would be `constraint` → Needs attention instead.
    - `parent: true` (with `ref`): what the record **belongs to**. See "Belonging" below.
    A `not_found` rejection says what is missing: `missing: { field, entity, id }` (`field` null = the record itself).
-   Also on registerEntity: `check({ op, recordId, fields, current, actor, server })` — the module's own rule
+   Also on registerEntity: `check({ op, recordId, fields, current, actor, server })` — the module's own rule (since D1
+   it runs for deletes too, with `fields` null; every earlier hook lets deletes by)
    (`actor`: who made the step, from the session or `system`; `server`: true for `applyLocal`, false for a device's
    push — C8's alerts use both; hooks that ignore them are unaffected), run inside the step's
    transaction after the field and reference checks (reads only); return `{ code, reason }` to refuse the step
@@ -1077,8 +1096,10 @@ switch pauses it without breaking the app.
   tables from the database being replaced into the restored copy — a restore never quietly switches a paused connection
   back on. (A backup from before C8 has no such table: its switches start on. Restores by hand aren't covered.)
 - **Rows today**: the off-machine backup (from `backup/status.json`: last success, last error, "queue" = whole days
-  behind once the last good backup is over 26 h old; `pausable: false` — backups are never pausable from the app) and
-  placeholders "Not connected yet · comes with …": Order Manager (D1), Apple Calendar (C6), Stockroom (D16).
+  behind once the last good backup is over 26 h old; `pausable: false` — backups are never pausable from the app), the
+  Order Manager (`wom`, D1 — real, see "Wholesale") and placeholders "Not connected yet · comes with …": Apple
+  Calendar (C6), Stockroom (D16). A connection's card can show extra settings: the client module registers a panel
+  (`registerConnectionPanel(id, Component)` in `client/src/modules/connections/panels.js`; D1's address + secret).
 - **API** (signed in; writes follow the JSON/Origin rules): `GET /api/connections` → `{ connections: [{ id, name,
   module, description, state: on|paused|always_on|not_connected, pausable, alwaysOnReason, comesWith, lastSuccessAt,
   lastErrorAt, lastError, queueSize, queueLabel, detail, changedAt, changedBy }] }`; `PUT /api/connections/:id
@@ -1171,6 +1192,113 @@ it uses.
   flag's job moves to the owner's Today (and turns overdue if ignored) instead of a passive flag; finishing it
   without setting a real next step brings the flag back, and the next run makes a new task.
 
+## Wholesale (wholesale module, D1)
+Code `server/src/modules/wholesale/`, client `client/src/modules/wholesale/` (+ the client page in crm), tests
+`server/test/wholesale.test.js`, `client/test/wholesale.test.js`, `test/e2e/wholesale.e2e.test.js`, and the cross-app
+run `scripts/wom-e2e.mjs`. The sender's spec is the Order Manager's CLAUDE.md "CRM outbox (A10)" (+ A6/A7/A8, A9).
+Registered last (after crm, planner, connections, automations); reads/writes only its own tables, uses the CRM through
+`ctx.services.crm` (reads; D1 added `liveAccountLinks(app)`, `liveAccount(id)`, `accountRelationships(id)`,
+`clientNames(ids)`) and `sync.applyLocal` (writes).
+
+**The receiver** — `POST /api/wom/events` (a `signedRoutes` entry, so the only route outside the guard):
+- Raw body (≤ 10 MB) → paused? **503** `paused` (nothing read or applied, nothing logged as a failure; the Order Manager
+  keeps the events and resends them in order — its backoff caps at 5 min) → no secret / unreadable one → 401
+  `not_set_up` → signature: hex HMAC-SHA256(secret, `${ts}\nPOST\n${req.originalUrl}\n${sha256hex(raw)}`), constant-time,
+  then `|now − ts| ≤ 300 s` (401 `bad_signature` / `stale` / `no_signature` / `no_timestamp`) → JSON body
+  `{ source?: 'wom', events: [1–50] }` (400 otherwise) → **200 `{ results: [{ key, status, reason? }] }`, one per event
+  in order**.
+- Per event: `eventProblem` (events.js: exactly the A10 envelope, version 1, a UUIDv7 key, known name, each data's uids
+  and cents) → **refused + plain-English reason** (never a 500; a bug while applying is refused "The suite couldn't
+  apply it: …" and logged); key already in `wholesale_events` → **duplicate**; else **applied**: its holding rows and its
+  key in **one transaction** (exactly once). Applied in the order received, never by `time`. Refused keys aren't kept.
+- Refused requests (bad signature, stale, malformed) are counted and shown as the Connections row's last error
+  ("… (N refused since the last good request)") — never the secret. After the batch: `reconcile({ only: touched })`,
+  then `automations.emit(name, { key, name, time, backfill, by, customerUid, orderUid, accountId, clientId, linked, data })`
+  for each applied event (D3 hangs automations off these; a duplicate emits nothing).
+
+**The secret**: made in the suite (`POST /api/wholesale/connection/secret`, either person; 32 random bytes,
+base64url) and answered **once** (`{ secret, connection }`); stored AES-256-GCM-encrypted in `wholesale_connection`
+with the key in `config.wholesale.keyFile` (`<data>/wom-secret.key`, 0600, made on first use; `WOM_KEY_FILE`) — never in
+the database, so backups hold no usable secret (a hash can't work: checking an HMAC needs the secret). A new secret
+replaces the old at once (logged in `wholesale_connection_changes`). Both tables are `keepOnRestore`.
+
+**The holding area** (not synced; `wholesale_held_customers | _orders | _money`): the latest snapshot of every customer,
+order, payment, refund, return and credit note, by uid — **every event is an upsert, latest arrival wins**. Deletes
+and removals only mark: `order.deleted` → `deleted` (snapshot kept, or taken from the event), `payment.recorded`
+removed → `removed` + reason + `moved_to`, cut-down "gone" snapshots never replace a full one, `customer.updated`
+deleted → `gone`. **Creation events make a record live again**: `customer.created`, `order.placed`, **`order.restored`**
+(no `order.placed` needed ahead of it), payment `recorded`/`edited`, refund/return/credit note issued. An order for an
+unknown customer makes a stub from the order's customer summary. Every touched row is `dirty`.
+
+**Attaching** (`reconcile`): a held customer is attached to an account when its uid has **exactly one live `wom`
+account link** (`crm.liveAccountLinks`: link, account and client live); several → detached and flagged
+`several_links` (listed, never one picked); none → detached. Runs after each request (touched customers), after each
+link/unlink here, at start, and every minute (`startReconciler`, src/index.js) — so links made by D2 or by a device
+are picked up within a minute (D2: call `ctx.services.wholesale.reconcile({ only: [uid], actor })` after linking to
+attach at once). **A new attachment** sets the account `age_restricted: true` when it isn't true, and creates an active
+`wholesale` relationship (start = first order date) when the account has no relationship with our wholesale business
+— each only then, never overwriting (a paused relationship stays paused; an unticked flag isn't re-set later). (The
+account form saves `false` by default, so "not already set" means "not true".) The account moving to another client
+moves the records (`client_id` kept in step).
+
+**What devices see** (synced, `checkServerOnly`: a device step — create, update **or delete** — is refused
+`op_not_allowed`; they belong to the account (`account_id` ⇧), `client_id` a plain ref):
+- `wholesale_order` — one per order: number, reference, order_date, `at` (its created_at; history-only = date at noon),
+  status `active | cancelled | deleted`, history_only, goods/tax/shipping/total cents, `paid_cents` (payments + store
+  credit used on it), `returned_cents` (refunds + credit notes, with tax), item_count, items ("10 × Zyn …"), packing.
+- `wholesale_entry` — one per payment / refund / store_credit / credit_applied / return / credit_note: amount, method,
+  at, number, order uid/number, status `live | removed` (+ removed_reason, moved_to), detail.
+- `wholesale_customer` — one card per linked Order Manager customer: name, number, gone, order_count, first/last
+  order date, sales, given back, **spend**, paid, credit.
+- **Why records, not activities**: activities are append-only (a cancel or delete must change the shown status, never
+  add or remove items); one order record kept up to date + one entry per money event gives the timeline items the plan
+  asks for, and replays (upserts by uid) can never duplicate them. **Why cards**: the figures need the whole holding
+  area (orders that still count, refunds on them, tax shares), so they are worked out once on the server and the
+  device only adds cards up (an account with two Order Manager customers; a client's accounts).
+- `project()` brings each dirty row's record up to date through `applyLocal` (actor `system`): create, update only what
+  differs, or **delete when detached**. A failure is logged and left dirty (tried again next time).
+
+**Spend** (`figures.js`, the Order Manager's own A8 rules — the cross-app run checks it equals its `total_spent`):
+orders count while active and not deleted (history-only ones count); sales = Σ (subtotal − discounts), before tax and
+shipping; given back = credit notes' own `subtotal_cents` + other refunds with an amount (money or store credit) ×
+goods / (goods + tax) of their order, only on orders that count (so no tax is taken off twice; store credit *used* never
+counts); spend = sales − given back. paid = live payments. credit = store-credit refunds + credit notes + payments
+**moved to store credit** by a delete − store credit used (a restore brings the payment back: the credit goes). Known
+difference: a money refund made by a return with shipping added is netted by the proportion, not the return's own
+subtotal (A10's `return.received` has no subtotal — see the Order Manager notes in the D1 report).
+
+**Never removed from the timeline**: cancelled/deleted orders show their status (struck through), removed payments
+and refunds show "Removed …" / "Kept as store credit when its order was deleted". Only **unlinking** detaches records
+(deleted on devices, kept in the holding area: linking again re-creates them all — reversible).
+
+**People's actions** (`/api/wholesale`, signed in; the Wholesale page): `GET /waiting` and `/linked` (`q`, paged, with
+counts), `POST /customers/:uid/link { clientId, accountId? }` (no account = a new account under that client named
+after the customer, with its address), `/create-client` (client + account + contact when there is a name/clean email
+or phone + the link; values the Order Manager couldn't clean go in the account's notes, never matched on),
+`/unlink` (deletes its account links; the account keeps its age mark and relationship). Each is one transaction;
+links are `matched_by: 'approved'`, `created_by` the person. The CRM's `check` already refuses a second live link.
+
+**Screens**: the client page's timeline merges activities and the Order Manager's records (type filter "Orders",
+business wholesale, by account; rows say "from the Order Manager"); each account shows its customer(s) and figures,
+the header the client's total; the client list's "last activity" counts orders. `/wholesale` (no nav tab: linked from
+the client list, the client page and the Connections card; needs a connection — the lists are server data; picking a
+client uses the device's copy). The `wom` card on System → Connections: the address to enter
+(`config.wholesale.connectUrl`: `WOM_CONNECT_URL`, else `http://host.docker.internal:<SUITE_PORT>`), the secret's
+state, **Make the secret / New secret…** (shown once, Copy). After a suite restore the card says to "Forget
+everything" + "Send existing" in the Order Manager until backfill events arrive (`last_backfill_at > lastRestoreAt`).
+
+**Connection row**: last success = last good request; last error = last refused request with a count; queue = held
+orders + money of unlinked, not-gone customers ("N records from M customers waiting for a client"); detail = linked
+count, refused events, several-links problems, the restore notice. pause()/resume() only log (the receiver reads the
+switch on every request).
+
+**For D2**: links are CRM `link` records (app `wom`, external_id = customer_uid). Create/delete them with `applyLocal`,
+then `wholesale.reconcile({ only: [uid], actor })`; undo = delete the link (records detach; the holding area keeps
+everything). `wholesale.list('waiting')` / `GET /api/wholesale/waiting` give the unlinked customers with clean
+email/phone for matching (`=` on the stored forms; `contactProblems` are never matched). Contact links (an Order Manager
+customer as a contact) aren't used by D1. Not built: a review list, "not the same", restoring the age flag /
+relationship on undo, pruning `wholesale_events`.
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
@@ -1188,15 +1316,19 @@ it uses.
   the overview (goals against targets), D2 matching (links), the pull scope when volumes need it.
 - **C8 (connections and automations)**: done — see "Connections" and "Automations". Switches are server settings
   (not synced) kept across restores; alerts are synced records. What comes next:
-  - **D1** (Order Manager receiver) registers the real `wom` connection (replacing the placeholder): its inbox/outbox
-    queue as `queueSize`, last good exchange, last error; `pause()` stops accepting/pulling without logging failures,
-    `resume()` catches up in order. Its events (`order.placed`, …) go through `automations.emit`.
+  - **D1** (Order Manager receiver): done — see "Wholesale". Its events (`order.placed`, …) go through
+    `automations.emit` (no automations listen yet).
   - **C6** (Apple Calendar) registers `calendar` (CalDAV pull: last success, error; pausing stops the pull and the
     feed's refresh, never deletes anything); **D16** registers `stockroom` (read-only pull) the same way.
   - **D3 and later** add automations with `register()` in their own module (wholesale check-ins, balances, renewals…):
     tasks via `automatedOwnerFor`, `made(key)` for "once per order/customer/period", event triggers with a `key`.
   - **C5** turns alerts into phone notifications through `onAlert` (and adds quiet hours / the morning digest); until
     then "alert" means the in-app alert.
+- **D1 (wholesale receiver)**: done — see "Wholesale". The receiver is a signed route outside the guard (one exact
+  path); the Order Manager's data is held server-side by uid and shown as server-written synced records for linked
+  customers (order + money entries + a figures card), never as activities; spend is computed on the server with the
+  Order Manager's own rules; attaching follows the live CRM links (reconcile), so D2 only has to make or delete links.
+  Next: D2 matching and the review list; D3 automations on the emitted events; pruning `wholesale_events`.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -1206,12 +1338,14 @@ it uses.
 (`createApp` + `listen(0)`) — no mocks of the database. Client tests (`client/test`) run the sync engine in Node with
 fake-indexeddb against such a server (helpers.js: `startServer`, `makeDevice` with an on/off connection switch); the
 client build must succeed. The sync engine tests (`server/test/sync.test.js`, `client/test/engine.test.js`) run without
-the crm module (nor the planner, which needs it, nor the automations with their synced alerts) so seeded records don't
+the crm module (nor the planner, which needs it, nor the automations with their synced alerts, nor wholesale, which needs the crm) so seeded records don't
 shift their counts; `startServer(t, config, { crm: true })` includes them. A restore of a broken live database still
 works with `--force`: carrying the switches is best effort (a warning, then the backup's switches) and the restored
 copy must pass `integrity_check`. Tests that depend on local time set
 `process.env.TZ = 'America/Toronto'` at the top (automations.test.js). The e2e `startServer(t, { extraModules })` adds
-test-only modules (conndemo). `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
+test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager checkout>` (D1) runs the real Order
+Manager (needs `npm ci` in its `server/`) against a real suite and checks the timeline and spend against its own;
+`--capture <file>` writes the events it sent (the fixture `server/test/fixtures/wom-captured-events.json`). `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
 touching the engine, the service worker or the sync UI. Write a test with every module and every bug fix.
 
 ## Git
