@@ -15,6 +15,8 @@
 // chain: a change under a record deleted concurrently keeps it (flagged), and a delete of a record
 // whose subtree changed unseen is kept (flagged). See service.js, "belonging".
 // `format` (text fields): the value is stored normalised (@suite/shared/normalize); see fields.js.
+// `readOnly: true` (optional, D1): only server code (applyLocal) writes it; a device's step of any op is
+// refused `op_not_allowed`, and /info says so, so devices offer no add/edit/delete for it.
 // `check({ op, recordId, fields, current, actor, server })` (optional): a module's own rule, run in
 // the step's transaction before it is written (after the field and reference checks; for a delete,
 // fields is null and `current` is the row — D1 added deletes, so the Order Manager's records can't
@@ -84,7 +86,7 @@ export function createRegistry(db) {
    * so a bad definition stops the server instead of half-working.
    */
   function registerEntity(def) {
-    const { module, entity, table, fields = {}, appendOnly = false, check = null } = def ?? {};
+    const { module, entity, table, fields = {}, appendOnly = false, check = null, readOnly = false } = def ?? {};
     const where = `sync.registerEntity(${entity})`;
     if (!NAME_RE.test(module ?? '')) throw new Error(`${where}: module must be a module name`);
     if (!NAME_RE.test(entity ?? '')) throw new Error(`${where}: entity must match ${NAME_RE}`);
@@ -142,7 +144,7 @@ export function createRegistry(db) {
 
     const parents = [...fieldDefs.values()].filter((f) => f.parent);
     const entry = {
-      module, entity, table, fields: fieldDefs, ops, appendOnly: Boolean(appendOnly), parents, check,
+      module, entity, table, fields: fieldDefs, ops, appendOnly: Boolean(appendOnly), readOnly: Boolean(readOnly), parents, check,
       selectParents: parents.length ? db.prepare(`SELECT ${parents.map((f) => q(f.name)).join(', ')} FROM ${q(table)} WHERE id = ?`) : null,
       liveChildren: new Map(), // field name -> statement: live ids whose field names a record
       standard: new Set(STANDARD_COLUMNS.filter((c) => columns.includes(c))),
@@ -262,6 +264,7 @@ export function createRegistry(db) {
       module: e.module,
       ops: [...e.ops],
       appendOnly: e.appendOnly,
+      ...(e.readOnly ? { readOnly: true } : {}),
       fields: Object.fromEntries([...e.fields.values()].map((f) => [f.name, {
         type: f.type,
         ...(f.required ? { required: true } : {}),

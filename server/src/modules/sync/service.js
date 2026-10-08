@@ -186,6 +186,7 @@ export function createSyncService({ db, log }) {
     if (!entry) throw new StepError('unknown_entity', `unknown entity ${String(step.entity).slice(0, 64)}`);
     if (!OPS.includes(step.op)) throw new StepError('invalid_step', 'op must be create, update or delete');
     if (!entry.ops.has(step.op)) throw new StepError('op_not_allowed', `${step.entity} does not allow ${step.op}`);
+    if (entry.readOnly && !who.server) throw new StepError('op_not_allowed', `${step.entity} is written by the server only`);
     if (!isId(step.recordId)) throw new StepError('invalid_step', 'recordId must be a UUIDv7 made on the device');
 
     const stamp = parseHlc(step.hlc);

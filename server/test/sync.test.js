@@ -914,3 +914,50 @@ test('a module’s check hook learns who made the step (actor) and whether serve
   // An item without a check (syncdemo) still applies as before.
   assert.equal(env.ctx.services.sync.applyLocal({ entity: 'item', op: 'create', fields: { title: 'plain' } }).status, 'applied');
 });
+
+test('D1: a check hook sees deletes too (fields null, current = the row), and readOnly types refuse every device step', async (t) => {
+  const calls = [];
+  const memo = {
+    name: 'memo',
+    createService({ services, db }) {
+      db.exec('CREATE TABLE IF NOT EXISTS memo_notes (id TEXT PRIMARY KEY, deleted_at TEXT, body TEXT)');
+      db.exec('CREATE TABLE IF NOT EXISTS memo_locked (id TEXT PRIMARY KEY, deleted_at TEXT, body TEXT)');
+      services.sync.registerEntity({
+        module: 'memo', entity: 'memo', table: 'memo_notes', fields: { body: { type: 'text' } },
+        check(args) {
+          calls.push(args);
+          return args.op === 'delete' && args.current?.body === 'keep me' && !args.server ? { code: 'invalid_step', reason: 'not this one' } : null;
+        },
+      });
+      services.sync.registerEntity({ module: 'memo', entity: 'locked', table: 'memo_locked', fields: { body: { type: 'text' } }, readOnly: true });
+    },
+  };
+  const env = await startTestApp(t, testConfig(tmpDir(t)), { modules: [...modules.filter((m) => !['automations', 'crm', 'planner', 'wholesale'].includes(m.name)), syncdemo, memo] });
+  const users = await ensureTestUsers(env.ctx);
+  const s = sessionFor(env.ctx, users.owner);
+  const clock = createHlc(s.deviceId);
+  const sync = env.ctx.services.sync;
+  const push = async (step) => {
+    const res = await fetch(`${env.base}/api/sync/push`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: s.cookie, origin: env.base },
+      body: JSON.stringify({ steps: [{ key: newId(), hlc: clock.now(), seen: sync.info().cursor, ...step }] }),
+    });
+    return (await res.json()).results[0];
+  };
+  const keep = sync.applyLocal({ entity: 'memo', op: 'create', fields: { body: 'keep me' } }).recordId;
+  const other = sync.applyLocal({ entity: 'memo', op: 'create', fields: { body: 'fine' } }).recordId;
+  calls.length = 0;
+  assert.deepEqual([(await push({ entity: 'memo', recordId: keep, op: 'delete' })).code], ['invalid_step']);
+  assert.equal((await push({ entity: 'memo', recordId: other, op: 'delete' })).status, 'applied');
+  assert.deepEqual(calls.map((c) => [c.op, c.fields, c.current.body, c.server]), [['delete', null, 'keep me', false], ['delete', null, 'fine', false]]);
+  assert.equal(sync.applyLocal({ entity: 'memo', op: 'delete', recordId: keep }).status, 'applied', 'server code may');
+
+  // readOnly: in /info, server writes fine, every device op refused.
+  assert.equal(sync.info().entities.find((e) => e.entity === 'locked').readOnly, true);
+  const locked = sync.applyLocal({ entity: 'locked', op: 'create', fields: { body: 'server' } }).recordId;
+  for (const step of [{ op: 'create', recordId: newId(), fields: { body: 'x' } }, { op: 'update', recordId: locked, fields: { body: 'y' } }, { op: 'delete', recordId: locked }]) {
+    assert.equal((await push({ entity: 'locked', ...step })).code, 'op_not_allowed', step.op);
+  }
+  assert.equal(sync.applyLocal({ entity: 'locked', op: 'update', recordId: locked, fields: { body: 'z' } }).status, 'applied');
+});
