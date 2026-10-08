@@ -100,7 +100,8 @@ client/src/
                            data.js (cached offline reads), formFields.js (form values -> changed fields), logic.js (search, timeline filters, money, consent, errors — no
                            React, tested in client/test/clients.test.js), crm.css (layout media queries).
                            C7: QuickAddPage (/crm/quick-add) + quickAdd.js (the line parser, rows, no React;
-                           client/test/quickadd.test.js), ImportPage (/crm/import)
+                           client/test/quickadd.test.js), ImportPage (/crm/import); both lazy-loaded (React.lazy in crm/index.jsx; the
+                           service worker caches their chunks, so they open offline)
   modules/planner/         C4a screens: TodayPage (/), InboxPage (/inbox), TasksPage (/tasks), PlanSheet (Plan my day),
                            ClientTasksCard.jsx (the client page's Tasks card + "No next step · Add"), forms.jsx
                            (TaskSheet, InboxNoteSheet, newTaskInitial), parts.jsx (TaskRow, tick, CaptureBar, useToday),
@@ -763,13 +764,20 @@ normaliser refuses (7 digits, foreign without a country code) → the contact's 
 - **Our businesses**: defaults are agency (GWND · Website) for both; Social, Consulting and Wholesale selectable per
   row / per import, or None. Wholesale customers proper come through the Order Manager connection (A10/D1).
 
-**Quick add** (`/crm/quick-add`, offline): one client per line; separators ` - `, `—`, `–`, `,`, `;`, `|`, tab
-(hyphens inside words don't split); bullets/numbering dropped. Keywords (whole segments of keywords + fillers):
+**Quick add** (`/crm/quick-add`, offline): one client per line; separators ` - `, `—`, `–`, `;`, `|`, tab, and `,`
+**only on a line with none of those** ("Smith, Jones & Associates - consulting" keeps its name; a keyword list like
+"website, social retainer" still splits); a `:` after the client's name too ("Brantford Auto Body: website"); hyphens
+inside words don't split; bullets/numbering dropped. Keywords (whole segments of keywords + fillers):
 website/web/site/design/seo/agency → GWND website; social/social media/instagram/facebook → GWND social;
 consulting/consult/coaching → consulting; wholesale → wholesale. Emails and phones anywhere (the words beside them are
-the contact; a single capitalised word on a line with an email/phone is the contact's first name); `Client (Account)`,
-`account:`, `contact:`/`owner:`/`manager:` (role), `role:`, `#tag`, `tags:`, `notes:` (rest of the line); other
-leftovers: 2–4 capitalised words → contact, ≤ 3 words → tag, longer → contact notes. Lines without a keyword get the
+the contact); phones only when they read as one (+/00/011/bracketed area code, 10 digits, 11 starting with 1, or a
+7-digit "555-0100" kept as typed with a warning — never "15000 2026", never across a ` - `); `Client (Account)`,
+`account:`, `contact:`/`owner:`/`manager:` (role), `role:`, "Name, owner" (a role word), `#tag`, `tags:` (to the next
+separator other than a comma), `notes:` (rest of the line; separators before it are trimmed). Other leftovers: a
+person's name (capitalised words, particles like "de"/"van", "&": "Pat", "Jan de Vries", "Amy & Tom Baker") → the
+contact if there is none yet; **everything else → the client's notes** ("2 sessions", "net 30", a town) — only
+`#word` and `tags:` make tags, and nothing typed is dropped (`cleanRow` also keeps contact notes on the client when
+there is no contact). The preview shows role, client notes and contact notes per row. Lines without a keyword get the
 page's default (marked "No business named"). The preview updates as you type: cards with an Edit sheet on phones,
 an editable table on wide screens (≥ 1000 px; "More…" opens the sheet for notes/role). Matching uses the device's
 copy (`useClientListData`). **Save** creates through `store.create` with ids **made once per line** (`session`, module
@@ -779,14 +787,19 @@ and says which line. Text, edits and choices survive navigating away (module sta
 list" forgets them, after which the same list again shows "Already here".
 
 **CSV import** (`/crm/import`, **needs a connection**: says so offline and disables Preview/Import). The page reads the
-file (UTF-8, else Windows-1252), shows the detected mapping (`detectMapping`: QuickBooks Online/Desktop, Wave, Xero,
+file (UTF-8, else Windows-1252; `readTable` skips report title rows — up to 10 leading records with fewer than two
+filled cells, when a real header follows — and a trailing date/time footer, as in QuickBooks Online reports; row
+numbers stay those of the file), shows the detected mapping (`detectMapping`: QuickBooks Online/Desktop, Wave, Xero,
 FreshBooks headers; `source` guessed) with a sample per column, and the business for the new clients. Then:
 - `POST /api/crm/import/preview { text, fileName, mapping, business, kind }` → every row flagged
   (`invalid | imported | changed | same | similar | duplicate | new`), with `actions`, `match`, `previous` (the earlier
   import) and `adds` (what "add only what's missing" would make). Writes nothing.
 - `POST /api/crm/import/commit { batchId, …, choices: { [row]: { action, status } } }` → **202** `{ batch }`, running in
   the background; the page polls `GET /import/batches/:id` and then calls `store.syncNow()`. The same `batchId` again
-  → 200 with that batch (a retried request never imports twice). One import at a time (409 `import_running`).
+  with the same request → 200 with that batch (a retried request never imports twice); with a different request
+  (`request_hash`: SHA-256 of the text, file name, mapping, business and choices, migration 003) → **409
+  `batch_mismatch`**, so a lost reply can never be answered with another file's result. The page makes a new batch id
+  whenever the file, mapping, business, choices or preview change. One import at a time (409 `import_running`).
   `GET /import/batches` lists the last 20 (who, when, file, source, counts, problems) on the page.
 - Limits: text ≤ 5 MB (413 `too_big`; route body limit 8 MB), ≤ 10,000 data rows (413 `too_many_rows`), a name column
   (400 `no_name_column`), `business` one of ours with a `kind`.
@@ -795,12 +808,19 @@ FreshBooks headers; `source` guessed) with a sample per column, and the business
   "Added from … : contact X, GWND (website). Nothing existing was changed."), with the import's business. Rows go in
   **chunks of 100** (one transaction per chunk, each row in its own savepoint: all its records + note + remembered row,
   or none — a refused step fails only that row), yielding to the event loop between chunks (2,500 rows ≈ 1.5 s here,
-  health answered meanwhile).
+  health answered meanwhile). **Preview and the start of a commit are synchronous**: parsing, cleaning, matching and
+  the fingerprint lookups for a 10,000-row file block the server briefly (on the order of a second or two), as does
+  each 100-row chunk; fine for two people, but don't call them from anything that runs often.
+- Several addresses in one email cell ("a@x.ca; b@x.ca", also in quick add): the first valid one is the email, the
+  rest go in the contact's notes ("Also: …").
+- **CSV exports (any future one)**: escape values starting with `=`, `+`, `-` or `@` (prefix a `'`, or a tab) so a
+  spreadsheet doesn't run them as formulas — imported names and notes are typed by anyone. Nothing exports CSV yet.
 - **Idempotent**: `crm_import_rows` remembers every committed row by **fingerprint** (SHA-256 of `fingerprintText`:
   every clean value except relationships — the business picked is a choice, not data) → client id, record ids, batch,
   row number. Same values again → `imported` (skipped; even for another business, typed differently or with `;`);
   same customer (`rowKey` = client name key) with other values → `changed` "Changed since last import — not applied";
-  "add" there adds only what's missing to the client it made. A row whose client was later deleted stays "imported"
+  "add" there — and on an `imported` row — adds only what's missing to the client it made (e.g. the relationship for
+  another business chosen this time). A row whose client was later deleted stays "imported"
   (shown "since deleted"; "Create anyway" is there). A restart mid-import marks the batch `interrupted`
   (`markInterrupted` at start); importing the same file again finishes it.
 - These tables are not synced and not guarded (the module's own); backups carry them with the records.
