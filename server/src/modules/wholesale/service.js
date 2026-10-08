@@ -25,7 +25,7 @@ import { WHOLESALE_ENTITIES, checkServerOnly } from './entities.js';
 import {
   eventProblem, bodyProblem, isoTime, isDate, orderFigures, itemsSummary, ORDER_SNAPSHOT_EVENTS, ORDER_CREATION_EVENTS,
 } from './events.js';
-import { customerFigures, orderMoney, orderRhythm } from './figures.js';
+import { customerFigures, orderMoney, orderRhythm, owingByOrder } from './figures.js';
 import { registerWholesaleAutomations } from './automations.js';
 import { loadKey, encryptSecret, decryptSecret, newSecret, signatureProblem, headerProblem } from './secret.js';
 
@@ -1086,6 +1086,11 @@ export function createWholesaleService(ctx) {
     /** Held customers attached to an account (linked), with their attachment. */
     attachedCustomers: () => q.attached.all(),
     customer: (uid) => q.customer.get(uid) ?? null,
+    /** A held order as it is now (after the whole request: a batch can bring "packed" and "shipped" together). */
+    order: (uid) => {
+      const o = q.order.get(uid);
+      return o ? { ...o, snap: parse(o.snapshot) } : null;
+    },
     /** A customer's held orders with what the rhythm and balance rules need. */
     ordersOf: (uid) => q.ordersFull.all(uid),
     /** A customer's held payments, refunds, returns and credit notes. */
@@ -1100,6 +1105,8 @@ export function createWholesaleService(ctx) {
 
   return {
     receive, precheck, applyEvents, reconcile, reconcileAll, checkRestore, checkCardVersion, project, describe, status, startReconciler,
+    /** D3: a customer's money owing as the Order Manager's Balances page works it out (figures.js owingByOrder). */
+    owingOf: (uid) => owingByOrder(q.ordersFull.all(uid), q.moneyOf.all(uid)),
     /** Latest Order Manager order time per client (Map client_id -> at), for "last activity" elsewhere (planner). */
     lastOrderAtByClient: () => new Map(lastOrders.all().map((r) => [r.client_id, r.at])),
     makeSecret, secretState, connectionInfo,

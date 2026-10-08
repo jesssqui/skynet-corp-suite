@@ -92,7 +92,7 @@ test('orderRhythm: a regular’s usual gap is the median of their recent gaps; q
   assert.equal(daysBetween('2026-11-01', '2026-11-02'), 1, 'across the DST change: whole days');
 });
 
-test('owingByOrder: the Order Manager’s balance — total less payments and credit used; money on account goes to the oldest first', () => {
+test('owingByOrder: the Order Manager’s Balances page — all payments and credit used pay the oldest orders first', () => {
   const orders = [
     { uid: 'o1', number: 1, order_date: '2026-08-01', status: 'active', deleted: 0, has_snapshot: 1, total_cents: 11300 },
     { uid: 'o2', number: 2, order_date: '2026-08-20', status: 'active', deleted: 0, has_snapshot: 1, total_cents: 5000 },
@@ -103,24 +103,42 @@ test('owingByOrder: the Order Manager’s balance — total less payments and cr
   const m = (kind, amount_cents, order_uid, over = {}) => ({ kind, sub_kind: null, amount_cents, order_uid, removed: 0, ...over });
   const money1 = [
     m('payment', 5000, 'o1'),
-    m('payment', 1000, null), // on account → the oldest owing order
+    m('payment', 1000, null), // on account
     m('refund', -800, 'o2', { sub_kind: 'store_credit_applied' }), // credit used counts as paid
     m('credit_note', 1130, 'o3'), // credit held: NOT taken off the balance
-    m('refund', 500, 'o1', { sub_kind: 'refund' }), // money back: not a payment either
-    m('payment', 3000, 'oc'), m('refund', 1000, 'oc', { sub_kind: 'refund' }), // cancelled: 3000 − 1000 back = 2000 to the pool
+    m('refund', 500, 'o1', { sub_kind: 'refund' }), // money back on an order that counts: not a payment either
+    m('payment', 3000, 'oc'), m('refund', 1000, 'oc', { sub_kind: 'refund' }), // cancelled: 3000 − 1000 back = 2000 paid
     m('payment', 999, 'o2', { removed: 1 }), // removed: nothing
   ];
   const r = owingByOrder(orders, money1);
-  assert.deepEqual(r.orders.map((o) => [o.uid, o.owing_cents]), [['o1', 3300], ['o2', 4200], ['o3', 2000]], 'o1: 11300 − 5000 − 1000 − 2000');
-  assert.equal(r.balance_cents, 9500);
-  // The Order Manager's customer balance: Σ active totals − Σ paid rows (payments + credit used − given back on cancelled).
-  assert.equal(r.balance_cents, (11300 + 5000 + 2000) - (5000 + 1000 + 800 + 3000 - 1000));
+  // Paid = 5000 + 1000 + 800 + (3000 − 1000) = 8800, oldest first: o1 owes 11300 − 8800.
+  assert.equal(r.paid_cents, 8800);
+  assert.deepEqual(r.orders.map((o) => [o.uid, o.owing_cents]), [['o1', 2500], ['o2', 5000], ['o3', 2000]]);
+  assert.deepEqual([r.owing_cents, r.balance_cents], [9500, 18300 - 8800], 'the Order Manager’s balance: Σ active totals − Σ paid rows');
   assert.deepEqual(overdueOrders(r, '2026-10-14').map((o) => o.uid), ['o1', 'o2'], 'o3 is 14 days old');
   assert.deepEqual(overdueOrders(r, '2026-08-31').map((o) => o.uid), [], 'o1 is exactly 30 days old: not yet');
-  // An overpaid order's extra goes to the next oldest; more than everything → unused.
-  const over = owingByOrder(orders.slice(0, 2), [m('payment', 12300, 'o1')]);
-  assert.deepEqual([over.orders.map((o) => o.owing_cents), over.unused_cents], [[0, 4000], 0]);
-  assert.deepEqual(owingByOrder(orders.slice(0, 1), [m('payment', 20000, null)]).unused_cents, 8700);
+  // The reviewer's case: A (Aug 1) unpaid, B (Oct 1) paid on B → the Order Manager shows $100 current, nothing over 30.
+  const ab = [
+    { uid: 'A', number: 1, order_date: '2026-08-01', status: 'active', deleted: 0, has_snapshot: 1, total_cents: 10000 },
+    { uid: 'B', number: 2, order_date: '2026-10-01', status: 'active', deleted: 0, has_snapshot: 1, total_cents: 10000 },
+  ];
+  const rab = owingByOrder(ab, [m('payment', 10000, 'B')]);
+  assert.deepEqual(rab.orders.map((o) => [o.uid, o.owing_cents]), [['A', 0], ['B', 10000]]);
+  assert.deepEqual(overdueOrders(rab, '2026-10-14'), []);
+  // More than everything → a negative balance (credit), nothing owing.
+  const over = owingByOrder(orders.slice(0, 1), [m('payment', 20000, null)]);
+  assert.deepEqual([over.owing_cents, over.balance_cents, over.unused_cents], [0, -8700, 8700]);
+  // A7: a payment moved to store credit by a delete is credit held, not paid; restored, it pays again.
+  const moved = [m('payment', 11300, 'o1', { removed: 1, moved_to: 'store_credit' })];
+  assert.equal(owingByOrder(orders.slice(0, 1), moved).owing_cents, 11300);
+  assert.equal(owingByOrder(orders.slice(0, 1), [m('payment', 11300, 'o1')]).owing_cents, 0, 'restored with its order');
+  // Store credit applied on a cancelled order counts as paid there (less what was given back on it).
+  const cx = [orders[0], orders[3]];
+  assert.equal(owingByOrder(cx, [m('refund', -500, 'oc', { sub_kind: 'store_credit_applied' })]).owing_cents, 10800);
+  assert.equal(owingByOrder(cx, [m('refund', -500, 'oc', { sub_kind: 'store_credit_applied' }), m('credit_note', 300, 'oc')]).owing_cents, 11100, '500 used − 300 given back');
+  assert.equal(owingByOrder(cx, [m('credit_note', 300, 'oc')]).owing_cents, 11300, 'given back on an unpaid cancelled order takes nothing off');
+  // A deleted order owes nothing.
+  assert.deepEqual(owingByOrder([orders[4]], []).orders, []);
 });
 
 test('the drafted email: amounts, total, store credit, recipient; the person’s notes below the line are kept', () => {
@@ -315,20 +333,22 @@ test('balance reminder: one task with a drafted email whose amounts match the ho
   assert.deepEqual([run.automation, run.createdCount], [BALANCES_ID, 1]);
   assert.ok(run.alertId, 'alert by default');
   const [task] = env.tasks();
-  // On account (1000) goes to the oldest: the history-only order (1130 → 130). o1: 11300 − 5000 = 6300. o2: 2260.
+  // Paid 5000 + 1000 on account = 6000, oldest first (the Order Manager's aging): the history-only order (1130)
+  // is paid off, o1 owes 11300 − 4870 = 6430, o2 2260; o3 isn't 30 days old.
   const held = owingByOrder(
     env.db.prepare(`SELECT uid, number, status, deleted, order_date, placed_at, total_cents, snapshot IS NOT NULL AS has_snapshot
       FROM wholesale_held_orders WHERE customer_uid = ?`).all(c.customer_uid),
     env.db.prepare('SELECT kind, sub_kind, amount_cents, removed, order_uid FROM wholesale_held_money WHERE customer_uid = ?').all(c.customer_uid),
   );
   const overdue = overdueOrders(held, '2026-10-14');
-  assert.deepEqual(overdue.map((o) => [o.number, o.owing_cents]), [[oh.number, 130], [o1.number, 6300], [o2.number, 2260]]);
-  assert.equal(task.title, 'Balance owing over 30 days: Corner Store, $86.90 (3 orders)');
+  assert.deepEqual(overdue.map((o) => [o.number, o.owing_cents]), [[o1.number, 6430], [o2.number, 2260]]);
+  assert.equal(env.svc.owingOf(c.customer_uid).owing_cents, held.owing_cents);
+  assert.equal(task.title, 'Balance owing over 30 days: Corner Store, $86.90 (2 orders)');
   assert.deepEqual([task.owner, task.business_id, task.client_id, task.account_id, task.relationship_id, task.due_date],
     ['owner', W, clientId, accountId, env.relOf(accountId), '2026-10-14']);
   assert.match(task.notes, /To: Pat Lee <pat@leftys\.ca>/);
-  assert.match(task.notes, new RegExp(`• Order #${oh.number} from Jul 1, 2026: \\$1\\.30 owing \\(order total \\$11\\.30\\)`));
-  assert.match(task.notes, new RegExp(`• Order #${o1.number} from Aug 20, 2026: \\$63\\.00 owing \\(order total \\$113\\.00\\)`));
+  assert.ok(!task.notes.includes(`Order #${oh.number} `), 'the oldest order is paid off by the oldest-first rule');
+  assert.match(task.notes, new RegExp(`• Order #${o1.number} from Aug 20, 2026: \\$64\\.30 owing \\(order total \\$113\\.00\\)`));
   assert.match(task.notes, new RegExp(`• Order #${o2.number} from Sep 1, 2026: \\$22\\.60 owing\\n`));
   assert.match(task.notes, /Total owing: \$86\.90/);
   assert.match(task.notes, /You also have \$11\.30 in store credit with us/, 'the credit note is credit held, not taken off');
@@ -364,7 +384,7 @@ test('balance reminder: one task with a drafted email whose amounts match the ho
   env2.apply([om.paymentRecorded(om.payment(oh, 130)), om.paymentRecorded(om.payment(o2, 2260))]);
   env2.setNow(at('2026-10-17 07:46'));
   const r17 = env2.autos.tick().find((r) => r.automation === BALANCES_ID);
-  assert.match(r17.summary, /^Finished 1 reminder \(paid\)/);
+  assert.match(r17.summary, /^Finished 1 reminder$/);
   const t3 = env2.tasks()[0];
   assert.ok(t3.done_at);
   assert.match(t3.notes, /Nothing owing over 30 days any more — finished by the suite on Oct 17, 2026\.$/);
@@ -484,6 +504,198 @@ test('switched off, the ready-to-ship automation makes nothing; Run now explains
   assert.deepEqual([r.status, r.createdCount], ['ok', 0]);
   assert.match(r.summary, /Runs when the Order Manager packs an order/);
   const view = env.autos.get(SHIP_ID);
-  assert.equal(view.when, 'When the Order Manager packs an order (finished when it ships, is cancelled or deleted)');
-  assert.deepEqual(view.trigger.events, ['order.packed', 'order.shipped', 'order.cancelled', 'order.deleted', 'order.restored']);
+  assert.equal(view.when, 'When the Order Manager packs an order (finished when it ships, is cancelled, deleted or changed)');
+  assert.deepEqual(view.trigger.events, ['order.packed', 'order.shipped', 'order.cancelled', 'order.deleted', 'order.restored', 'order.changed']);
+});
+
+// ---- review fixes ------------------------------------------------------------------------------
+
+test('balance: a reminder the suite finished comes back when money is owed again (a payment removed); a person’s stays finished', async (t) => {
+  const env = await setup(t);
+  env.only(BALANCES_ID);
+  env.setNow(at('2026-10-14 07:46'));
+  const om = womKit();
+  const c = om.customer({ business_name: 'Corner' });
+  const o1 = orderOn(om, c, '2026-09-01'); // 11300
+  env.apply([om.customerCreated(c), om.orderPlaced(o1)]);
+  env.linked(c, 'Corner');
+  env.autos.tick();
+  const [task] = env.tasks();
+  // Paid (a cheque): the suite finishes it.
+  const cheque = om.payment(o1, 11300, { method: 'cheque' });
+  env.apply([om.paymentRecorded(cheque)]);
+  env.setNow(at('2026-10-15 07:46'));
+  assert.match(env.autos.tick()[0].summary, /^Finished 1 reminder$/);
+  assert.ok(env.tasks()[0].done_at);
+  // The cheque bounced: the payment is removed in the Order Manager → owed again → the same task is reopened.
+  env.apply([om.paymentRemoved(cheque, { reason: 'deleted' })]);
+  env.setNow(at('2026-10-16 07:46'));
+  const [r] = env.autos.tick();
+  assert.match(r.summary, /^Reopened 1 reminder \(owing again\)/);
+  assert.ok(r.alertId, 'worth an alert');
+  const back = env.tasks();
+  assert.equal(back.length, 1, 'the same task, not a second');
+  assert.deepEqual([back[0].id, back[0].done_at, back[0].due_date], [task.id, null, '2026-10-16']);
+  assert.match(back[0].notes, /Nothing owing over 30 days any more — finished by the suite on Oct 15, 2026\.\n\nOwing again: \$113\.00 over 30 days — reopened by the suite on Oct 16, 2026\.$/);
+  // Now a PERSON finishes it while it is still owed: never reopened or made again for that order.
+  env.local('task', { done_at: new Date(at('2026-10-16 09:00')).toISOString() }, 'update', task.id);
+  env.setNow(at('2026-10-17 07:46'));
+  const [r2] = env.autos.tick();
+  assert.match(r2.summary, /^1 balance owing but already handled by a person$/);
+  assert.ok(env.tasks()[0].done_at);
+  assert.equal(env.tasks('done_at IS NULL').length, 0);
+});
+
+test('balance: a title the person changed is never put back; only a change in the money updates (and alerts)', async (t) => {
+  const env = await setup(t);
+  env.only(BALANCES_ID);
+  env.setNow(at('2026-10-14 07:46'));
+  const om = womKit();
+  const c = om.customer({ business_name: 'Corner' });
+  const o1 = orderOn(om, c, '2026-09-01');
+  env.apply([om.customerCreated(c), om.orderPlaced(o1)]);
+  env.linked(c, 'Corner');
+  env.autos.tick();
+  const [task] = env.tasks();
+  env.local('task', { title: 'Corner — called, paying Fri' }, 'update', task.id);
+  env.setNow(at('2026-10-15 07:46'));
+  const [same] = env.autos.tick();
+  assert.deepEqual([same.summary, same.alertId], ['1 reminder open, nothing changed', null]);
+  assert.equal(env.tasks()[0].title, 'Corner — called, paying Fri');
+  // A partial payment: the draft follows, the person's title stays.
+  env.apply([om.paymentRecorded(om.payment(o1, 3000))]);
+  env.setNow(at('2026-10-16 07:46'));
+  const [r] = env.autos.tick();
+  assert.match(r.summary, /^Brought 1 reminder up to date/);
+  const now = env.tasks()[0];
+  assert.equal(now.title, 'Corner — called, paying Fri');
+  assert.match(now.notes, /Total owing: \$83\.00/);
+  // A title the suite wrote is still kept up to date (a second customer).
+  const d = om.customer({ business_name: 'Dairy Bar' });
+  const od = orderOn(om, d, '2026-09-02');
+  env.apply([om.customerCreated(d), om.orderPlaced(od)]);
+  env.linked(d, 'Dairy Bar');
+  env.setNow(at('2026-10-17 07:46'));
+  env.autos.tick();
+  env.apply([om.paymentRecorded(om.payment(od, 1300))]);
+  env.setNow(at('2026-10-18 07:46'));
+  env.autos.tick();
+  assert.deepEqual(env.tasks('title LIKE ?', '%Dairy Bar%').map((x) => x.title), ['Balance owing over 30 days: Dairy Bar, $100.00 (1 order)']);
+});
+
+test('balance: a deleted customer’s reminder is finished with that reason; unlinking finishes open check-ins and reminders', async (t) => {
+  const env = await setup(t);
+  env.only(BALANCES_ID, CHECK_IN_ID);
+  env.setNow(at('2026-10-14 07:00'));
+  const om = womKit();
+  const gone = om.customer({ business_name: 'Gone Shop' });
+  env.apply([om.customerCreated(gone), om.orderPlaced(orderOn(om, gone, '2026-09-01'))]);
+  env.linked(gone, 'Gone Shop');
+  const reg = om.customer({ business_name: 'Regular' });
+  env.apply([om.customerCreated(reg), ...['2026-08-01', '2026-08-15', '2026-08-29', '2026-09-12'].map((d) => om.orderPlaced(orderOn(om, reg, d)))]);
+  env.linked(reg, 'Regular');
+  env.setNow(at('2026-10-14 07:46'));
+  env.autos.tick();
+  assert.equal(env.tasks('done_at IS NULL').length, 3, 'a reminder each and a check-in');
+  env.apply([om.customerDeleted(gone)]);
+  env.svc.unlink(reg.customer_uid, { actor: 'owner' });
+  env.setNow(at('2026-10-15 07:46'));
+  const runs = env.autos.tick();
+  assert.match(runs.find((x) => x.automation === CHECK_IN_ID).summary, /finished 1 check-in of unlinked customers/);
+  assert.match(runs.find((x) => x.automation === BALANCES_ID).summary, /finished 1 reminder of unlinked customers/);
+  assert.equal(env.tasks('done_at IS NULL').length, 0);
+  assert.match(env.tasks('title LIKE ?', '%Gone Shop%')[0].notes, /Deleted in the Order Manager — finished by the suite/);
+  for (const x of env.tasks('title LIKE ?', '%Regular%')) assert.match(x.notes, /Unlinked from the Order Manager customer — finished by the suite on Oct 15, 2026\.$/);
+});
+
+test('check-in: finished by the suite for a new order, reopened when that order is cancelled; a person’s finish is final', async (t) => {
+  const env = await setup(t);
+  env.only(CHECK_IN_ID);
+  env.setNow(at('2026-10-14 07:41'));
+  const om = womKit();
+  const c = om.customer({ business_name: 'Lefty’s' });
+  env.apply([om.customerCreated(c), ...['2026-08-01', '2026-08-15', '2026-08-29', '2026-09-12'].map((d) => om.orderPlaced(orderOn(om, c, d)))]);
+  env.linked(c);
+  env.autos.tick();
+  const [task] = env.tasks();
+  const o5 = orderOn(om, c, '2026-10-15');
+  env.apply([om.orderPlaced(o5)]);
+  env.setNow(at('2026-10-16 07:41'));
+  env.autos.tick();
+  assert.ok(env.tasks()[0].done_at, 'finished: they ordered');
+  // That order is cancelled: the last counting order is Sep 12 again, the customer is quiet again.
+  env.apply([om.orderCancelled({ ...o5, status: 'cancelled' })]);
+  assert.equal(env.card(c.customer_uid).quiet_from, '2026-10-04', 'the chip is back');
+  env.setNow(at('2026-10-17 07:41'));
+  const [r] = env.autos.tick();
+  assert.match(r.summary, /reopened 1 check-in/);
+  const [back] = env.tasks();
+  assert.deepEqual([back.id, back.done_at, back.due_date, back.title], [task.id, null, '2026-10-17', 'Check in with Lefty’s: no order in 35 days (usually every 14)']);
+  assert.match(back.notes, /Quiet again: no order in 35 days \(usually every 14\) — reopened by the suite on Oct 17, 2026\.$/);
+  // A person finishes it: not reopened, counted as handled.
+  env.local('task', { done_at: new Date(at('2026-10-17 10:00')).toISOString() }, 'update', task.id);
+  env.setNow(at('2026-10-18 07:41'));
+  const [r2] = env.autos.tick();
+  assert.match(r2.summary, /1 quiet regular already handled by a person/);
+  assert.ok(env.tasks()[0].done_at);
+});
+
+test('ready to ship: order.changed to "check again" finishes it; packed again makes a new one; a change of customer moves it; a person’s title stays', async (t) => {
+  const env = await setup(t);
+  env.setNow(at('2026-10-14 10:00'));
+  const om = womKit();
+  const c = om.customer({ business_name: 'Lefty’s' });
+  const d = om.customer({ business_name: 'Dairy Bar' });
+  env.apply([om.customerCreated(c), om.customerCreated(d)]);
+  env.linked(c);
+  const dIds = env.linked(d, 'Dairy Bar');
+  const packing = (o, state) => ({ ...o, packing: { ...o.packing, state, packed_by: 'sam' } });
+  const o1 = orderOn(om, c, '2026-10-13');
+  env.apply([om.orderPlaced(o1), om.orderPacked(packing(o1, 'packed'))]);
+  const [task] = env.tasks();
+  // Edited after packing: the Order Manager says check again with order.changed only.
+  const more = { ...o1, lines: [...o1.lines, { ...o1.lines[0], name: 'ALP Mango', quantity: 2 }] };
+  env.apply([om.orderChanged(packing(more, 'check_again'))]);
+  assert.match(env.tasks()[0].notes, /Changed in the Order Manager — check again — finished by the suite/);
+  // Packed again: a new task, with the new items.
+  env.apply([om.orderPacked(packing(more, 'packed'), { change: 'packed_again' })]);
+  const open = env.tasks('done_at IS NULL');
+  assert.equal(open.length, 1);
+  assert.notEqual(open[0].id, task.id);
+  assert.match(open[0].notes, /2 × ALP Mango/);
+  // The person renames it; then the order moves to another (linked) customer while packed: account and
+  // client follow, the person's title stays.
+  env.local('task', { title: 'Ship Lefty’s before 3' }, 'update', open[0].id);
+  env.apply([om.orderChanged({ ...packing(more, 'packed'), customer_uid: d.customer_uid, customer: { customer_uid: d.customer_uid, business_name: 'Dairy Bar' } })]);
+  const moved = env.tasks('id = ?', open[0].id)[0];
+  assert.deepEqual([moved.account_id, moved.client_id, moved.title, moved.done_at], [dIds.accountId, dIds.clientId, 'Ship Lefty’s before 3', null]);
+  // A suite-written title follows the customer: a fresh order for Lefty's, then moved.
+  const o2 = orderOn(om, c, '2026-10-13');
+  env.apply([om.orderPlaced(o2), om.orderPacked(packing(o2, 'packed'))]);
+  env.apply([om.orderChanged({ ...packing(o2, 'packed'), customer_uid: d.customer_uid, customer: { customer_uid: d.customer_uid, business_name: 'Dairy Bar' } })]);
+  assert.equal(env.tasks('done_at IS NULL AND title LIKE ?', `Ship order #${o2.number} %`)[0].title, `Ship order #${o2.number} for Dairy Bar`);
+  // An edit of a never-packed order runs nothing at all.
+  const runs = env.runs(SHIP_ID).length;
+  const o3 = orderOn(om, c, '2026-10-13');
+  env.apply([om.orderPlaced(o3), om.orderChanged({ ...o3, notes: 'Back door' })]);
+  assert.equal(env.runs(SHIP_ID).length, runs);
+});
+
+test('ready to ship: packed and shipped in one batch (a catch-up) make no task and no run', async (t) => {
+  const env = await setup(t);
+  env.setNow(at('2026-10-14 10:00'));
+  const om = womKit();
+  const c = om.customer();
+  env.apply([om.customerCreated(c)]);
+  env.linked(c);
+  const o = orderOn(om, c, '2026-10-13');
+  env.apply([om.orderPlaced(o),
+    om.orderPacked({ ...o, packing: { ...o.packing, state: 'packed' } }),
+    om.orderShipped({ ...o, packing: { ...o.packing, state: 'shipped', shipped_via: 'delivered' } })]);
+  assert.equal(env.tasks().length, 0);
+  assert.equal(env.runs(SHIP_ID).length, 0);
+  // Packed and cancelled together: nothing either.
+  const o2 = orderOn(om, c, '2026-10-13');
+  env.apply([om.orderPlaced(o2), om.orderPacked({ ...o2, packing: { ...o2.packing, state: 'packed' } }), om.orderCancelled({ ...o2, status: 'cancelled', packing: { ...o2.packing, state: 'cancelled_packed' } })]);
+  assert.equal(env.tasks().length, 0);
 });
