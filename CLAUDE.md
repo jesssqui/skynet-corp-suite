@@ -1222,7 +1222,9 @@ Registered last (after crm, planner, connections, automations); reads/writes onl
   them); key already in `wholesale_events` → **duplicate**; else **applied**: its holding rows and its key in **one
   transaction** (exactly once). Applied in the order received, never by `time`. Refused keys aren't kept. **An
   unexpected error while applying** (SQLITE_BUSY, a full disk, a bug) is never `refused`: the answer stops at the
-  events before it (a prefix, which A10 allows), so the Order Manager sends it and the rest again, in order.
+  events before it (a prefix, which A10 allows), so the Order Manager sends it and the rest again, in order. Such a
+  short answer is **not** a success: the Connections row keeps its last success, shows "Couldn’t apply event … : …"
+  as its last error, and "Stuck since …" once the same event has failed twice (cleared when it applies).
 - Refused requests (bad signature, stale, malformed) are counted in memory and shown as the Connections row's last
   error ("… (N refused since the last good request)") — never the secret; `wholesale_status` is written and a warning
   logged **at most once a minute** (the route has no session); a good request clears it.

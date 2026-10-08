@@ -237,10 +237,16 @@ export function createWholesaleService(ctx) {
     const fresh = refusals.at && !(st.last_error_at > refusals.at);
     const lastError = fresh ? refusals.message : st.last_error;
     const since = fresh ? refusals.count : Number(st.refused_requests ?? 0);
+    if (st.stuck_key && Number(st.stuck_tries) > 1) {
+      parts.unshift(`Stuck since ${st.stuck_since}: the same event has failed ${st.stuck_tries} times — the Order Manager’s line waits behind it (see the server log)`);
+    }
+    const refusal = lastError ? `${lastError}${since ? ` (${since} refused since the last good request)` : ''}` : null;
+    // An event that couldn't be applied comes first: it holds up everything behind it.
+    const applyFirst = st.stuck_key && !(fresh && refusals.at > st.apply_error_at);
     return {
       lastSuccessAt: st.last_ok_at ?? null,
-      lastErrorAt: (fresh ? refusals.at : st.last_error_at) ?? null,
-      lastError: lastError ? `${lastError}${since ? ` (${since} refused since the last good request)` : ''}` : null,
+      lastErrorAt: (applyFirst ? st.apply_error_at : (fresh ? refusals.at : st.last_error_at)) ?? null,
+      lastError: applyFirst ? st.apply_error : refusal,
       queueSize,
       queueLabel: queueSize || w.customers
         ? `${queueSize} record${queueSize === 1 ? '' : 's'} from ${w.customers} customer${w.customers === 1 ? '' : 's'} waiting for a client`
@@ -419,6 +425,7 @@ export function createWholesaleService(ctx) {
     const touched = new Set();
     let refused = 0;
     let backfill = false;
+    let failure = null; // an unexpected error: the batch is cut short there
     for (const e of events) {
       const key = typeof e?.key === 'string' ? e.key.slice(0, 64) : null;
       const problem = eventProblem(e);
@@ -442,6 +449,7 @@ export function createWholesaleService(ctx) {
         // The Order Manager sends this event and the rest again, in order; `refused` is only for events
         // that are themselves wrong (it would park them for good).
         log?.error?.(`couldn't apply ${e.name} ${e.key} (answering the ${results.length} before it; the rest are sent again):`, err);
+        failure = { key: e.key, name: e.name, message: String(err?.message ?? err).slice(0, 300) };
         break;
       }
     }
@@ -450,8 +458,19 @@ export function createWholesaleService(ctx) {
     refusals.count = 0;
     refusals.at = null;
     refusals.message = null;
+    // A batch cut short by an error is no success: the line is stuck at that event until it applies. The
+    // row shows the error, and how long the same event has been failing ("stuck since").
+    const stuck = failure ? {
+      apply_error: `Couldn’t apply event ${failure.name} (${failure.key}): ${failure.message}`,
+      apply_error_at: at,
+      stuck_key: failure.key,
+      stuck_since: st.stuck_key === failure.key ? (st.stuck_since ?? at) : at,
+      stuck_tries: st.stuck_key === failure.key ? Number(st.stuck_tries ?? 1) + 1 : 1,
+    } : { apply_error: null, apply_error_at: null, stuck_key: null, stuck_since: null, stuck_tries: null };
     setStatus({
-      last_ok_at: at, refused_requests: 0, last_error: null, last_error_at: null,
+      ...(failure ? {} : { last_ok_at: at }),
+      refused_requests: 0, last_error: null, last_error_at: null,
+      ...stuck,
       ...(applied.length ? { last_event_at: at, events_applied: Number(st.events_applied ?? 0) + applied.length } : {}),
       ...(refused ? { refused_events: Number(st.refused_events ?? 0) + refused, last_refused_event: results.find((r) => r.status === 'refused')?.reason } : {}),
       ...(backfill ? { last_backfill_at: at } : {}),

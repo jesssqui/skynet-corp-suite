@@ -841,11 +841,14 @@ test('spend: a return refunded with shipping uses the return’s own subtotal; o
 });
 
 test('an unexpected error while applying answers only the events before it (they are sent again), never refused', async (t) => {
-  const { post, live, client, local, db } = await setup(t);
+  const { post, live, client, local, db, svc } = await setup(t);
   const om = womKit();
   const c = om.customer();
   const { accountId } = client();
   local('owner', 'link', { account_id: accountId, app: 'wom', external_id: c.customer_uid, matched_by: 'approved' });
+  await post([om.customerCreated(om.customer())]);
+  const okAt = svc.describe().lastSuccessAt;
+  await new Promise((r) => setTimeout(r, 5));
   const o = om.order(c, [{ name: 'Zyn', quantity: 1, unit_price_cents: 500 }]);
   const events = [om.customerCreated(c), om.orderPlaced(o), om.paymentRecorded(om.payment(o, 565))];
   db.exec(`CREATE TEMP TRIGGER wholesale_test_busy BEFORE INSERT ON main.wholesale_held_orders WHEN NEW.uid = '${o.order_uid}'
@@ -853,8 +856,23 @@ test('an unexpected error while applying answers only the events before it (they
   const res = await post(events);
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.results.map((r) => [r.key, r.status]), [[events[0].key, 'applied']], 'a prefix: the rest come again');
+  // Not a success: the row shows the error; tried again and failing again on the same event → "stuck since".
+  const first = svc.describe();
+  assert.equal(first.lastSuccessAt, okAt, 'last success is the earlier good request, not this one');
+  assert.ok(first.lastError.startsWith(`Couldn’t apply event order.placed (${events[1].key})`), first.lastError);
+  assert.match(first.lastError, /database is locked \(simulated\)/);
+  assert.doesNotMatch(first.detail, /Stuck since/);
+  const again = await post(events);
+  assert.deepEqual(again.body.results.map((r) => r.status), ['duplicate'], 'an empty-handed answer for the stuck event');
+  const second = svc.describe();
+  assert.equal(second.lastSuccessAt, okAt);
+  assert.match(second.detail, /Stuck since .*failed 2 times/);
   db.exec('DROP TRIGGER wholesale_test_busy');
   assert.deepEqual(statuses(await post(events)), ['duplicate', 'applied', 'applied']);
+  const healed = svc.describe();
+  assert.notEqual(healed.lastSuccessAt, okAt);
+  assert.equal(healed.lastError, null);
+  assert.doesNotMatch(healed.detail, /Stuck since/);
   assert.equal(live('wholesale_orders')[0].paid_cents, 565);
 });
 
