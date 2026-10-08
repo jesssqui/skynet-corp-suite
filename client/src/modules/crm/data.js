@@ -8,7 +8,7 @@
 // built once per such change. So saving a note re-reads only activities, and opening a client
 // after the list reuses what the list already read.
 import { useSyncData } from '../../sync/index.js';
-import { lastOrderByClient, mergeLastActivity } from '../wholesale/logic.js';
+import { lastOrderByClient, mergeLastActivity, quietFromByClient } from '../wholesale/logic.js';
 
 // What each CRM type belongs to (its parent chain), for when the engine's definitions aren't here yet.
 const BELONGS_TO = {
@@ -122,7 +122,8 @@ export async function cachedList(engine, entity) {
 
 // D1: the Order Manager's orders count as activity on the list ("last activity"); the client page
 // shows its orders, payments, returns and refunds on the timeline and each account's figures.
-const LIST_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'activity', 'wholesale_order'];
+// D3: the customer cards give the list its "Quiet regular" chip.
+const LIST_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'activity', 'wholesale_order', 'wholesale_customer'];
 const PAGE_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'service', 'consent', 'activity', 'link', 'task',
   'wholesale_customer', 'wholesale_order', 'wholesale_entry'];
 
@@ -139,7 +140,7 @@ export function lastActivityByClient(activities) {
 /** Everything the client list needs (every client; the page builds its index once per change). */
 export function useClientListData() {
   const { data, loading, error } = useSyncData(async (e) => {
-    const [businesses, clients, accounts, contacts, relationships, activities, wholesaleOrders] = await cachedLists(e, LIST_ENTITIES);
+    const [businesses, clients, accounts, contacts, relationships, activities, wholesaleOrders, wholesaleCards] = await cachedLists(e, LIST_ENTITIES);
     // Read what a client page needs too, in the background, so opening one from the list is quick.
     setTimeout(() => !e.isStopped() && cachedLists(e, PAGE_ENTITIES).catch(() => {}), 250);
     return {
@@ -150,6 +151,8 @@ export function useClientListData() {
       relationships: relationships.records,
       // Activities and (D1) Order Manager orders, whichever is later.
       lastActivity: mergeLastActivity(lastActivityOf(activities), wholesaleOrders.derive('lastOrderByClient', lastOrderByClient)),
+      // D3: per client, the first day one of its Order Manager regulars counts as quiet (compared with today on the row).
+      quietFrom: wholesaleCards.derive('quietFromByClient', quietFromByClient),
     };
   }, [], { entities: LIST_ENTITIES });
   return { data: data ?? null, loading, error };

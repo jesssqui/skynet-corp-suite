@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import { Badge, Icon } from '../../ui/index.js';
 import { formatDate, formatDateTime } from '../../ui/format.js';
 import { formatMoney } from '../crm/logic.js';
+import { isQuietRegular, quietRegularText } from './logic.js';
 import { BusinessChip } from '../crm/parts.jsx';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
@@ -46,9 +47,22 @@ export function figuresText(f) {
   return parts.join(' · ');
 }
 
+/** D3: the "Quiet regular" chip for a regular past their usual gap (title: their rhythm). */
+export function QuietRegularBadge({ card, today, cards }) {
+  const quiet = card ? (isQuietRegular(card, today) ? card : null) : (cards ?? []).find((c) => isQuietRegular(c, today));
+  if (!quiet) return null;
+  const text = quietRegularText(quiet, today);
+  return (
+    <span title={text} data-testid="quiet-regular" style={{ display: 'inline-flex' }}>
+      <Badge tone="warn">Quiet regular</Badge>
+    </span>
+  );
+}
+
 /** An account's Order Manager customer(s) and figures, under the account on the client page. */
-export function AccountWholesale({ cards, figures }) {
+export function AccountWholesale({ cards, figures, today }) {
   if (!cards?.length) return null;
+  const quiet = cards.filter((c) => isQuietRegular(c, today));
   return (
     <div
       data-testid="account-wholesale"
@@ -58,8 +72,14 @@ export function AccountWholesale({ cards, figures }) {
         <Icon name="order" size={14} />
         {cards.map((c) => `${c.name}${c.number ? ` (#${c.number})` : ''}`).join(', ')}
         {figures.gone ? <Badge tone="warn">Deleted in the Order Manager</Badge> : null}
+        {quiet.length ? <QuietRegularBadge cards={quiet} today={today} /> : null}
       </span>
       <span style={{ ...muted, fontVariantNumeric: 'tabular-nums' }} data-testid="account-wholesale-figures">{figuresText(figures)}</span>
+      {quiet.map((c) => (
+        <span key={c.id} style={{ ...muted, fontSize: 'var(--text-xs)' }} data-testid="quiet-regular-text">
+          {cards.length > 1 ? `${c.name}: ` : ''}{quietRegularText(c, today)}
+        </span>
+      ))}
     </div>
   );
 }

@@ -14,7 +14,12 @@ import { SyncError } from '../src/sync/engine.js';
 import { filterTimeline } from '../src/modules/crm/logic.js';
 import {
   wholesaleItems, activityItem, sumCards, orderItem, entryItem, lastOrderByClient, mergeLastActivity,
+  isQuietRegular, quietRegularText, quietFromByClient, daysBetween,
 } from '../src/modules/wholesale/logic.js';
+import { buildClientIndex } from '../src/modules/crm/logic.js';
+import { womKit } from '../../server/test/fixtures/wom.js';
+import { localDate } from '@suite/shared/time';
+import { addDays } from '@suite/shared/planner';
 
 test('a device pulls a linked customer’s orders, payments, returns and refunds and shows them on the timeline, offline too', async (t) => {
   const server = await startServer(t, undefined, { crm: true });
@@ -106,4 +111,58 @@ test('timeline items and figures, on their own', () => {
   ]), { customers: 2, orders: 3, spendCents: 110, paidCents: 50, creditCents: 5, lastOrderDate: '2026-03-01', firstOrderDate: '2025-01-01', gone: false });
   const m = mergeLastActivity(new Map([['c1', '2026-01-01T00:00:00.000Z']]), new Map([['c1', '2026-02-01T00:00:00.000Z'], ['c2', '2026-01-05T00:00:00.000Z']]));
   assert.deepEqual([...m], [['c1', '2026-02-01T00:00:00.000Z'], ['c2', '2026-01-05T00:00:00.000Z']]);
+});
+
+// ---- D3: the "Quiet regular" flag ---------------------------------------------------------------
+
+test('quiet regular: the card’s quiet_from against the device’s today; per client the earliest; deleted customers never', () => {
+  const card = { id: 'c1', client_id: 'k1', usual_gap_days: 14, quiet_from: '2026-10-04', last_order_date: '2026-09-12', gone: false };
+  assert.equal(isQuietRegular(card, '2026-10-03'), false);
+  assert.equal(isQuietRegular(card, '2026-10-04'), true);
+  assert.equal(quietRegularText(card, '2026-10-14'), 'Usually orders every 14 days; none for 32');
+  assert.equal(quietRegularText(card, '2026-10-01'), null);
+  assert.equal(isQuietRegular({ ...card, gone: true }, '2026-10-14'), false, 'deleted in the Order Manager');
+  assert.equal(isQuietRegular({ ...card, quiet_from: null, usual_gap_days: null }, '2026-10-14'), false, 'not a regular');
+  const m = quietFromByClient([card, { ...card, id: 'c2', quiet_from: '2026-10-01' }, { ...card, id: 'c3', client_id: 'k2', gone: true }]);
+  assert.deepEqual([...m], [['k1', '2026-10-01']]);
+  const index = buildClientIndex({ clients: [{ id: 'k1', name: 'A' }, { id: 'k2', name: 'B' }], quietFrom: m });
+  assert.deepEqual(index.map((r) => [r.client.id, r.quietFrom]), [['k1', '2026-10-01'], ['k2', null]]);
+  assert.equal(daysBetween('2026-10-31', '2026-11-02'), 2);
+});
+
+test('a device gets the quiet-regular flag for a regular past their usual gap, and loses it after a new order', async (t) => {
+  const server = await startServer(t, undefined, { crm: true });
+  const secret = server.ctx.services.wholesale.makeSecret({ actor: 'owner' });
+  const mac = await makeDevice(t, server, 'owner');
+  const e = mac.engine;
+  const clientId = await e.create('client', { name: 'Corner Store', status: 'active' });
+  const accountId = await e.create('account', { client_id: clientId, name: 'Corner Store' });
+  await e.syncNow();
+  // A weekly regular whose last order was 30 days ago (quiet after 14 days).
+  const today = localDate();
+  const om = womKit();
+  const c = om.customer({ business_name: 'Corner Store' });
+  const order = (d) => om.order(c, [{ name: 'Zyn', quantity: 1, unit_price_cents: 500 }], { order_date: d });
+  const days = [51, 44, 37, 30].map((n) => addDays(today, -n));
+  assert.equal((await postEvents(server.base, secret, [om.customerCreated(c), ...days.map((d) => om.orderPlaced(order(d)))])).status, 200);
+  const res = await fetch(`${server.base}/api/wholesale/customers/${c.customer_uid}/link`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: server.base, cookie: sessionFor(server.ctx, server.users.owner).cookie },
+    body: JSON.stringify({ clientId, accountId }),
+  });
+  assert.equal(res.status, 200);
+  await e.syncNow();
+  let [cards] = await cachedLists(e, ['wholesale_customer']);
+  let [card] = cards.records;
+  assert.deepEqual([card.usual_gap_days, card.quiet_from], [7, addDays(today, -30 + 14 + 1)]);
+  assert.equal(isQuietRegular(card, today), true);
+  assert.equal(quietFromByClient(cards.records).get(clientId), card.quiet_from, 'the client list row');
+  // A new order today: the card is sent again with quiet_from moved on — no flag.
+  assert.equal((await postEvents(server.base, secret, [om.orderPlaced(order(today))])).status, 200);
+  await e.syncNow();
+  [cards] = await cachedLists(e, ['wholesale_customer']);
+  [card] = cards.records;
+  assert.equal(card.last_order_date, today);
+  assert.equal(isQuietRegular(card, today), false);
+  assert.equal(card.quiet_from, addDays(today, 15));
 });
