@@ -384,9 +384,13 @@ gets 401 `device_signed_out`):
      device, re-sent after a restore). With SQL FKs it would be `constraint` → Needs attention instead.
    - `parent: true` (with `ref`): what the record **belongs to**. See "Belonging" below.
    A `not_found` rejection says what is missing: `missing: { field, entity, id }` (`field` null = the record itself).
-   Also on registerEntity: `check({ op, recordId, fields, current })` — the module's own rule, run inside the step's
+   Also on registerEntity: `check({ op, recordId, fields, current, actor, server })` — the module's own rule
+   (`actor`: who made the step, from the session or `system`; `server`: true for `applyLocal`, false for a device's
+   push — C8's alerts use both; hooks that ignore them are unaffected), run inside the step's
    transaction after the field and reference checks (reads only); return `{ code, reason }` to refuse the step
-   (devices show it in Needs attention). The CRM uses it for "one live link per outside record". Two limits: it sees
+   (devices show it in Needs attention). The CRM uses it for "one live link per outside record". It also gets
+   `actor` (who made the step: from the session, or `system`) and `server` (true for `applyLocal`, false for a
+   device's push) — C8's alerts use them (made by the server only; a device marks only its own read flag). Two limits: it sees
    the **step's** fields (for an update: only what that step changes, plus `current`, the row before it) — not what
    the update ends up writing (a field that loses a clash isn't written), so a rule over the final row must be
    written for that; and its answer depends on **arrival order** — the same step can be refused where it first
@@ -1114,7 +1118,12 @@ it uses.
   `UNIQUE` (`automations_runs.run_key`), checked inside the run's IMMEDIATE transaction — restarts, catch-ups and two
   servers on one database never run a period twice. The scheduler only looks at the **current** period: after
   downtime it catches up once (if the period's time has passed and it hasn't run), never once per missed tick, and
-  earlier missed periods are not replayed. A failed scheduled run is retried no sooner than 15 min later (`RETRY_MS`).
+  earlier missed periods are not replayed. A weekly automation whose whole previous week went by without a run (the
+  server off from Friday to Sunday, or every try failed) gets one **missed** run for that week (status `missed`, holding
+  its run key) the first time the scheduler looks afterwards — the page shows it; no late task is made for a week
+  that is over; nothing is noted for an automation that had never run before. A failed scheduled run is retried no sooner than 15 min later (`RETRY_MS`).
+  `run` also gets `update(entity, id, fields)` (sync, as `system`) for records it made before; an alert is raised
+  when a run created **or updated** something.
   Every `run` must also be idempotent by content (`made(key)` = what it made before): **Run now** (`POST …/run`) relies
   on that. A successful Run now after the period's time claims the period (the scheduler won't run it again); one
   before the time doesn't. Event runs use `<id>:<trigger.key(data)>` (a re-delivered event is a no-op).
@@ -1128,6 +1137,8 @@ it uses.
   **synced record** (`automations_alerts`, ops create/update; fields source, title, body, link, at, `read_by_owner`,
   `read_by_partner`). Both people get every alert; each marks it read on their own boolean field (offline too; two of
   one person's devices agree, so no clash; there is no "unread"). `checkAlert` refuses device updates to anything else.
+  Devices can't create alerts and may only set their own person's flag (`checkAlert`, using the hook's `actor` and
+  `server`); the server clips title and body to the field limits so a long alert never fails its run.
   The shell shows "Alerts" with the unread count in the sidebar and, on phones, a strip at the top of the page while
   something is unread; `/alerts` lists them. **For C5**: `automations.onAlert(fn)` is called with each alert row after
   it is committed — phone notifications (quiet hours, the morning digest, silent vs alert) hang off it;
@@ -1142,12 +1153,20 @@ it uses.
   spans every business; Personal is the planner's catch-all), due that Friday, 15 minutes, notes with the review's
   numbers read on the server like `reviewLists`: overdue (both people + shared), renewals in 30 days, active clients
   quiet 60 days, relationships with no next step (C4a's rule), this week's goals done, and the path `/plan/review`.
-  Nothing if this week's task (made by it, not deleted) exists; a deleted one is made again only by Run now.
-- **Relationships with no next step** (`no-next-step`; daily 07:30; **silent** by default): for each relationship C4a's
-  rule flags **and whose client is active** (closing a client means "no next steps"; paused/ended relationships and
-  anything under a deleted record are never flagged), a task "Set the next step for <account> (<business>)" with
-  `relationship_id`, `account_id`, `client_id`, the business's default owner, due **today**. Never a second one while
-  its earlier task for that relationship is open (even moved to no date); done or deleted and still flagged → a new one.
+  If this week's task (made by it, not deleted) exists: Run now does nothing; **Friday's scheduled run refreshes
+  its notes** with that morning's numbers (a review made by Run now early in the week isn't stale) and still alerts
+  when set to alert. A deleted one is made again only by Run now.
+- **Relationships with no next step** (`no-next-step`; daily 07:30; **off** and **silent** by default — someone
+  switches it on, so a database with thousands of imported clients isn't met all at once): for each relationship C4a's
+  rule flags **whose client is active and whose business isn't archived** (closing a client means "no next steps";
+  paused/ended relationships and anything under a deleted record are never flagged), a task "Set the next step for
+  <account> (<business>)" with `relationship_id`, `account_id`, `client_id`, the business's default owner, due
+  **today** — at most **10 a run** (`NEXT_STEP_CAP`), oldest relationships first; the rest are counted on **one summary
+  task** on the shared list (Personal, due today: "N more relationships have no next step", pointing at Today's list
+  and the review), kept up to date while open and finished by the suite when nothing is left over; the run says
+  "N more waiting". Its alert lists 5 titles and "and N more". Never a second one while its earlier task for that
+  relationship is open **and still names it** (even moved to no date; re-filed under another relationship it no longer
+  counts); done or deleted and still flagged → a new one.
   **Decision**: being dated, the task *is* a dated next step and clears the flag while open. That is intended: the
   flag's job moves to the owner's Today (and turns overdue if ignored) instead of a passive flag; finishing it
   without setting a real next step brings the flag back, and the next run makes a new task.
@@ -1188,7 +1207,9 @@ it uses.
 fake-indexeddb against such a server (helpers.js: `startServer`, `makeDevice` with an on/off connection switch); the
 client build must succeed. The sync engine tests (`server/test/sync.test.js`, `client/test/engine.test.js`) run without
 the crm module (nor the planner, which needs it, nor the automations with their synced alerts) so seeded records don't
-shift their counts; `startServer(t, config, { crm: true })` includes them. Tests that depend on local time set
+shift their counts; `startServer(t, config, { crm: true })` includes them. A restore of a broken live database still
+works with `--force`: carrying the switches is best effort (a warning, then the backup's switches) and the restored
+copy must pass `integrity_check`. Tests that depend on local time set
 `process.env.TZ = 'America/Toronto'` at the top (automations.test.js). The e2e `startServer(t, { extraModules })` adds
 test-only modules (conndemo). `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
 touching the engine, the service worker or the sync UI. Write a test with every module and every bug fix.

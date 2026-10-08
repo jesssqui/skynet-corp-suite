@@ -71,8 +71,12 @@ async function automations(page, server, { phone, label }) {
   for (const id of ['friday-review', 'no-next-step']) await page.getByTestId(`last-run-${id}`).filter({ hasText: 'Never run' }).waitFor(WAIT);
   await page.getByTestId('when-friday-review').filter({ hasText: 'Every Friday at 8:00 a.m.' }).waitFor(WAIT);
   await page.getByTestId('when-no-next-step').filter({ hasText: 'Every day at 7:30 a.m.' }).waitFor(WAIT);
-  // Silent by default: switch it to Alert so the shell shows what it did.
+  // Off and silent by default: switch it on, and to Alert so the shell shows what it did.
   const nns = card('no-next-step');
+  await page.getByTestId('next-run-no-next-step').filter({ hasText: 'Switched off' }).waitFor(WAIT);
+  await page.getByTestId('enabled-no-next-step').click();
+  await page.locator('[data-testid="enabled-no-next-step"][aria-checked="true"]').waitFor(WAIT);
+  assert.equal(server.ctx.services.automations.get('no-next-step').enabled, true);
   assert.equal(await nns.getByRole('radio', { name: 'Silent' }).getAttribute('aria-checked'), 'true');
   await nns.getByRole('radio', { name: 'Alert' }).click();
   await page.waitForFunction(() => document.querySelector('[data-automation="no-next-step"] [role="radio"][aria-checked="true"]')?.textContent.includes('Alert'), null, WAIT);
