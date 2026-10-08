@@ -204,6 +204,7 @@ export default function ImportPage() {
     const f = e.target.files?.[0];
     e.target.value = '';
     if (!f) return;
+    pending.current = null; // another file is another import
     setFileError(null);
     setPreview(null);
     setBatch(null);
@@ -218,7 +219,7 @@ export default function ImportPage() {
       const table = readTable(text, { maxRows: MAX_ROWS });
       if (!table.rows.length) throw new Error('That file has no rows under its header row.');
       const guess = detectMapping(table.headers);
-      setFile({ name: f.name, text, headers: table.headers, sample: table.rows.slice(0, 3), rows: table.rows.length });
+      setFile({ name: f.name, text, headers: table.headers, sample: table.rows.slice(0, 3), rows: table.rows.length, titleRows: table.skipped });
       setMapping(guess.mapping);
       setSource(guess.source);
       setChoices(new Map());
@@ -229,6 +230,7 @@ export default function ImportPage() {
   }
 
   async function runPreview() {
+    pending.current = null; // a new preview: a new import
     setBusy('preview');
     setError(null);
     try {
@@ -289,7 +291,10 @@ export default function ImportPage() {
     }
     return n;
   }, [rows, choices]);
-  const choose = (row, action) => setChoices((cur) => new Map(cur).set(row.row, { action, status: row.status }));
+  const choose = (row, action) => {
+    pending.current = null; // other choices: another import
+    setChoices((cur) => new Map(cur).set(row.row, { action, status: row.status }));
+  };
   const relOptions = [
     ...RELATIONSHIP_CHOICES.filter((c) => pickable.has(c.business_id)).map((c) => ({ value: c.id, label: `${businessesById.get(c.business_id)?.name ?? ''} · ${KIND_LABELS[c.kind]}` })),
     { value: 'none', label: 'None (add relationships later)' },
@@ -324,7 +329,7 @@ export default function ImportPage() {
               <Button onClick={() => inputRef.current?.click()}><Icon name="upload" size={18} />{file ? 'Choose another file' : 'Choose a CSV file'}</Button>
               {file ? (
                 <span style={{ fontSize: 'var(--text-sm)', overflowWrap: 'anywhere' }} data-testid="imp-file-name">
-                  <strong>{file.name}</strong> · {file.rows.toLocaleString('en-CA')} {file.rows === 1 ? 'row' : 'rows'}{source ? ` · looks like a ${source} export` : ''}
+                  <strong>{file.name}</strong> · {file.rows.toLocaleString('en-CA')} {file.rows === 1 ? 'row' : 'rows'}{source ? ` · looks like a ${source} export` : ''}{file.titleRows ? ` · ${file.titleRows} title ${file.titleRows === 1 ? 'row' : 'rows'} above the header left out` : ''}
                 </span>
               ) : null}
             </div>
@@ -344,7 +349,7 @@ export default function ImportPage() {
                       id={`map-${f.key}`}
                       label={f.label}
                       value={mapping?.[f.key] === null || mapping?.[f.key] === undefined ? '' : String(mapping[f.key])}
-                      onChange={(v) => { setMapping((m) => ({ ...m, [f.key]: v === '' ? null : Number(v) })); setPreview(null); }}
+                      onChange={(v) => { pending.current = null; setMapping((m) => ({ ...m, [f.key]: v === '' ? null : Number(v) })); setPreview(null); }}
                       options={columnOptions}
                       hint={sample ? `e.g. ${sample.length > 40 ? `${sample.slice(0, 40)}…` : sample}` : f.hint}
                     />
@@ -356,7 +361,7 @@ export default function ImportPage() {
                 label="What our business does for these clients"
                 hint="Each new client gets this relationship. Wholesale customers usually come from the Order Manager later."
                 value={relChoice}
-                onChange={(v) => { setRelChoice(v); setPreview(null); }}
+                onChange={(v) => { pending.current = null; setRelChoice(v); setPreview(null); }}
                 options={relOptions}
                 style={{ maxWidth: 520 }}
               />
