@@ -3,7 +3,7 @@
 // device, and planned into records the page creates through the offline store. Tested in
 // client/test/quickadd.test.js.
 //
-// A line: the client's name first, then anything, separated by " - ", "—", "–", ",", ";", "|" or a tab:
+// A line: the client's name first, then anything, separated by " - ", "—", "–", ";", "|", a tab or ",":
 //   - our businesses / relationship kinds from keywords: website, web, site, design, seo -> Great
 //     White North Design (website); social, social media, instagram -> GWND (social); consulting,
 //     coaching -> Business consulting; wholesale -> Wholesale ("social retainer": the extra words
@@ -11,8 +11,9 @@
 //   - emails and phone numbers anywhere; the words next to them are the contact's name;
 //   - "account: …" (or "Client (Account)"), "contact: …" / "owner: …", "role: …", "tags: …",
 //     "notes: …" (the rest of the line), #hashtags;
-//   - anything else: a person's name (2–4 capitalised words) is the contact, short words are tags,
-//     longer text is notes.
+//   - a role ("Karen O'Neil, owner"); a person's name (capitalised words, "Jan de Vries") is the
+//     contact; anything else goes into the client's notes — never dropped, never a junk tag.
+//   Commas separate only on a line without a stronger separator; "Client: website" works too.
 import { BUSINESS_IDS, RELATIONSHIP_KINDS } from '@suite/shared/crm';
 import { cleanRow, buildMatchIndex, flagRows, actionsFor, squash } from '@suite/shared/intake';
 
@@ -91,6 +92,21 @@ const PHONE_RE = /(?<![\p{L}\p{N}@])\+?\(?\d[\d\s().-]{4,}\d(?:\s*(?:ext\.?|x|#)
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MARK_RE = /⟦([ep])(\d+)⟧/g; // ⟦e0⟧ ⟦p1⟧ stand in for what was taken out
 
+/**
+ * Does this run of digits read as a phone number? A + / 00 / 011 or a bracketed area code, 10
+ * digits, 11 starting with 1, or a 7-digit local number written "555-0100" (kept as typed, with
+ * a warning). Not "15000 2026" (a budget and a year), not a date.
+ */
+function phoneLike(m) {
+  const t = m.trim();
+  const core = t.replace(/\s*(?:ext\.?|x|#)\s*\d+$/i, '');
+  const digits = core.replace(/\D/g, '');
+  if (digits.length < 7 || digits.length > 15 || DATE_RE.test(t)) return false;
+  if (/^(\+|\(|00|011)/.test(core)) return true;
+  if (digits.length === 10 || (digits.length === 11 && digits.startsWith('1'))) return true;
+  return /^\d{3}[\s.-]\d{4}$/.test(core);
+}
+
 function takeContacts(line) {
   const emails = [];
   const phones = [];
@@ -98,71 +114,99 @@ function takeContacts(line) {
     emails.push(m.replace(/^mailto:/i, ''));
     return ` ⟦e${emails.length - 1}⟧ `;
   });
-  text = text.replace(PHONE_RE, (m) => {
-    const digits = m.replace(/(?:ext\.?|x|#)\s*\d+$/i, '').replace(/\D/g, '').length;
-    if (digits < 7 || digits > 15 || DATE_RE.test(m.trim())) return m;
+  // Never across a " - " separator ("budget 15000 2026 - 2 sessions" is no phone).
+  text = text.split(/(\s+[-–—]+\s+)/).map((piece, i) => (i % 2 ? piece : piece.replace(PHONE_RE, (m) => {
+    if (!phoneLike(m)) return m;
     phones.push(m.trim());
     return ` ⟦p${phones.length - 1}⟧ `;
-  });
+  }))).join('');
   return { text, emails, phones };
 }
 
-const SEPARATOR_RE = /\s+[-–—]+\s+|\s*[—–|;,\t]\s*/;
+// Separators. Commas count only on a line without a stronger one, so "Smith, Jones & Associates -
+// consulting" and "Johnson, Mike - website" keep their names whole.
+const STRONG_RE = /\s+[-–—]+\s+|\s*[—–|;\t]\s*/;
+const ANY_RE = /\s+[-–—]+\s+|\s*[—–|;,\t]\s*/;
+const TRAILING_RE = /[\s,;|—–-]+$/;
 const BULLET_RE = /^\s*(?:[-*•·▪◦]|\d{1,3}[.)])\s+/;
 const LABEL_RE = /^(account|acct|store|location|contact|attn|person|owner|manager|role|title|email|e-mail|mail|phone|tel|cell|mobile|ph)\s*[:=]\s*/i;
 const ROLE_LABELS = { owner: 'Owner', manager: 'Manager' };
+// "Karen O'Neil, owner" / a segment that is only a role.
+const ROLES = new Set([
+  'owner', 'co-owner', 'manager', 'gm', 'general manager', 'office manager', 'store manager', 'president', 'ceo', 'coo', 'cfo',
+  'director', 'founder', 'co-founder', 'partner', 'bookkeeper', 'accountant', 'assistant', 'admin', 'marketing', 'buyer', 'principal',
+]);
+const roleOf = (text) => (ROLES.has(text.toLowerCase().replace(/\.$/, '')) ? text.charAt(0).toUpperCase() + text.slice(1) : null);
+// Name particles that may be lowercase inside a name ("Jan de Vries", "Ludwig van Beethoven").
+const PARTICLES = new Set(['de', 'da', 'di', 'du', 'del', 'della', 'der', 'den', 'van', 'von', 'la', 'le', 'st', 'st.', 'bin', 'al', 'and', '&']);
 
-/** 2–4 words, each starting with a capital letter, letters only (a person's name, probably). */
+/**
+ * A person's name, probably: 1–5 words, letters only, each capitalised except particles and "&"
+ * ("Pat", "Jan de Vries", "Amy & Tom Baker", "Dr. Paula Quinn").
+ */
 function personLike(text) {
   const ws = text.split(/\s+/).filter(Boolean);
-  return ws.length >= 2 && ws.length <= 4 && ws.every((w) => /^\p{Lu}[\p{L}'’.-]*$/u.test(w));
+  if (!ws.length || ws.length > 5) return false;
+  if (!ws.every((w) => PARTICLES.has(w.toLowerCase()) || /^\p{Lu}[\p{L}'’.-]*$/u.test(w))) return false;
+  return /^\p{Lu}/u.test(ws[0]) && /^\p{Lu}/u.test(ws.at(-1)) && !keywordSegment(text);
 }
 
 /** Text that reads as a name next to an email/phone ("Ada Moss", "ada", "Dr. Lee"): no digits, 1–5 words. */
 function nameLike(text) {
   const ws = text.split(/\s+/).filter(Boolean);
-  return ws.length >= 1 && ws.length <= 5 && ws.every((w) => /^[\p{L}'’.-]+$/u.test(w));
+  return ws.length >= 1 && ws.length <= 5 && ws.every((w) => /^[\p{L}'’.&-]+$/u.test(w));
 }
 
 /**
  * One line -> a row as typed (cleanRow cleans it), plus `usedDefault` when it named none of our
- * businesses and got the page's default.
+ * businesses and got the page's default. Nothing is dropped: whatever isn't recognised goes into
+ * the client's notes (shown in the preview). Only #hashtags and "tags:" make tags.
  * @param {string} line
  * @param {{ defaults?: Array<{business_id, kind}> }} opts relationships for lines without a keyword
  */
 export function parseLine(line, { defaults = [] } = {}) {
   let rest = squash(String(line ?? '').replace(/\t/g, ' | ').replace(BULLET_RE, ''));
-  let notes = '';
+  const notes = []; // the client's notes: leftovers in line order, then "notes: …"
+  let notesLabel = '';
   const tags = [];
-  let labelTags = [];
-  // "notes: …" takes the rest of the line (it may have commas); "tags: …" up to it.
+  const labelTags = [];
+  // "notes: …" takes the rest of the line (it may have commas).
   const n = /(?:^|[\s,;|—–-])(?:notes?|memo)\s*:\s*/i.exec(rest);
   if (n) {
-    notes = rest.slice(n.index + n[0].length).trim();
-    rest = rest.slice(0, n.index);
+    notesLabel = rest.slice(n.index + n[0].length).trim();
+    rest = rest.slice(0, n.index).replace(TRAILING_RE, '');
   }
+  // "tags: a, b" runs to the next separator other than a comma.
   const tg = /(?:^|[\s,;|—–-])tags?\s*:\s*/i.exec(rest);
   if (tg) {
-    labelTags = rest.slice(tg.index + tg[0].length).split(SEPARATOR_RE).map(squash).filter(Boolean);
-    rest = rest.slice(0, tg.index);
+    const after = rest.slice(tg.index + tg[0].length);
+    const stop = STRONG_RE.exec(after);
+    const list = stop ? after.slice(0, stop.index) : after;
+    labelTags.push(...list.split(/\s*,\s*/).map(squash).filter(Boolean));
+    rest = `${rest.slice(0, tg.index)}${stop ? ` | ${after.slice(stop.index + stop[0].length)}` : ''}`;
   }
   rest = rest.replace(/(^|\s)#([\p{L}\p{N}][\p{L}\p{N}_-]*)/gu, (_, sp, tag) => {
     tags.push(tag);
     return sp;
   });
   tags.push(...labelTags);
+  rest = rest.replace(TRAILING_RE, '');
   const { text, emails, phones } = takeContacts(rest);
 
   const relationships = [];
   const contact = { name: '', role: '', email: emails[0] ?? '', phone: phones[0] ?? '', notes: '' };
-  const extraNotes = [];
+  const contactNotes = [];
   const account = { name: '' };
   let clientName = '';
-  const segments = text.split(SEPARATOR_RE).map(squash).filter((s) => s && !/^[-–—]+$/.test(s));
-  const oneWord = []; // single capitalised words (a first name, or a place)
+  const strong = STRONG_RE.test(text.replace(MARK_RE, ' '));
+  let segments = text.split(strong ? STRONG_RE : ANY_RE).map(squash).filter((s) => s && !/^[-–—]+$/.test(s));
+  // "Brantford Auto Body: website" — a colon after the client's name separates too.
+  const colon = segments.length ? /^([^:]+?)\s*:\s+(.+)$/.exec(segments[0]) : null;
+  if (colon && !LABEL_RE.test(segments[0])) segments = [colon[1], colon[2], ...segments.slice(1)];
   const contactName = (value) => {
     if (!contact.name && value) contact.name = value;
   };
+  const keywords = (kw) => kw.relationships.forEach((r, j) => relationships.push({ ...r, notes: j === kw.relationships.length - 1 ? kw.notes : null }));
 
   segments.forEach((segment, i) => {
     const marks = [...segment.matchAll(MARK_RE)];
@@ -189,38 +233,47 @@ export function parseLine(line, { defaults = [] } = {}) {
       else if (['contact', 'attn', 'person', 'owner', 'manager'].includes(key)) {
         contactName(value);
         if (ROLE_LABELS[key] && !contact.role) contact.role = ROLE_LABELS[key];
-      } else if (value) extraNotes.push(value); // "email: …" with text that wasn't an address
+      } else if (value) notes.push(value); // "email: …" with text that wasn't an address
+      return;
+    }
+    // "Karen O'Neil, owner": a name and a role.
+    const withRole = /^(.+?),\s*([^,]+)$/.exec(plain);
+    if (withRole && roleOf(withRole[2]) && (personLike(withRole[1]) || nameLike(withRole[1]))) {
+      contactName(withRole[1]);
+      if (!contact.role) contact.role = roleOf(withRole[2]);
       return;
     }
     if (marks.length) {
-      if (nameLike(plain)) contactName(plain);
-      else extraNotes.push(plain);
+      if (nameLike(plain) && !contact.name) contactName(plain);
+      else notes.push(plain);
+      return;
+    }
+    // "website, social retainer" on a line with stronger separators: each comma part on its own.
+    const parts = plain.split(/\s*,\s*/).filter(Boolean);
+    const kws = parts.map(keywordSegment);
+    if (kws.every(Boolean)) {
+      kws.forEach(keywords);
       return;
     }
     const kw = keywordSegment(plain);
     if (kw) {
-      kw.relationships.forEach((r, j) => relationships.push({ ...r, notes: j === kw.relationships.length - 1 ? kw.notes : null }));
+      keywords(kw);
       return;
     }
-    if (!contact.name && personLike(plain)) contact.name = plain;
-    else if (plain.split(/\s+/).length <= 3 && plain.length <= 30) {
-      tags.push(plain);
-      if (/^\p{Lu}[\p{L}'’-]*$/u.test(plain)) oneWord.push(plain);
-    } else extraNotes.push(plain);
+    if (roleOf(plain)) {
+      if (!contact.role) contact.role = roleOf(plain);
+      else notes.push(plain);
+    } else if (!contact.name && personLike(plain)) contact.name = plain;
+    else notes.push(plain); // "2 sessions", "net 30", "Simcoe": kept, never junk tags
   });
-  // "Corner Store - Pat - 555-0100": one capitalised word on a line with an email or phone and no
-  // other name is the contact's first name, not a tag.
-  if (!contact.name && (emails.length || phones.length) && oneWord.length) {
-    contact.name = oneWord[0];
-    tags.splice(tags.indexOf(oneWord[0]), 1);
-  }
 
-  for (const e of emails.slice(1)) extraNotes.push(`Also: ${e}`);
-  for (const p of phones.slice(1)) extraNotes.push(`Also: ${p}`);
-  contact.notes = extraNotes.join('\n');
+  for (const e of emails.slice(1)) contactNotes.push(`Also: ${e}`);
+  for (const p of phones.slice(1)) contactNotes.push(`Also: ${p}`);
+  contact.notes = contactNotes.join('\n');
+  if (notesLabel) notes.push(notesLabel);
   const usedDefault = relationships.length === 0 && defaults.length > 0;
   return {
-    client: { name: clientName, tags: tags.join(', '), notes },
+    client: { name: clientName, tags: tags.join(', '), notes: notes.join('\n') },
     account,
     relationships: usedDefault ? defaults.map((d) => ({ business_id: d.business_id, kind: d.kind })) : relationships,
     contact,

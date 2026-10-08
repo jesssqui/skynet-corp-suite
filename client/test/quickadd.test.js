@@ -105,12 +105,13 @@ test('phones the normaliser refuses go into the contact’s notes as typed, and 
   assert.deepEqual([ext.contact, ext.contactNotes, ext.warnings], ['Desk Co | 5195550100', 'Ext. 4', []]);
 });
 
-test('labels, hashtags, tags and notes; leftovers become a contact, tags or notes', () => {
+test('labels, hashtags, tags and notes; leftovers become the contact or the client’s notes', () => {
   const r = parsed('Bayside Bakery | account: Bayside Café | contact: Jo Park | role: Manager | #vip | tags: bread, retail | notes: met at the market, call in May');
   assert.deepEqual([r.client, r.account, r.contact, r.role, r.tags, r.notes],
     ['Bayside Bakery', 'Bayside Café', 'Jo Park', 'Manager', 'vip, bread, retail', 'met at the market, call in May']);
   const left = parsed('Bayside Bakery - Jo Park - Simcoe - prefers texts after lunch on weekdays');
-  assert.deepEqual([left.contact, left.tags, left.notes, left.contactNotes], ['Jo Park', 'Simcoe', null, 'prefers texts after lunch on weekdays']);
+  assert.deepEqual([left.contact, left.tags, left.notes, left.contactNotes], ['Jo Park', null, 'Simcoe\nprefers texts after lunch on weekdays', null],
+    'only #tags and tags: make tags; the rest is kept in the client’s notes');
 });
 
 test('a line with only a name: client and account by that name, the default relationship, no contact', () => {
@@ -191,4 +192,44 @@ test('edits replace a row; rows already added this session are done, and their o
 test('wholesale is still selectable per row, and as the default', () => {
   assert.ok(RELATIONSHIP_CHOICES.some((c) => c.business_id === W && c.kind === 'wholesale'));
   assert.deepEqual(parsed('Cloud Vape Co', [{ business_id: W, kind: 'wholesale' }]).rels, ['wholesale:wholesale']);
+});
+
+// ---------------------------------------------------------------- the reviewer's real-world lines
+
+test('leftover text is never dropped: the client’s notes when there is no contact', () => {
+  const wine = parsed('Waterford Wine Co. - web site - Amy & Tom Baker');
+  assert.deepEqual([wine.client, wine.rels, wine.contact, wine.notes], ['Waterford Wine Co.', ['agency:website'], 'Amy & Tom Baker', null]);
+  const quote = parsed("Lefty's - website - wants a quote before spring and a logo refresh");
+  assert.deepEqual([quote.contact, quote.notes], [null, 'wants a quote before spring and a logo refresh']);
+  const both = parsed('Acme Signs - Pat Lee 519-555-0100 - call after 5pm');
+  assert.deepEqual([both.contact, both.notes], ['Pat Lee | 5195550100', 'call after 5pm']);
+});
+
+test('" - notes:" and " - tags:" leave the keyword before them alone; tags: ends at the next separator', () => {
+  const k = parsed('Kettle Creek - website - notes: call in May, after the fishing derby');
+  assert.deepEqual([k.client, k.rels, k.tags, k.notes], ['Kettle Creek', ['agency:website'], null, 'call in May, after the fishing derby']);
+  const a = parsed('Acme - tags: a, b - website - Jo Park');
+  assert.deepEqual([a.client, a.tags, a.rels, a.contact], ['Acme', 'a, b', ['agency:website'], 'Jo Park']);
+  const t = parsed('Acme | #vip | tags: bread, retail | consulting');
+  assert.deepEqual([t.tags, t.rels], ['vip, bread, retail', ['consulting:consulting']]);
+});
+
+test('commas don’t split names on a line with a stronger separator', () => {
+  assert.deepEqual([parsed('Smith, Jones & Associates - consulting').client, parsed('Smith, Jones & Associates - consulting').rels],
+    ['Smith, Jones & Associates', ['consulting:consulting']]);
+  assert.equal(parsed('Johnson, Mike - website').client, 'Johnson, Mike');
+  assert.deepEqual(parsed('Harbour Lights - website, social retainer').rels, ['agency:website', 'agency:social (social retainer)'], 'keyword lists still split');
+  assert.deepEqual([parsed('Lakeview Dental, consulting').client, parsed('Lakeview Dental, consulting').rels], ['Lakeview Dental', ['consulting:consulting']], 'commas alone still separate');
+});
+
+test('names, roles, colons, numbers that aren’t phones, and words that aren’t tags', () => {
+  assert.equal(parsed('Corner Store - Pat').contact, 'Pat', 'a lone first name');
+  assert.equal(parsed('Dutch Bakery | Jan de Vries | consulting').contact, 'Jan de Vries');
+  const karen = parsed("Brantford Auto Body: website - Karen O'Neil, owner - 519-555-0150");
+  assert.deepEqual([karen.client, karen.rels, karen.contact, karen.role], ['Brantford Auto Body', ['agency:website'], "Karen O'Neil | 5195550150", 'Owner']);
+  const commaOnly = parsed("Brantford Auto Body, Karen O'Neil, owner");
+  assert.deepEqual([commaOnly.contact, commaOnly.role, commaOnly.notes], ["Karen O'Neil", 'Owner', null]);
+  const budget = parsed('Granite Peak - consulting - budget 15000 2026 - 2 sessions - net 30');
+  assert.deepEqual([budget.contact, budget.tags, budget.notes, budget.warnings], [null, null, 'budget 15000 2026\n2 sessions\nnet 30', []]);
+  assert.equal(parsed('Local Diner - 555-0100').contactNotes, 'Phone as typed: 555-0100', 'a 7-digit number is still kept, with its warning');
 });

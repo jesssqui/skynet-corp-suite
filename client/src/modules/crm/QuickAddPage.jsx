@@ -135,6 +135,21 @@ function RelationshipToggles({ row, choices, businessesById, onToggle, line }) {
   );
 }
 
+/** Where the rest of the line went: the client's notes, the contact's role and notes (nothing is dropped). */
+function NotesLines({ row }) {
+  const c = row.clean;
+  const lines = [];
+  if (c.contact?.role) lines.push(['Role', c.contact.role]);
+  if (c.client.notes) lines.push(['Client notes', c.client.notes]);
+  if (c.contact?.notes) lines.push(['Contact notes', c.contact.notes]);
+  if (!lines.length) return null;
+  return (
+    <div className="qa-sub" data-testid="qa-notes" style={{ whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>
+      {lines.map(([label, text]) => <div key={label}><strong>{label}:</strong> {text}</div>)}
+    </div>
+  );
+}
+
 function Warnings({ row }) {
   const list = [...row.clean.warnings];
   if (row.usedDefault) list.unshift('No business named: using the default');
@@ -184,8 +199,9 @@ function TableRow({ row, data, choices, businessesById, onEdit, onToggle, onChoo
       <td>
         <div className="qa-stack">
           {input('client.tags', 'tags', t.client.tags, { placeholder: 'Tags' })}
-          <button type="button" className="crm-link-button" style={{ justifySelf: 'start', minHeight: 32, fontSize: 'var(--text-sm)' }} onClick={() => onMore(row)} disabled={done}>
-            {row.clean.client.notes || row.clean.contact?.notes || row.clean.contact?.role ? 'Notes, role…' : 'More…'}
+          <NotesLines row={row} />
+          <button type="button" className="crm-link-button" style={{ justifySelf: 'start', minHeight: 32, fontSize: 'var(--text-sm)', textAlign: 'left' }} onClick={() => onMore(row)} disabled={done}>
+            {row.clean.client.notes || row.clean.contact?.notes || row.clean.contact?.role ? 'Edit notes…' : 'More…'}
           </button>
         </div>
       </td>
@@ -219,6 +235,7 @@ function CardRow({ row, data, choices, businessesById, onToggle, onChoose, onMor
       {c.account.name && c.account.name !== c.client.name ? <div className="qa-sub">Account: {c.account.name}</div> : null}
       {contact ? <div className="qa-sub" style={{ overflowWrap: 'anywhere' }}>Contact: {contact}</div> : null}
       {c.client.tags ? <div className="qa-sub">Tags: {c.client.tags}</div> : null}
+      <NotesLines row={row} />
       <RelationshipToggles row={row} choices={choices} businessesById={businessesById} onToggle={onToggle} line={row.line} />
       <StatusCell row={row} onChoose={onChoose} />
       {makes ? <div className="qa-makes">{makes}</div> : null}
@@ -406,7 +423,7 @@ export default function QuickAddPage() {
               <li><strong>Our businesses:</strong> website, web, design → Great White North Design (website); social → GWND (social); consulting; wholesale.</li>
               <li><strong>Contact:</strong> an email and/or phone anywhere; the name beside it is the contact. Or <code>contact:</code> / <code>owner:</code>.</li>
               <li><strong>Their business:</strong> <code>Client (Account)</code> or <code>account:</code>. Otherwise the account is named like the client.</li>
-              <li><strong>Also:</strong> <code>#tag</code>, <code>tags:</code>, <code>notes:</code> (the rest of the line). Other words become tags or notes.</li>
+              <li><strong>Also:</strong> <code>#tag</code>, <code>tags:</code>, <code>notes:</code> (the rest of the line), a role (<code>Karen O’Neil, owner</code>). Anything else is kept in the client’s notes.</li>
             </ul>
           </div>
           </details>
