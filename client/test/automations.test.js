@@ -21,7 +21,7 @@ function seed(server) {
   };
   const client = make('client', { name: 'Northwind Holdings', status: 'active' });
   const account = make('account', { client_id: client, name: 'Cloud Vape Co' });
-  const rel = make('relationship', { account_id: account, business_id: W, kind: 'wholesale', status: 'active' });
+  const rel = make('relationship', { account_id: account, business_id: W, kind: 'consulting', status: 'active' });
   return { client, account, rel };
 }
 

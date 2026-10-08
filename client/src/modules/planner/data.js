@@ -4,6 +4,7 @@
 // their structures (Today's sections, filters) once per change with useMemo.
 import { useSyncData } from '../../sync/index.js';
 import { cachedLists, cachedList, lastActivityOf } from '../crm/data.js';
+import { lastOrderByClient, mergeLastActivity } from '../wholesale/logic.js';
 
 const PLANNER_ENTITIES = ['business', 'client', 'account', 'relationship', 'task', 'inbox_item', 'goal', 'workday'];
 
@@ -36,7 +37,8 @@ export function usePlannerData() {
   return { data: data ?? null, loading, error };
 }
 
-const REVIEW_ENTITIES = [...PLANNER_ENTITIES, 'service', 'activity'];
+// D1: Order Manager orders count as activity for quiet clients, as on the client list and the server.
+const REVIEW_ENTITIES = [...PLANNER_ENTITIES, 'service', 'activity', 'wholesale_order'];
 
 /**
  * The Friday review: the planner's records plus services (renewals) and the last activity per
@@ -45,10 +47,15 @@ const REVIEW_ENTITIES = [...PLANNER_ENTITIES, 'service', 'activity'];
 export function useReviewData() {
   const { data, loading, error } = useSyncData(async (e) => {
     const entries = await cachedLists(e, REVIEW_ENTITIES);
-    const [services, activities] = entries.slice(PLANNER_ENTITIES.length);
-    return { ...maps(entries), services: services.records, lastActivity: lastActivityOf(activities) };
+    const [services, activities, orders] = entries.slice(PLANNER_ENTITIES.length);
+    return { ...maps(entries), services: services.records, lastActivity: reviewLastActivity(activities, orders) };
   }, [], { entities: REVIEW_ENTITIES });
   return { data: data ?? null, loading, error };
+}
+
+/** Last activity per client for the review: notes and calls, or (D1) an Order Manager order, whichever is later. */
+export function reviewLastActivity(activities, orders) {
+  return mergeLastActivity(lastActivityOf(activities), orders.derive('lastOrderByClient', lastOrderByClient));
 }
 
 /** How many items are still in the capture inbox (the nav's count). */

@@ -147,7 +147,7 @@ test('the morning plan proposes overdue + due today (mine and shared); undated o
 test('no next step: active relationships only; an open, dated task for it clears the flag; done or undated ones don’t; deleted parents aren’t flagged', () => {
   const clients = [{ id: 'c1', name: 'Northwind Holdings' }];
   const accounts = [{ id: 'a1', client_id: 'c1' }, { id: 'a2', client_id: 'c1' }, { id: 'aX', client_id: 'gone' }];
-  const rel = (id, status, account = 'a1') => ({ id, account_id: account, business_id: W, kind: 'wholesale', status });
+  const rel = (id, status, account = 'a1') => ({ id, account_id: account, business_id: W, kind: 'consulting', status });
   const relationships = [
     rel('r-active', 'active'), rel('r-paused', 'paused'), rel('r-ended', 'ended'),
     rel('r-covered', 'active'), rel('r-done-only', 'active'), rel('r-undated', 'active', 'a2'),
@@ -164,6 +164,9 @@ test('no next step: active relationships only; an open, dated task for it clears
   // An overdue next step still counts as a next step (it shows as overdue instead).
   const overdue = [...tasks, task({ relationship_id: 'r-active', due_date: '2026-09-01' })];
   assert.ok(!relationshipsWithoutNextStep({ relationships, accounts, clients, tasks: overdue }).some((r) => r.id === 'r-active'));
+  // D1: wholesale relationships are followed by their orders, never flagged (until D3's check-ins).
+  const wholesale = { ...rel('r-wholesale', 'active'), kind: 'wholesale' };
+  assert.deepEqual(relationshipsWithoutNextStep({ relationships: [wholesale], accounts, clients, tasks: [] }), []);
 });
 
 // ---- defaults ----------------------------------------------------------------------------------------

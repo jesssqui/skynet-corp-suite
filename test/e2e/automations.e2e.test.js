@@ -20,7 +20,7 @@ function seed(ctx) {
   };
   const client = make('client', { name: 'Northwind Holdings', status: 'active' });
   const account = make('account', { client_id: client, name: 'Cloud Vape Co' });
-  return { rel: make('relationship', { account_id: account, business_id: W, kind: 'wholesale', status: 'active' }) };
+  return { rel: make('relationship', { account_id: account, business_id: W, kind: 'consulting', status: 'active' }) };
 }
 
 const noSideways = (page) => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);

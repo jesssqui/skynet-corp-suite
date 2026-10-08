@@ -114,7 +114,7 @@ test('tasks and inbox items are created, changed, finished and deleted through d
   const phone = makeDevice(env, 'partner');
   const client = await mac.create('client', { name: 'Northwind Holdings', status: 'active' });
   const account = await mac.create('account', { client_id: client, name: 'Cloud Vape Co' });
-  const rel = await mac.create('relationship', { account_id: account, business_id: W, kind: 'wholesale', status: 'active' });
+  const rel = await mac.create('relationship', { account_id: account, business_id: W, kind: 'consulting', status: 'active' });
 
   const item = await phone.create('inbox_item', { text: 'Ask about the Friday order', source: 'phone', captured_at: nowIso() });
   const task = await mac.create('task', {
