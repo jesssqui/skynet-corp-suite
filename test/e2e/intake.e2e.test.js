@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BUSINESS_IDS } from '@suite/shared/crm';
-import { WAIT, startServer, launch, watch, signIn, barSays, iphone, until, shot, airplane } from './helpers.js';
+import { WAIT, startServer, launch, watch, signIn, barSays, iphone, until, shot, airplane, swControls } from './helpers.js';
 
 const DUMP = [
   'Harbour Lights Bakery - website, social retainer - Ada Moss ada@harbourlights.test 519-555-0101',
@@ -114,6 +114,8 @@ test('iPhone: a 20-line brain dump becomes 20 clients; again = all already here;
   await lake.getByText('No business named: using the default').waitFor(WAIT);
   await lake.getByText('Contact: Lakeview Dental · dee@lakeviewdental.test').waitFor(WAIT);
   await page.locator('[data-qa-row="1"]').getByText('Makes client, account, 2 relationships, contact').waitFor(WAIT);
+  // Nothing typed is lost: the rest of a line shows where it goes.
+  await page.locator('[data-qa-row="4"] [data-testid="qa-notes"]').getByText('wants a quote before spring').waitFor(WAIT);
   // Fix a row in its sheet: tap targets are full size.
   const edit = page.locator('[data-qa-row="2"]').getByRole('button', { name: 'Edit line 2' });
   assert.ok((await edit.boundingBox()).height >= 44, 'Edit is a full tap target');
@@ -135,10 +137,13 @@ test('iPhone: a 20-line brain dump becomes 20 clients; again = all already here;
   await pasteAgain(page, db);
   await shot(page, 'c7-quickadd-phone-again', { fullPage: false });
 
-  // Offline: saved on the phone, on the server once it is back.
+  // Offline: the page (loaded on demand) opens from the service worker's cache after a reload; a
+  // list saved on the phone reaches the server once it is back.
+  await swControls(page);
   await airplane(phone, server, true);
+  await page.reload();
+  await page.locator('#qa-text').waitFor(WAIT);
   await barSays(page, 'Offline');
-  await page.getByRole('button', { name: 'Start a new list' }).click();
   const offline = ['Cedar Point Cabins - website - ana@cedarpoint.test', 'Lowbanks Marina | social | 905 555 0122 | Ian Shaw'];
   await pasteAndCheck(page, offline);
   await page.getByTestId('qa-save').click();

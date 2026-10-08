@@ -1,8 +1,14 @@
 import ClientListPage from './ClientListPage.jsx';
 import ClientPage from './ClientPage.jsx';
 import BusinessesPage from './BusinessesPage.jsx';
-import QuickAddPage from './QuickAddPage.jsx';
-import ImportPage from './ImportPage.jsx';
+import { lazy, Suspense } from 'react';
+
+// Quick add and Import (C7) load when first opened: they carry the parser and the CSV reader,
+// which no other page needs. The service worker caches their files with the rest of the app,
+// so they still open offline.
+const QuickAddPage = lazy(() => import('./QuickAddPage.jsx'));
+const ImportPage = lazy(() => import('./ImportPage.jsx'));
+const loading = <p style={{ color: 'var(--text-muted)' }}>Loading…</p>;
 
 // The CRM's screens (C3b). Its record types are registered on the server (crm module, C3a) and
 // reach this device through the sync engine — pages read and write them only through the
@@ -20,7 +26,7 @@ export default {
     { path: '/crm', element: <ClientListPage /> },
     { path: '/crm/clients/:id', element: <ClientPage /> },
     { path: '/crm/businesses', element: <BusinessesPage /> },
-    { path: '/crm/quick-add', element: <QuickAddPage /> },
-    { path: '/crm/import', element: <ImportPage /> },
+    { path: '/crm/quick-add', element: <Suspense fallback={loading}><QuickAddPage /></Suspense> },
+    { path: '/crm/import', element: <Suspense fallback={loading}><ImportPage /></Suspense> },
   ],
 };
