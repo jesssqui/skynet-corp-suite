@@ -107,8 +107,16 @@ export async function restoreBackup({ from, dbPath, backupDir, force = false, no
     try {
       copy.pragma('journal_mode = DELETE'); // keep the write in this one file (no -wal left behind)
       markRestoredCopy(copy, now.toISOString());
-      const carried = carryKeptTables(dbPath, copy);
-      if (carried.length) log(`kept the current ${carried.join(', ')}`);
+      // The current database may be the broken one being replaced: carrying its switches is best
+      // effort and must never stop the restore (with or without --force).
+      try {
+        const carried = carryKeptTables(dbPath, copy);
+        if (carried.length) log(`kept the current ${carried.join(', ')}`);
+      } catch (err) {
+        log(`warning: couldn't read the current settings (${err.message}) — switches reset to the backup's (defaults where it has none)`);
+      }
+      const check = copy.pragma('integrity_check', { simple: true });
+      if (check !== 'ok') throw new Error(`the restored copy failed integrity_check after preparing it: ${check}`);
     } finally {
       copy.close();
     }

@@ -202,6 +202,10 @@ test('the backup row comes from status.json: last success, last error, how far b
   b = await backupRow();
   assert.deepEqual([b.lastSuccessAt, b.queueSize, b.queueLabel, b.lastError], [hourAgo, 0, 'Up to date', null]);
   assert.equal(b.detail, 'Nightly at 03:15');
+  // A fresh local copy whose off-machine copy fails is not up to date.
+  status({ lastSuccessAt: hourAgo, offsite: 'failed', lastError: 'share not mounted', lastErrorAt: hourAgo });
+  b = await backupRow();
+  assert.deepEqual([b.queueSize, b.queueLabel], [0, 'Off-machine copy failing']);
 
   const threeDays = new Date(Date.now() - 3 * 86_400_000 - 3600_000).toISOString();
   const errAt = new Date(Date.now() - 600_000).toISOString();
@@ -237,4 +241,29 @@ test('register() checks its arguments: ids, describe, pause/resume or a reason t
   // A describe() that throws shows as the row's error, not a broken page.
   c.register({ ...base, id: 'broken', describe: () => { throw new Error('boom'); } });
   assert.match(row(c.list(), 'broken').lastError, /Could not read its status: boom/);
+});
+
+test('a restore still recovers a broken live database (zeroed header): the switches can’t be read, so they reset, with a warning', async (t) => {
+  const dir = tmpDir(t);
+  const config = testConfig(dir);
+  fs.mkdirSync(config.backup.offsiteDir, { recursive: true });
+  fs.writeFileSync(path.join(config.backup.offsiteDir, '.suite-backup-target'), '');
+  const first = await setup(t, config);
+  const backup = await runBackup({ db: first.db, dir: config.backup.dir, offsiteDir: config.backup.offsiteDir, keepDays: 30 });
+  await first.call('PUT', '/api/connections/conndemo', { paused: true });
+  await first.close();
+  for (const suffix of ['-wal', '-shm']) fs.rmSync(`${config.dbPath}${suffix}`, { force: true });
+  const fd = fs.openSync(config.dbPath, 'r+');
+  fs.writeSync(fd, Buffer.alloc(100), 0, 100, 0); // the header is gone: "file is not a database"
+  fs.closeSync(fd);
+
+  await assert.rejects(restoreBackup({ from: backup.file, dbPath: config.dbPath, backupDir: config.backup.dir }), /Could not save the current database/,
+    'without --force the safety-copy guard still stops it');
+  const logged = [];
+  const restored = await restoreBackup({ from: backup.file, dbPath: config.dbPath, backupDir: config.backup.dir, force: true, log: (m) => logged.push(m) });
+  assert.equal(restored.safetyCopy, null);
+  assert.ok(logged.some((m) => /couldn't read the current settings .* switches reset/.test(m)), logged.join('\n'));
+  const again = await setup(t, config);
+  assert.equal(again.db.pragma('integrity_check', { simple: true }), 'ok');
+  assert.equal(again.demo.isPaused(), false, 'the backup’s switches (on)');
 });

@@ -56,19 +56,22 @@ export function backupDescription(status, { now = Date.now(), scheduled = true, 
   const age = lastSuccessAt ? now - Date.parse(lastSuccessAt) : null;
   const behind = lastSuccessAt === null ? null : (age > STALE_BACKUP_MS ? Math.floor(age / DAY_MS) : 0);
   const problems = [];
+  const offsiteFailing = !offsiteConfigured || Boolean(status?.offsite && status.offsite !== 'ok');
   if (!offsiteConfigured) problems.push('no off-machine folder is set');
-  else if (status?.offsite && status.offsite !== 'ok') problems.push(`off-machine copy: ${status.offsite}`);
+  else if (offsiteFailing) problems.push(`off-machine copy: ${status.offsite}`);
+  // A fresh local copy whose off-machine copy fails is not "up to date": the copy that matters is missing.
+  const fresh = behind === 0 ? (offsiteFailing ? 'Off-machine copy failing' : 'Up to date') : null;
   return {
     lastSuccessAt,
     lastErrorAt: status?.lastErrorAt ?? null,
     lastError: status?.lastError ?? null,
     queueSize: behind,
-    queueLabel: behind === null ? 'No backup yet' : behind === 0 ? 'Up to date' : `${behind} day${behind === 1 ? '' : 's'} behind`,
+    queueLabel: behind === null ? 'No backup yet' : fresh ?? `${behind} day${behind === 1 ? '' : 's'} behind`,
     detail: [scheduled ? `Nightly at ${time}` : 'Nightly schedule off (development)', ...problems].join(' · '),
   };
 }
 
-export function createConnectionsService({ db, config, log }) {
+export function createConnectionsService({ db, config, log, now: clock = Date.now }) {
   const q = {
     get: db.prepare('SELECT * FROM connections_switches WHERE id = ?'),
     upsert: db.prepare(`INSERT INTO connections_switches (id, paused, changed_at, changed_by, changed_device)
@@ -113,7 +116,7 @@ export function createConnectionsService({ db, config, log }) {
     return { isPaused: () => isPaused(id) };
   }
 
-  function view(e, now = Date.now()) {
+  function view(e, now = clock()) {
     const sw = q.get.get(e.id);
     const base = { id: e.id, name: e.name, module: e.module ?? null, description: e.description ?? null };
     if (e.kind === 'placeholder') {
@@ -142,7 +145,7 @@ export function createConnectionsService({ db, config, log }) {
     };
   }
 
-  function list(now = Date.now()) {
+  function list(now = clock()) {
     return [...entries.values()].map((e) => view(e, now));
   }
 
@@ -159,7 +162,7 @@ export function createConnectionsService({ db, config, log }) {
     if (!e.pausable) throw new HttpError(409, `${e.name} can't be switched off from the app: ${e.alwaysOnReason}`, undefined, { code: 'not_pausable' });
     if (typeof paused !== 'boolean') throw new HttpError(400, 'paused must be true or false');
     if (isPaused(id) === paused) return view(e);
-    const at = nowIso();
+    const at = nowIso(new Date(clock()));
     db.transaction(() => {
       q.upsert.run({ id, paused: paused ? 1 : 0, at, actor, device: deviceId });
       q.log.run(newId(), id, paused ? 1 : 0, at, actor, deviceId);
