@@ -4,6 +4,9 @@
 //  2. Copy the backup next to the database as <db>.restoring and check it:
 //     integrity_check must pass and it must be a suite database. Mark the copy
 //     as restored so sync starts a new generation (devices resync).
+//     Tables modules list in `keepOnRestore` (C8: the connections' and automations' switches)
+//     are copied from the database being replaced into the copy: a restore must never quietly
+//     switch a paused connection or automation back on.
 //  3. Take a safety copy of the current database (backup API, so WAL content is
 //     included) into the backup folder as pre-restore-<time>.db.
 //  4. Remove the old -wal/-shm files and rename the checked copy into place.
@@ -14,6 +17,41 @@ import Database from 'better-sqlite3';
 import { openDb } from '../db/open.js';
 import { runningServer } from '../lib/serverLock.js';
 import { markRestoredCopy } from '../modules/sync/restoreMarker.js';
+import { modules as registeredModules } from '../modules/index.js';
+
+/** Tables whose current rows survive a restore (each module's `keepOnRestore`). */
+export const KEPT_TABLES = registeredModules.flatMap((m) => m.keepOnRestore ?? []);
+
+const hasTable = (db, name) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name));
+
+/**
+ * Copy the kept tables' rows from the database being replaced into the restored copy (replacing
+ * the copy's rows). A table missing on either side is skipped: a backup from before the module
+ * existed gets its rows from the module's defaults, as it did then. Returns the tables copied.
+ */
+export function carryKeptTables(currentPath, copy, tables = KEPT_TABLES) {
+  if (!tables.length || !fs.existsSync(currentPath)) return [];
+  const current = openDb(currentPath);
+  try {
+    const carried = [];
+    copy.transaction(() => {
+      for (const table of tables) {
+        if (!hasTable(current, table) || !hasTable(copy, table)) continue;
+        const cols = copy.prepare(`SELECT name FROM pragma_table_info(?)`).pluck().all(table);
+        const have = new Set(current.prepare(`SELECT name FROM pragma_table_info(?)`).pluck().all(table));
+        const shared = cols.filter((c) => have.has(c));
+        copy.prepare(`DELETE FROM "${table}"`).run();
+        const insert = copy.prepare(`INSERT INTO "${table}" (${shared.map((c) => `"${c}"`).join(', ')})
+          VALUES (${shared.map(() => '?').join(', ')})`);
+        for (const row of current.prepare(`SELECT ${shared.map((c) => `"${c}"`).join(', ')} FROM "${table}"`).raw().all()) insert.run(row);
+        carried.push(table);
+      }
+    })();
+    return carried;
+  } finally {
+    current.close();
+  }
+}
 
 export function lockPathFor(dbPath) {
   return `${dbPath}.server-lock`;
@@ -69,6 +107,8 @@ export async function restoreBackup({ from, dbPath, backupDir, force = false, no
     try {
       copy.pragma('journal_mode = DELETE'); // keep the write in this one file (no -wal left behind)
       markRestoredCopy(copy, now.toISOString());
+      const carried = carryKeptTables(dbPath, copy);
+      if (carried.length) log(`kept the current ${carried.join(', ')}`);
     } finally {
       copy.close();
     }

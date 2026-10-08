@@ -12,11 +12,11 @@ export { tmpDir, testConfig };
 
 /**
  * A suite server with the test-only syncdemo and chk modules registered and both accounts made.
- * Without the CRM (and the planner, whose tasks point at CRM records) unless `crm: true` (its seeded
- * businesses would shift the engine tests' counts).
+ * Without the CRM (and the planner, whose tasks point at CRM records, and the automations with their
+ * synced alerts) unless `crm: true` (its seeded businesses would shift the engine tests' counts).
  */
 export async function startServer(t, config, { crm = false } = {}) {
-  const base = crm ? modules : modules.filter((m) => !['crm', 'planner'].includes(m.name));
+  const base = crm ? modules : modules.filter((m) => !['automations', 'crm', 'planner'].includes(m.name));
   const env = await startApp(t, config ?? testConfig(tmpDir(t)), { modules: [...base, syncdemo, chk] });
   const users = await ensureTestUsers(env.ctx);
   return { ...env, config: config ?? env.ctx.config, users };
