@@ -68,5 +68,10 @@ export default defineConfig({
     // Older iPhones on the home screen: keep the output conservative.
     target: ['es2020', 'safari14'],
     cssTarget: 'safari14',
+    rollupOptions: {
+      // React and the router in a file of their own (D1 took the app's own file past Vite's 500 kB
+      // warning); they change only with an upgrade, so that file stays cached across app updates.
+      output: { manualChunks: { react: ['react', 'react-dom', 'react-router-dom'] } },
+    },
   },
 });

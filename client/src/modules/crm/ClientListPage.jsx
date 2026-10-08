@@ -147,6 +147,7 @@ export default function ClientListPage() {
         <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-muted)', display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap' }}>
           <Link to="/crm/quick-add">Quick add (a list, one per line)</Link>
           <Link to="/crm/import">Import a customer list (CSV)</Link>
+          <Link to="/wholesale">Order Manager customers waiting for a client</Link>
           <Link to="/crm/businesses">Our businesses</Link>
           <Link to="/sync">Records on this device (Offline data)</Link>
         </p>

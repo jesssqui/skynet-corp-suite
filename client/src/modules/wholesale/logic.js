@@ -1,0 +1,143 @@
+// What the client screens show of the Order Manager (D1), without React: its synced records
+// (wholesale_order, wholesale_entry, wholesale_customer — written by the server only) turned into
+// timeline items and account / client figures. Tested in client/test/wholesale.test.js.
+//
+// The figures themselves (spend net of refunds and credit notes, before tax; paid; store credit;
+// last order) are worked out on the server from everything the Order Manager sent, one card per
+// linked Order Manager customer. Here they are only added up: an account linked to two Order
+// Manager customers, or a client with several accounts, sums its cards; last order = the newest.
+import { BUSINESS_IDS } from '@suite/shared/crm';
+import { formatMoney } from '../crm/logic.js';
+
+export const WHOLESALE_BUSINESS_ID = BUSINESS_IDS.wholesale;
+
+export const ENTRY_LABELS = Object.freeze({
+  payment: 'Payment',
+  refund: 'Refund',
+  store_credit: 'Store credit given',
+  credit_applied: 'Store credit used',
+  return: 'Return',
+  credit_note: 'Credit note',
+});
+export const ORDER_STATUS_LABELS = Object.freeze({ active: null, cancelled: 'Cancelled', deleted: 'Deleted in the Order Manager' });
+export const PACKING_LABELS = Object.freeze({
+  to_pack: 'To pack', check_again: 'Check again', packed: 'Packed', shipped: 'Gone out', cancelled_packed: 'Cancelled after packing',
+  cancelled: null, history: 'Past order',
+});
+const METHOD_LABELS = { etransfer: 'e-Transfer', cash: 'cash', cheque: 'cheque', card: 'card', credit: 'card', other: 'other' };
+const REMOVED_LABELS = {
+  deleted: 'Deleted in the Order Manager', order_cancelled: 'Removed when its order was cancelled', order_deleted: 'Removed when its order was deleted',
+  customer_deleted: 'Removed with its customer', gone: 'No longer in the Order Manager', gone_after_restore: 'No longer in the Order Manager (after a backup was restored there)',
+};
+
+const money = (c) => formatMoney(c) || '$0';
+
+/** One order as a timeline item: { id, kind: 'wholesale', type: 'order', at, title, body, status, … }. */
+export function orderItem(o) {
+  const label = o.history_only ? 'Past order' : 'Order';
+  const status = ORDER_STATUS_LABELS[o.status] ?? null;
+  const packing = o.status === 'active' ? PACKING_LABELS[o.packing] ?? null : null;
+  const facts = [money(o.total_cents)];
+  if (o.paid_cents) facts.push(o.paid_cents >= o.total_cents ? 'paid' : `${money(o.paid_cents)} paid`);
+  if (o.returned_cents) facts.push(`${money(o.returned_cents)} given back`);
+  return {
+    id: o.id,
+    source: 'wholesale_order',
+    type: 'order',
+    business_id: WHOLESALE_BUSINESS_ID,
+    account_id: o.account_id,
+    at: o.at,
+    title: `${label} #${o.number ?? '?'}${o.reference ? ` · ${o.reference}` : ''}`,
+    facts: facts.join(' · '),
+    body: o.items ? `${o.items}${o.item_count ? ` (${o.item_count} unit${o.item_count === 1 ? '' : 's'})` : ''}` : null,
+    status,
+    packing,
+    struck: o.status !== 'active',
+    date: o.order_date,
+    record: o,
+  };
+}
+
+/** One payment, refund, store credit, return or credit note as a timeline item. */
+export function entryItem(e) {
+  const method = e.method ? METHOD_LABELS[e.method] ?? e.method : null;
+  const facts = [];
+  if (e.kind === 'return') {
+    if (e.amount_cents) facts.push(`${money(e.amount_cents)} back`);
+  } else if (e.kind === 'credit_applied') {
+    facts.push(money(Math.abs(e.amount_cents ?? 0)));
+  } else {
+    facts.push(money(e.amount_cents ?? 0));
+  }
+  if (method) facts.push(method);
+  if (e.order_number) facts.push(`order #${e.order_number}`);
+  let status = null;
+  if (e.status === 'removed') {
+    status = e.moved_to === 'store_credit' ? 'Kept as store credit when its order was deleted' : (REMOVED_LABELS[e.removed_reason] ?? 'Removed in the Order Manager');
+  }
+  const number = e.kind === 'credit_note' && e.number ? ` ${e.number}` : '';
+  return {
+    id: e.id,
+    source: 'wholesale_entry',
+    type: 'order',
+    business_id: WHOLESALE_BUSINESS_ID,
+    account_id: e.account_id,
+    at: e.at,
+    title: `${ENTRY_LABELS[e.kind] ?? e.kind}${number}`,
+    facts: facts.join(' · '),
+    body: e.detail || null,
+    status,
+    struck: e.status === 'removed',
+    record: e,
+  };
+}
+
+/** A client's Order Manager records as timeline items (merged with its activities by the page). */
+export function wholesaleItems(orders = [], entries = []) {
+  return [...orders.map(orderItem), ...entries.map(entryItem)];
+}
+
+/** Activities as timeline items in the same shape (the page renders both). */
+export function activityItem(a) {
+  return { ...a, source: 'activity', record: a };
+}
+
+/**
+ * Figures added up over Order Manager customer cards (an account's, or a whole client's):
+ * { customers, orders, spendCents, paidCents, creditCents, lastOrderDate, firstOrderDate, gone } or null when none.
+ */
+export function sumCards(cards = []) {
+  if (!cards.length) return null;
+  const out = { customers: cards.length, orders: 0, spendCents: 0, paidCents: 0, creditCents: 0, lastOrderDate: null, firstOrderDate: null, gone: cards.every((c) => c.gone) };
+  for (const c of cards) {
+    out.orders += c.order_count ?? 0;
+    out.spendCents += c.spend_cents ?? 0;
+    out.paidCents += c.paid_cents ?? 0;
+    out.creditCents += c.credit_cents ?? 0;
+    if (c.last_order_date && (!out.lastOrderDate || c.last_order_date > out.lastOrderDate)) out.lastOrderDate = c.last_order_date;
+    if (c.first_order_date && (!out.firstOrderDate || c.first_order_date < out.firstOrderDate)) out.firstOrderDate = c.first_order_date;
+  }
+  return out;
+}
+
+/** Latest Order Manager order time per client: Map<client_id, at> (for the client list's "last activity"). */
+export function lastOrderByClient(orders = []) {
+  const m = new Map();
+  for (const o of orders) {
+    if (!o.at) continue;
+    const cur = m.get(o.client_id);
+    if (!cur || o.at > cur) m.set(o.client_id, o.at);
+  }
+  return m;
+}
+
+/** Last activity per client: the later of its activities' and its Order Manager orders'. */
+export function mergeLastActivity(activityMap, orderMap) {
+  if (!orderMap?.size) return activityMap;
+  const m = new Map(activityMap);
+  for (const [id, at] of orderMap) {
+    const cur = m.get(id);
+    if (!cur || at > cur) m.set(id, at);
+  }
+  return m;
+}
