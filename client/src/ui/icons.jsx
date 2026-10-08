@@ -163,6 +163,21 @@ const paths = {
     </>
   ),
   list: <path d="M9 6.5h11M9 12h11M9 17.5h11M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01" />,
+  bell: (
+    <>
+      <path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z" />
+      <path d="M10 20.5a2 2 0 0 0 4 0" />
+    </>
+  ),
+  plug: (
+    <>
+      <path d="M9 3.5v4M15 3.5v4" />
+      <path d="M6.5 7.5h11V11a5.5 5.5 0 0 1-11 0z" />
+      <path d="M12 16.5v4" />
+    </>
+  ),
+  bolt: <path d="M13 3 5.5 13.5H12L11 21l7.5-10.5H12z" />,
+  play: <path d="M8 5.5v13l10.5-6.5z" />,
 };
 
 export function Icon({ name, size = 20, title, style, className }) {

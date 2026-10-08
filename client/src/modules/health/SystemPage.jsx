@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client.js';
 import { PageHeader, Card, Button, Badge, KeyValue, Segmented, Icon, useTheme } from '../../ui/index.js';
+import SystemTabs from './SystemTabs.jsx';
 
 function when(iso) {
   if (!iso) return '—';
@@ -38,6 +39,7 @@ export default function SystemPage() {
 
   return (
     <>
+      <SystemTabs />
       <PageHeader
         title="System"
         subtitle="Server, database and backups"

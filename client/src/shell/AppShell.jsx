@@ -5,6 +5,7 @@ import { useAuth } from '../auth/session.jsx';
 import BackupBanner from './BackupBanner.jsx';
 import UpdateBanner from './UpdateBanner.jsx';
 import { SyncBar } from '../sync/components.jsx';
+import { AlertsBell, AlertsStrip } from '../modules/automations/AlertsBell.jsx';
 import './shell.css';
 
 const linkClass = (base) => ({ isActive }) => `${base}${isActive ? ' active' : ''}`;
@@ -16,7 +17,8 @@ export default function AppShell({ children }) {
       <nav className="shell-sidebar" aria-label="Main">
         <div className="shell-brand">
           <img className="shell-brand-mark" src="/icons/icon.svg" alt="" />
-          Skynet Corp Suite
+          <span className="shell-brand-name">Skynet Corp Suite</span>
+          <AlertsBell />
         </div>
         {navItems.map((item) => (
           <NavLink key={item.id} to={item.path} end={item.path === '/'} className={linkClass('shell-nav-link')}>
@@ -34,6 +36,7 @@ export default function AppShell({ children }) {
       <main className="shell-main">
         <div className="shell-content">
           <SyncBar />
+          <AlertsStrip />
           <UpdateBanner />
           <BackupBanner />
           {children}
