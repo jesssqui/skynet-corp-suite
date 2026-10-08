@@ -96,17 +96,35 @@ export function parseCsv(input, { delimiter = null, maxRecords = Infinity } = {}
   return { records, delimiter: sep };
 }
 
+const TITLE_ROWS_MAX = 10;
+// A report footer: a date and time ("Monday, October 7, 2026 10:42 AM GMT-04:00").
+const FOOTER_RE = /\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\.?m\.?|gmt|utc)|gmt[+-]\d/i;
+
 /**
- * The first record as headers and the rest as rows (each padded to the header count).
- * @returns {{ headers: string[], rows: string[][], delimiter: string }}
+ * The first record (after any title rows) as headers and the rest as rows (each padded to the header count).
+ * @returns {{ headers: string[], rows: string[][], delimiter: string, skipped: number }} skipped = title rows left out
  */
 export function readTable(text, { maxRows = Infinity } = {}) {
-  const { records, delimiter } = parseCsv(text, { maxRecords: maxRows === Infinity ? Infinity : maxRows + 1 });
-  if (!records.length) return { headers: [], rows: [], delimiter };
+  const { records: all, delimiter } = parseCsv(text, { maxRecords: maxRows === Infinity ? Infinity : maxRows + 1 + TITLE_ROWS_MAX });
+  // Reports (QuickBooks Online "Customer Contact List") start with title rows — the report's
+  // name, the company, a date — before the real header: skip leading records with fewer than two
+  // filled cells. And they end with a one-cell footer (the run date and time): drop that too.
+  const filled = (r) => r.filter((c) => c.trim() !== '').length;
+  // (Only when a record with two or more cells follows: a one-column file has no title rows.)
+  const header = all.slice(0, TITLE_ROWS_MAX + 1).findIndex((r) => filled(r) >= 2);
+  const skipped = header > 0 ? header : 0;
+  let records = all.slice(skipped);
+  const footer = (r) => {
+    const text = r.join(',').trim();
+    return FOOTER_RE.test(text) && (filled(r) === 1 || /^(mon|tue|wed|thu|fri|sat|sun)[a-z]*\b/i.test(text));
+  };
+  while (records.length > 1 && footer(records.at(-1))) records = records.slice(0, -1);
+  if (records.length > maxRows + 1) throw new CsvError('too_many_rows', `More than ${maxRows} rows`);
+  if (!records.length) return { headers: [], rows: [], delimiter, skipped };
   const [first, ...rest] = records;
   const headers = first.map((h, i) => h.trim() || `Column ${i + 1}`);
   const width = Math.max(headers.length, ...rest.map((r) => r.length));
   while (headers.length < width) headers.push(`Column ${headers.length + 1}`);
   const rows = rest.map((r) => (r.length < width ? [...r, ...Array(width - r.length).fill('')] : r));
-  return { headers, rows, delimiter };
+  return { headers, rows, delimiter, skipped };
 }

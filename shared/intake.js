@@ -151,12 +151,21 @@ export function cleanRow(input = {}) {
   }
 
   let contact = null;
+  let clientExtra = null; // contact notes with no contact to hold them: kept on the client
   const c = input.contact ?? {};
   const typedEmail = squash(c.email);
   const typedPhone = squash(c.phone);
   if (squash(c.name) || typedEmail || typedPhone || squash(c.role)) {
     const notes = [];
-    let email = normalizeEmail(typedEmail.replace(/^mailto:/i, '') || null);
+    // Several addresses in one cell ("a@x.ca; b@x.ca"): the first good one is the email, the rest go in notes.
+    const parts = typedEmail.split(/[\s,;|/]+/).filter(Boolean);
+    const clean = (e) => normalizeEmail(e.replace(/^mailto:/i, '').replace(/^<|>$/g, ''));
+    const firstGood = parts.length > 1 ? parts.find((e) => isEmail(clean(e))) : null;
+    let email = firstGood ? clean(firstGood) : normalizeEmail(typedEmail.replace(/^mailto:/i, '') || null);
+    if (firstGood) {
+      const others = parts.filter((e) => e !== firstGood);
+      if (others.length) notes.push(`Also: ${others.join(', ')}`);
+    }
     if (email && !isEmail(email)) {
       warnings.push(`Email “${typedEmail}” isn’t an address we can save: it goes in the contact’s notes`);
       notes.push(`Email as typed: ${typedEmail}`);
@@ -183,13 +192,15 @@ export function cleanRow(input = {}) {
       phone,
       notes: joinNotes(clip(c.notes, MAX.notes, { keepLines: true }), ...notes),
     };
+  } else if (clip(c.notes, MAX.notes, { keepLines: true })) {
+    clientExtra = clip(c.notes, MAX.notes, { keepLines: true });
   }
 
   return {
     client: {
       name: clientName,
       tags: cleanTags(input.client?.tags),
-      notes: clip(input.client?.notes, MAX.notes, { keepLines: true }),
+      notes: joinNotes(clip(input.client?.notes, MAX.notes, { keepLines: true }), clientExtra),
     },
     account,
     relationships,
@@ -329,7 +340,7 @@ export function actionsFor(state, { canAdd = true } = {}) {
     case 'same':
     case 'similar': return canAdd ? ['skip', 'add', 'create'] : ['skip', 'create'];
     case 'changed': return canAdd ? ['skip', 'add', 'create'] : ['skip', 'create'];
-    case 'imported':
+    case 'imported': return canAdd ? ['skip', 'add', 'create'] : ['skip', 'create'];
     case 'duplicate': return ['skip', 'create'];
     default: return ['skip'];
   }

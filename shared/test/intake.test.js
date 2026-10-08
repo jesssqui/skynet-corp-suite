@@ -44,7 +44,7 @@ test('csv: readTable pads short rows, names blank headers, and stops at the row 
   const t = readTable('Name,,Email\nA\nB,x,b@x.ca,extra\n');
   assert.deepEqual(t.headers, ['Name', 'Column 2', 'Email', 'Column 4']);
   assert.deepEqual(t.rows, [['A', '', '', ''], ['B', 'x', 'b@x.ca', 'extra']]);
-  assert.deepEqual(readTable(''), { headers: [], rows: [], delimiter: ',' });
+  assert.deepEqual(readTable(''), { headers: [], rows: [], delimiter: ',', skipped: 0 });
   const many = `Name\n${Array.from({ length: 11 }, (_, i) => `C${i}`).join('\n')}`;
   assert.equal(readTable(many, { maxRows: 11 }).rows.length, 11);
   assert.throws(() => readTable(many, { maxRows: 10 }), (e) => e instanceof CsvError && e.code === 'too_many_rows');
@@ -264,4 +264,33 @@ test('rowFromCells: client from the customer name (else company, else person); a
   assert.equal(row.relationships[0].kind, 'consulting');
   const person = cleanRow(rowFromCells(['Ann', 'Lee', '', '', '', '', '', '', ''], mapping));
   assert.deepEqual([person.client.name, person.contact.name], ['Ann Lee', 'Ann Lee']);
+});
+
+// ---------------------------------------------------------------- review fixes
+
+test('csv: QuickBooks Online report title rows and the run-time footer are left out; one-column files keep their header', () => {
+  const qbo = [
+    'Customer Contact List', 'Harbour Holdings Inc.', '', 'Customer,Phone Numbers,Email,Full Name,Billing Address',
+    '"Lakeview Dental","519-555-0101",dee@lakeview.test,Dee Eve,"1 Lake Rd, Simcoe"', 'Old Mill Coffee,,ivy@oldmill.test,Ivy Lund,',
+    '', 'Monday, October 7, 2026 10:42 AM GMT-04:00',
+  ].join('\n');
+  const t = readTable(qbo);
+  assert.deepEqual([t.skipped, t.headers[0], t.rows.length, t.rows[1][0]], [2, 'Customer', 2, 'Old Mill Coffee']);
+  assert.equal(detectMapping(t.headers).source, 'QuickBooks');
+  assert.deepEqual(readTable('Name\nA Co\nB Co'), { headers: ['Name'], rows: [['A Co'], ['B Co']], delimiter: ',', skipped: 0 });
+});
+
+test('several emails in one cell: the first good one is the email, the rest go in notes', () => {
+  const r = cleanRow({ client: { name: 'Two Inboxes' }, contact: { email: 'not-an-email; Sales@Two.test, accounts@two.test' } });
+  assert.equal(r.contact.email, 'sales@two.test');
+  assert.equal(r.contact.notes, 'Also: not-an-email, accounts@two.test');
+  assert.deepEqual(r.warnings, []);
+});
+
+test('contact notes with no contact are kept on the client, never dropped; an imported row can add what is missing', () => {
+  const r = cleanRow({ client: { name: 'Lefty’s', notes: 'From the market' }, contact: { notes: 'wants a quote before spring' } });
+  assert.equal(r.contact, null);
+  assert.equal(r.client.notes, 'From the market\nwants a quote before spring');
+  assert.deepEqual(actionsFor('imported'), ['skip', 'add', 'create']);
+  assert.deepEqual(actionsFor('imported', { canAdd: false }), ['skip', 'create']);
 });
