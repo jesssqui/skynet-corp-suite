@@ -7,6 +7,9 @@
 //   { type: 'schedule', every: 'day', at: '07:30' }               every day at 7:30 a.m.
 //   { type: 'schedule', every: 'week', day: 'fri', at: '08:00' }  every Friday at 8:00 a.m.
 //   { type: 'event', event: 'order.placed', label?, key(data) }   when an event happens (D packages)
+//   { type: 'event', events: ['order.packed', 'order.shipped'], label?, key(data), accept?(data) }
+//                                                                 when any of several events happens (D3);
+//                                                                 accept(data) false = not this one (no run)
 //
 // A scheduled automation runs once per **period** (its day, or its Monday–Sunday week): the run
 // key is "<automation id>:<period key>" (period key "2026-10-08" or ISO week "2026-W41"). The
@@ -34,8 +37,16 @@ export function checkTrigger(trigger) {
     throw new Error("trigger.every: 'day' or 'week'");
   }
   if (trigger.type === 'event') {
-    if (!EVENT_RE.test(trigger.event ?? '')) throw new Error(`trigger.event: a name like "order.placed", got ${trigger.event}`);
+    if (trigger.events !== undefined) {
+      if (trigger.event !== undefined) throw new Error('trigger: event or events, not both');
+      if (!Array.isArray(trigger.events) || !trigger.events.length || !trigger.events.every((e) => EVENT_RE.test(e ?? ''))) {
+        throw new Error('trigger.events: a list of names like "order.packed"');
+      }
+    } else if (!EVENT_RE.test(trigger.event ?? '')) {
+      throw new Error(`trigger.event: a name like "order.placed", got ${trigger.event}`);
+    }
     if (trigger.key !== undefined && typeof trigger.key !== 'function') throw new Error('trigger.key: (data) => the run key part');
+    if (trigger.accept !== undefined && typeof trigger.accept !== 'function') throw new Error('trigger.accept: (data) => true to run');
     return trigger;
   }
   throw new Error("trigger.type: 'schedule' or 'event'");
@@ -48,8 +59,14 @@ export function clockText(hhmm) {
 }
 
 /** The trigger in plain English: "Every Friday at 8:00 a.m.", "Every day at 7:30 a.m.". */
+/** The event names an event trigger listens for (one or several). */
+export function triggerEvents(trigger) {
+  if (trigger?.type !== 'event') return [];
+  return trigger.events ?? [trigger.event];
+}
+
 export function triggerText(trigger) {
-  if (trigger.type === 'event') return trigger.label ?? `When ${trigger.event} happens`;
+  if (trigger.type === 'event') return trigger.label ?? `When ${triggerEvents(trigger).join(' or ')} happens`;
   const at = clockText(trigger.at);
   if (trigger.every === 'day') return `Every day at ${at}`;
   return `Every ${DAY_NAMES[WEEKDAYS.indexOf(trigger.day)]} at ${at}`;
