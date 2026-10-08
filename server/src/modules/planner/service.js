@@ -155,6 +155,6 @@ export function createPlannerService({ db, services, log }) {
   };
 
   // C8: the Friday review list and "no next step" (when the automations module is registered).
-  if (services.automations) registerPlannerAutomations({ automations: services.automations, crm: services.crm, planner: service });
+  if (services.automations) registerPlannerAutomations({ automations: services.automations, crm: services.crm, planner: service, services });
   return service;
 }

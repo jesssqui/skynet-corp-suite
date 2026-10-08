@@ -359,21 +359,21 @@ function seedRelationships({ make, remove }) {
   const site = make('account', { client_id: client, name: 'Northwind Online' });
   r.client = client;
   r.acc = acc;
-  r.flagged = make('relationship', { account_id: acc, business_id: W, kind: 'wholesale', status: 'active' });
+  r.flagged = make('relationship', { account_id: acc, business_id: W, kind: 'consulting', status: 'active' });
   r.agency = make('relationship', { account_id: site, business_id: AGENCY, kind: 'website', status: 'active' });
   r.covered = make('relationship', { account_id: site, business_id: BUSINESS_IDS.consulting, kind: 'consulting', status: 'active' });
   make('task', { title: 'Send the proposal', owner: 'owner', business_id: BUSINESS_IDS.consulting, relationship_id: r.covered, due_date: '2026-10-20' });
   r.undated = make('relationship', { account_id: acc, business_id: SPS, kind: 'social', status: 'active' });
   make('task', { title: 'Some day', owner: 'partner', business_id: SPS, relationship_id: r.undated }); // no date: still flagged
   r.paused = make('relationship', { account_id: acc, business_id: AGENCY, kind: 'social', status: 'paused' });
-  r.ended = make('relationship', { account_id: acc, business_id: BUSINESS_IDS.retail, kind: 'wholesale', status: 'ended' });
+  r.ended = make('relationship', { account_id: acc, business_id: BUSINESS_IDS.retail, kind: 'consulting', status: 'ended' });
   const closed = make('client', { name: 'Closed Co', status: 'closed' });
-  r.closed = make('relationship', { account_id: make('account', { client_id: closed, name: 'Closed Shop' }), business_id: W, kind: 'wholesale', status: 'active' });
+  r.closed = make('relationship', { account_id: make('account', { client_id: closed, name: 'Closed Shop' }), business_id: W, kind: 'consulting', status: 'active' });
   const goneClient = make('client', { name: 'Deleted Client', status: 'active' });
-  r.deletedClient = make('relationship', { account_id: make('account', { client_id: goneClient, name: 'Orphan Shop' }), business_id: W, kind: 'wholesale', status: 'active' });
+  r.deletedClient = make('relationship', { account_id: make('account', { client_id: goneClient, name: 'Orphan Shop' }), business_id: W, kind: 'consulting', status: 'active' });
   remove('client', goneClient);
   const goneAcc = make('account', { client_id: client, name: 'Deleted Account' });
-  r.deletedAccount = make('relationship', { account_id: goneAcc, business_id: W, kind: 'wholesale', status: 'active' });
+  r.deletedAccount = make('relationship', { account_id: goneAcc, business_id: W, kind: 'consulting', status: 'active' });
   remove('account', goneAcc);
   return r;
 }
@@ -446,7 +446,7 @@ test('alerts only for automations set to alert: No next step is silent until swi
   const put = await env.call('PUT', '/api/automations/no-next-step', { alert: true });
   assert.equal(put.body.automation.alert, true);
   const acc = env.make('account', { client_id: env.make('client', { name: 'Fresh Client', status: 'active' }), name: 'Fresh Shop' });
-  env.make('relationship', { account_id: acc, business_id: W, kind: 'wholesale', status: 'active' });
+  env.make('relationship', { account_id: acc, business_id: W, kind: 'consulting', status: 'active' });
   const run = (await env.call('POST', '/api/automations/no-next-step/run', {})).body.run;
   assert.equal(run.createdCount, 1);
   const [alert] = alerts(env.db);
@@ -467,7 +467,7 @@ function manyRelationships({ make }, n, business = W) {
   for (let i = 0; i < n; i += 1) {
     const c = make('client', { name: `Client ${String(i).padStart(3, '0')}`, status: 'active' });
     const a = make('account', { client_id: c, name: `Shop ${String(i).padStart(3, '0')}` });
-    ids.push(make('relationship', { account_id: a, business_id: business, kind: 'wholesale', status: 'active' }));
+    ids.push(make('relationship', { account_id: a, business_id: business, kind: 'consulting', status: 'active' }));
   }
   return ids;
 }

@@ -234,6 +234,57 @@ one without the password and a code, but if it is lost or gone, sign it out agai
 **To undo a restore:** stop the app and restore the `pre-restore-…db` file the restore printed, the same way
 (it is inside the volume: `/app/data/backups/pre-restore-….db`).
 
+## 6. Order Manager connection (D1)
+
+**First: where does the Order Manager run?** Its checked-in `docker-compose.yml` mounts `/mnt/user/appdata/…` (an Unraid
+path) and publishes port 3089 — so check before connecting:
+- **On this Mac (Docker Desktop)** → its address for the suite is **`http://host.docker.internal:3100`**: Docker
+  Desktop forwards `host.docker.internal` to the Mac's own `127.0.0.1`, where compose publishes the suite. Nothing is
+  exposed to the LAN or the internet.
+- **On another machine on the tailnet (e.g. the Unraid server)** → its address is the suite's Tailscale Serve address
+  from step 3, **`https://<mac-name>.<tailnet>.ts.net`** (the one you open on the iPhone). No change to the suite is
+  needed: the receiver authenticates by its signature only (no session, no Origin check), so Serve's HTTPS, `Host` and
+  forwarded headers don't affect it (tested). Serve must map the root (`/`), as in step 3 — a path prefix would change
+  the path the Order Manager signs. That machine must be on the tailnet, and its container must reach it: check with
+  the command below using that address. If the container can't resolve `*.ts.net`, give it Tailscale's DNS
+  (`dns: [100.100.100.100]` in its compose service) or run it on the host network. Enter that address in step 2 and
+  set `WOM_CONNECT_URL` in the suite's `.env` to it so the Connections card shows the right one.
+- Never publish the suite's port on the LAN for this, and never turn on Tailscale Funnel.
+
+1. **In the suite** (signed in, either of you): **System → Connections → Wholesale Order Manager**. Note the *Suite
+   address* (`http://host.docker.internal:3100`, or with your `SUITE_PORT`; `WOM_CONNECT_URL` in `.env` overrides what
+   is shown). Press **Make the secret** and **copy it now: it is shown only once** (stored encrypted; the key is the
+   file `/app/data/wom-secret.key` in the volume, never in the database or the backups).
+2. **In the Order Manager** (admin): **Settings → Integrations → Suite connection**: paste the address and the secret,
+   **Connect**, then **Send existing customers and orders** (everything made before the connection).
+3. **Back in the suite**: the Connections card shows *Last success* within seconds and *N records from M customers
+   waiting for a client*. Open **Clients → Order Manager customers waiting for a client** (`/wholesale`) and, for each,
+   **Link to a client…** (an existing client's account, or a new account under it) or **Create a client**. Their orders,
+   payments, returns and refunds then show on that client's timeline (type *Orders*), with spend and last order on the
+   account. A linked account is marked age-restricted and gets an active wholesale relationship if it has none.
+
+**Check** (this could not be tried where the suite was built — no Docker there):
+- From the Order Manager's container (with the address you chose):
+  `docker exec wholesale-order-manager node -e "fetch('http://host.docker.internal:3100/api/health').then(r=>r.text()).then(console.log)"`
+  must print `{"ok":true,...}`. If it can't connect: the address doesn't fit where it runs (above), or the suite isn't
+  running (`docker compose ps`). (On plain Linux Docker, `host.docker.internal` needs `extra_hosts:
+  ["host.docker.internal:host-gateway"]` and still can't reach a port published on loopback — use the tailnet address.)
+- The Order Manager's Settings → Suite connection shows no *last error* and *waiting* goes to 0.
+
+**Pausing**: the switch on the Connections card pauses the connection: the suite answers 503 and the Order Manager
+keeps its events queued (nothing is lost), then sends them in order — within its retry wait, at most 5 minutes —
+once it is switched on. **New secret…** (either of you) replaces the secret at once; paste it into the Order Manager,
+whose events wait meanwhile.
+
+**After restoring the suite from a backup** (step 5, same Mac): nothing to do in the Order Manager. The suite keeps the
+Order Manager's data as it last said across the restore (and the secret), and puts the client timelines back to match
+at start. **On a new Mac with the volume lost** (restored from the off-machine copy): the Order Manager's changes since
+that backup aren't in it, and the Order Manager counts them as delivered. Make a new secret (the key file is gone),
+connect again, then in the Order Manager use **Forget everything (it's a different suite)** and **Send existing
+customers and orders**: everything that exists there now is sent again (applied by permanent id, nothing doubled).
+Orders and payments **deleted** there since the backup can't be known this way — they stay as they were in the backup
+(check the Order Manager's Bin and the client timelines by hand).
+
 ## Troubleshooting
 
 Offline:
@@ -280,3 +331,12 @@ Server and backups:
   parent (`/Users` or `/Volumes`) is listed, then `docker compose up -d`.
 - Port 3100 already in use → set `SUITE_PORT` in `.env` and use that port in the `tailscale serve` command and the
   `curl` checks.
+
+Order Manager connection:
+- **The Order Manager says "The suite refused the shared secret (or this computer's clock is off)"** → the secret
+  differs (a new one was made in the suite: paste it again) or a clock is more than 5 minutes off (both containers use
+  the Mac's clock). The suite's Connections card shows the reason as its last error.
+- **"The suite answered 503"** → the connection is switched off on the suite's Connections card.
+- **"Can't reach the suite"** → see the `docker exec … /api/health` check in step 6.
+- **A customer is "Linked to more than one account"** (a link undone on one device and made again on another) → open
+  the client pages, undo one link (`/wholesale` → Linked → Unlink, then link again): the suite never picks one by itself.

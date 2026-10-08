@@ -45,7 +45,7 @@ function seed(ctx) {
   };
   ids.client = make('owner', 'client', { name: 'Northwind Holdings', status: 'active' });
   ids.account = make('owner', 'account', { client_id: ids.client, name: 'Cloud Vape Co' });
-  ids.rel = make('owner', 'relationship', { account_id: ids.account, business_id: W, kind: 'wholesale', status: 'active' });
+  ids.rel = make('owner', 'relationship', { account_id: ids.account, business_id: W, kind: 'consulting', status: 'active' });
   return { today, ids };
 }
 
@@ -335,7 +335,7 @@ test('Today pages long lists: 50 tasks and 5 relationships without a next step a
   const client = make('client', { name: 'Many Shops Ltd', status: 'active' });
   for (let i = 0; i < 60; i += 1) {
     const account = make('account', { client_id: client, name: `Shop ${i}` });
-    make('relationship', { account_id: account, business_id: W, kind: 'wholesale', status: 'active' });
+    make('relationship', { account_id: account, business_id: W, kind: 'consulting', status: 'active' });
   }
   const browser = await launch(t);
   const mac = await browser.newContext({ viewport: { width: 1280, height: 860 } });

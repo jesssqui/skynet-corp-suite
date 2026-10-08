@@ -1,0 +1,1775 @@
+{
+ "capturedAt": "2026-10-08T20:36:31.596Z",
+ "from": "scripts/wom-e2e.mjs",
+ "events": [
+  {
+   "name": "customer.created",
+   "version": 1,
+   "key": "01a11d3b-4a39-71be-89a5-9d1de9297b4c",
+   "source": "wom",
+   "time": "2026-10-08T20:36:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "customer": {
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "number": 1,
+     "business_name": "Lefty’s Vape Shop",
+     "contact_name": "Lefty",
+     "email": "lefty@leftys.ca",
+     "phone": "5195550100",
+     "contact_problems": [],
+     "address": {
+      "line1": "12 Main St",
+      "line2": null,
+      "city": "Simcoe",
+      "province": "ON",
+      "postal_code": "N3Y 4K3",
+      "country": "CA"
+     },
+     "notes": null,
+     "tax_exempt": false,
+     "group": null,
+     "created_at": "2026-10-08T20:36:27.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a11d3b-4a3b-7418-a777-aad798165762",
+   "source": "wom",
+   "time": "2026-10-08T20:36:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a11d3b-4a19-7644-a887-445747f02866",
+     "number": 1,
+     "reference_number": null,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "customer": {
+      "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-08",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-08T20:36:27.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 10,
+       "unit_price_cents": 650,
+       "subtotal_cents": 6500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 6500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 6500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 845,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 7345
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a11d3b-4a3c-72fc-a13c-e220a4fed4e3",
+   "source": "wom",
+   "time": "2026-10-08T20:36:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a11d3b-4a1a-7627-8330-cbba243207bd",
+     "number": 1,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "order_uid": "01a11d3b-4a19-7644-a887-445747f02866",
+     "order_number": 1,
+     "amount_cents": 7345,
+     "method": "cash",
+     "payment_date": "2026-10-08",
+     "reference_number": null,
+     "notes": "POS order #1",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-08T20:36:27.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a11d3b-5050-752f-82ad-72c48eedf562",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.880Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a11d3b-504e-76ff-b436-2be7de6ad502",
+     "number": 2,
+     "reference_number": null,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "customer": {
+      "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-08",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-08T20:36:28.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 4,
+       "unit_price_cents": 650,
+       "subtotal_cents": 2600,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 2600
+      },
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 2,
+       "unit_price_cents": 700,
+       "subtotal_cents": 1400,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1400
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 4000,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 520,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 4520
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a11d3b-5054-72b2-8a4b-1a01f0e64e5c",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.884Z",
+   "data": {
+    "by": "admin",
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a11d3b-5054-72b1-a435-1e81e00d0497",
+     "number": 2,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "order_uid": "01a11d3b-504e-76ff-b436-2be7de6ad502",
+     "order_number": 2,
+     "amount_cents": 4520,
+     "method": "etransfer",
+     "payment_date": "2026-10-08",
+     "reference_number": null,
+     "notes": null,
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-08T20:36:28.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.changed",
+   "version": 1,
+   "key": "01a11d3b-5062-70e5-be02-fb2822551547",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.898Z",
+   "data": {
+    "by": "admin",
+    "change": "edited",
+    "changes": [
+     {
+      "field": "item",
+      "product_id": 1,
+      "name": "Zyn Cool Mint 6mg",
+      "from": {
+       "quantity": 4,
+       "unit_price": 6.5,
+       "discount": null
+      },
+      "to": {
+       "quantity": 6,
+       "unit_price": 6.5,
+       "discount": null
+      }
+     },
+     {
+      "field": "total",
+      "from": 45.2,
+      "to": 59.89
+     },
+     {
+      "field": "notes",
+      "from": null,
+      "to": "Two more Zyn"
+     }
+    ],
+    "change_uid": "01a11d3b-5061-763e-9658-038198499329",
+    "order": {
+     "order_uid": "01a11d3b-504e-76ff-b436-2be7de6ad502",
+     "number": 2,
+     "reference_number": null,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "customer": {
+      "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-08",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-08T20:36:28.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 6,
+       "unit_price_cents": 650,
+       "subtotal_cents": 3900,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3900
+      },
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 2,
+       "unit_price_cents": 700,
+       "subtotal_cents": 1400,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1400
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 5300,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 689,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 5989
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": "Two more Zyn",
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.packed",
+   "version": 1,
+   "key": "01a11d3b-506a-74b6-8292-a43b072a9aa8",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.906Z",
+   "data": {
+    "by": "admin",
+    "change": "packed",
+    "note": null,
+    "order": {
+     "order_uid": "01a11d3b-504e-76ff-b436-2be7de6ad502",
+     "number": 2,
+     "reference_number": null,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "customer": {
+      "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-08",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-08T20:36:28.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 6,
+       "unit_price_cents": 650,
+       "subtotal_cents": 3900,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3900
+      },
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 2,
+       "unit_price_cents": 700,
+       "subtotal_cents": 1400,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1400
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 5300,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 689,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 5989
+     },
+     "packing": {
+      "state": "packed",
+      "packed_at": "2026-10-08T20:36:28.000Z",
+      "packed_by": "admin",
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": "Two more Zyn",
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.shipped",
+   "version": 1,
+   "key": "01a11d3b-506f-77e2-b488-abac7b26f8ab",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.911Z",
+   "data": {
+    "by": "admin",
+    "change": "shipped",
+    "via": "delivered",
+    "note": null,
+    "order": {
+     "order_uid": "01a11d3b-504e-76ff-b436-2be7de6ad502",
+     "number": 2,
+     "reference_number": null,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "customer": {
+      "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-08",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-08T20:36:28.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 6,
+       "unit_price_cents": 650,
+       "subtotal_cents": 3900,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3900
+      },
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 2,
+       "unit_price_cents": 700,
+       "subtotal_cents": 1400,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1400
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 5300,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 689,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 5989
+     },
+     "packing": {
+      "state": "shipped",
+      "packed_at": "2026-10-08T20:36:28.000Z",
+      "packed_by": "admin",
+      "shipped_at": "2026-10-08T20:36:28.000Z",
+      "shipped_by": "admin",
+      "shipped_via": "delivered",
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": "Two more Zyn",
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a11d3b-5074-71e6-b6dc-694e5eb9641f",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.916Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a11d3b-5073-7379-9e2a-9944887d33d2",
+     "number": 3,
+     "reference_number": null,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "customer": {
+      "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-08",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-08T20:36:28.000Z",
+     "lines": [
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 3,
+       "unit_price_cents": 500,
+       "subtotal_cents": 1500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 1500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 195,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 1695
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.cancelled",
+   "version": 1,
+   "key": "01a11d3b-507b-77c7-9de1-668d69931a58",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.923Z",
+   "data": {
+    "by": "admin",
+    "changes": [
+     {
+      "field": "status",
+      "from": "active",
+      "to": "cancelled"
+     }
+    ],
+    "change_uid": "01a11d3b-507a-7413-b5e9-38e48d8e155b",
+    "order": {
+     "order_uid": "01a11d3b-5073-7379-9e2a-9944887d33d2",
+     "number": 3,
+     "reference_number": null,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "customer": {
+      "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-08",
+     "status": "cancelled",
+     "cancelled_at": "2026-10-08T20:36:28.000Z",
+     "history_only": false,
+     "created_at": "2026-10-08T20:36:28.000Z",
+     "lines": [
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 3,
+       "unit_price_cents": 500,
+       "subtotal_cents": 1500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 1500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 195,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 1695
+     },
+     "packing": {
+      "state": "cancelled",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "return.received",
+   "version": 1,
+   "key": "01a11d3b-5085-76b8-be49-ce74334b61d0",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.000Z",
+   "data": {
+    "by": "admin",
+    "return": {
+     "return_uid": "01a11d3b-5083-7531-bb65-dd8f6556271b",
+     "number": 1,
+     "order_uid": "01a11d3b-504e-76ff-b436-2be7de6ad502",
+     "order_number": 2,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "received_at": "2026-10-08T20:36:28.000Z",
+     "items": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 1,
+       "restocked": true
+      },
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 1,
+       "restocked": false
+      }
+     ],
+     "note": "Crushed tins",
+     "reason": "Crushed tins",
+     "outcome": "credit_note",
+     "amount_cents": 1469,
+     "credit_note_uid": "01a11d3b-5084-724e-b137-fc3088a7dbb3"
+    }
+   }
+  },
+  {
+   "name": "credit_note.issued",
+   "version": 1,
+   "key": "01a11d3b-5085-76b9-aab2-a835332ae0f6",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.000Z",
+   "data": {
+    "by": "admin",
+    "credit_note": {
+     "credit_note_uid": "01a11d3b-5084-724e-b137-fc3088a7dbb3",
+     "number": "CN-0001",
+     "order_uid": "01a11d3b-504e-76ff-b436-2be7de6ad502",
+     "order_number": 2,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "amount_cents": 1469,
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 2,
+       "amount_cents": 1469,
+       "subtotal_cents": 1300,
+       "tax_cents": 169
+      }
+     ],
+     "reason": "Crushed tins",
+     "issued_at": "2026-10-08T20:36:28.000Z",
+     "return_uid": "01a11d3b-5083-7531-bb65-dd8f6556271b",
+     "subtotal_cents": 1300,
+     "tax_cents": 169,
+     "shipping_cents": 0
+    }
+   }
+  },
+  {
+   "name": "refund.issued",
+   "version": 1,
+   "key": "01a11d3b-508a-753d-a5bc-e9a380f5fb01",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.938Z",
+   "data": {
+    "by": "admin",
+    "change": "issued",
+    "refund": {
+     "refund_uid": "01a11d3b-508a-753c-bee4-c7fb5574a8bd",
+     "number": 1,
+     "order_uid": "01a11d3b-4a19-7644-a887-445747f02866",
+     "order_number": 1,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "kind": "refund",
+     "amount_cents": 735,
+     "items": [],
+     "reason": "One tin short",
+     "issued_by": "admin",
+     "created_at": "2026-10-08T20:36:28.000Z",
+     "method": "etransfer",
+     "return_uid": null
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a11d3b-508e-748b-b4a9-fca138bf9c56",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.942Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a11d3b-508d-773a-8b30-669e4f9b0697",
+     "number": 4,
+     "reference_number": null,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "customer": {
+      "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-08",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-08T20:36:28.000Z",
+     "lines": [
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 5,
+       "unit_price_cents": 700,
+       "subtotal_cents": 3500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 3500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 455,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 3955
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a11d3b-508e-748c-bd7e-f24826512761",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.942Z",
+   "data": {
+    "by": "admin",
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a11d3b-508d-773b-a444-a7f1eb73efaf",
+     "number": 3,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "order_uid": "01a11d3b-508d-773a-8b30-669e4f9b0697",
+     "order_number": 4,
+     "amount_cents": 3955,
+     "method": "cash",
+     "payment_date": "2026-10-08",
+     "reference_number": null,
+     "notes": "POS order #4",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-08T20:36:28.000Z"
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a11d3b-5095-7330-8979-d35a2f01313b",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.949Z",
+   "data": {
+    "by": "admin",
+    "change": "removed",
+    "removed": true,
+    "reason": "order_deleted",
+    "moved_to": "store_credit",
+    "payment": {
+     "payment_uid": "01a11d3b-508d-773b-a444-a7f1eb73efaf",
+     "number": 3,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "order_uid": "01a11d3b-508d-773a-8b30-669e4f9b0697",
+     "order_number": 4,
+     "amount_cents": 3955,
+     "method": "cash",
+     "payment_date": "2026-10-08",
+     "reference_number": null,
+     "notes": "POS order #4",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-08T20:36:28.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.deleted",
+   "version": 1,
+   "key": "01a11d3b-5096-73e7-9efa-d176fd28d0c8",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.950Z",
+   "data": {
+    "by": "admin",
+    "order_uid": "01a11d3b-508d-773a-8b30-669e4f9b0697",
+    "order": {
+     "order_uid": "01a11d3b-508d-773a-8b30-669e4f9b0697",
+     "number": 4,
+     "reference_number": null,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "customer": {
+      "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-08",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-08T20:36:28.000Z",
+     "lines": [
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 5,
+       "unit_price_cents": 700,
+       "subtotal_cents": 3500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 3500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 455,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 3955
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.restored",
+   "version": 1,
+   "key": "01a11d3b-5275-71e1-9e8c-14e3bf038376",
+   "source": "wom",
+   "time": "2026-10-08T20:36:29.429Z",
+   "data": {
+    "by": "admin",
+    "order": {
+     "order_uid": "01a11d3b-508d-773a-8b30-669e4f9b0697",
+     "number": 4,
+     "reference_number": null,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "customer": {
+      "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-08",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-08T20:36:28.000Z",
+     "lines": [
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 5,
+       "unit_price_cents": 700,
+       "subtotal_cents": 3500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 3500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 455,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 3955
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a11d3b-5275-71e2-b9ef-75cf2151af70",
+   "source": "wom",
+   "time": "2026-10-08T20:36:29.429Z",
+   "data": {
+    "by": "admin",
+    "change": "recorded",
+    "reason": "order_restored",
+    "payment": {
+     "payment_uid": "01a11d3b-508d-773b-a444-a7f1eb73efaf",
+     "number": 3,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "order_uid": "01a11d3b-508d-773a-8b30-669e4f9b0697",
+     "order_number": 4,
+     "amount_cents": 3955,
+     "method": "cash",
+     "payment_date": "2026-10-08",
+     "reference_number": null,
+     "notes": "POS order #4",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-08T20:36:28.000Z"
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a11d3b-5278-7202-bdc5-e949116047bf",
+   "source": "wom",
+   "time": "2026-10-08T20:36:29.432Z",
+   "data": {
+    "by": "admin",
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a11d3b-5278-7201-95c9-214866a9a7db",
+     "number": 4,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "order_uid": null,
+     "order_number": null,
+     "amount_cents": 2000,
+     "method": "cash",
+     "payment_date": "2026-10-08",
+     "reference_number": null,
+     "notes": "On account",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-08T20:36:29.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a11d3b-53ba-7185-a962-d078d37c9506",
+   "source": "wom",
+   "time": "2026-10-08T20:36:29.754Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a11d3b-53b9-7717-9c9b-4005c3c13fa5",
+     "number": 5,
+     "reference_number": null,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "customer": {
+      "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-08",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-08T20:36:29.000Z",
+     "lines": [
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 1,
+       "unit_price_cents": 500,
+       "subtotal_cents": 500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 65,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 565
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a11d3b-53ba-7186-bd3c-7130c2e9e077",
+   "source": "wom",
+   "time": "2026-10-08T20:36:29.754Z",
+   "data": {
+    "by": "admin",
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a11d3b-53b9-7718-8ca6-f5aa95ad0cad",
+     "number": 5,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "order_uid": "01a11d3b-53b9-7717-9c9b-4005c3c13fa5",
+     "order_number": 5,
+     "amount_cents": 565,
+     "method": "cash",
+     "payment_date": "2026-10-08",
+     "reference_number": null,
+     "notes": "POS order #5",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-08T20:36:29.000Z"
+    }
+   }
+  },
+  {
+   "name": "customer.created",
+   "version": 1,
+   "key": "01a11d3b-59b2-75ef-9586-d9bb827d335a",
+   "source": "wom",
+   "time": "2026-10-08T20:36:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "customer": {
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "number": 1,
+     "business_name": "Lefty’s Vape Shop",
+     "contact_name": "Lefty",
+     "email": "lefty@leftys.ca",
+     "phone": "5195550100",
+     "contact_problems": [],
+     "address": {
+      "line1": "12 Main St",
+      "line2": null,
+      "city": "Simcoe",
+      "province": "ON",
+      "postal_code": "N3Y 4K3",
+      "country": "CA"
+     },
+     "notes": null,
+     "tax_exempt": false,
+     "group": null,
+     "created_at": "2026-10-08T20:36:27.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a11d3b-59b2-75f0-9347-da8db238be66",
+   "source": "wom",
+   "time": "2026-10-08T20:36:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a11d3b-4a19-7644-a887-445747f02866",
+     "number": 1,
+     "reference_number": null,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "customer": {
+      "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-08",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-08T20:36:27.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 10,
+       "unit_price_cents": 650,
+       "subtotal_cents": 6500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 6500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 6500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 845,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 7345
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a11d3b-59b3-764c-a5ff-e8122805be77",
+   "source": "wom",
+   "time": "2026-10-08T20:36:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a11d3b-4a1a-7627-8330-cbba243207bd",
+     "number": 1,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "order_uid": "01a11d3b-4a19-7644-a887-445747f02866",
+     "order_number": 1,
+     "amount_cents": 7345,
+     "method": "cash",
+     "payment_date": "2026-10-08",
+     "reference_number": null,
+     "notes": "POS order #1",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-08T20:36:27.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a11d3b-59b3-764d-ba13-380dec1c8d50",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a11d3b-504e-76ff-b436-2be7de6ad502",
+     "number": 2,
+     "reference_number": null,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "customer": {
+      "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-08",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-08T20:36:28.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 6,
+       "unit_price_cents": 650,
+       "subtotal_cents": 3900,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3900
+      },
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 2,
+       "unit_price_cents": 700,
+       "subtotal_cents": 1400,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1400
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 5300,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 689,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 5989
+     },
+     "packing": {
+      "state": "shipped",
+      "packed_at": "2026-10-08T20:36:28.000Z",
+      "packed_by": "admin",
+      "shipped_at": "2026-10-08T20:36:28.000Z",
+      "shipped_by": "admin",
+      "shipped_via": "delivered",
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": "Two more Zyn",
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a11d3b-59b3-764e-9e81-547d434bff4a",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a11d3b-5073-7379-9e2a-9944887d33d2",
+     "number": 3,
+     "reference_number": null,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "customer": {
+      "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-08",
+     "status": "cancelled",
+     "cancelled_at": "2026-10-08T20:36:28.000Z",
+     "history_only": false,
+     "created_at": "2026-10-08T20:36:28.000Z",
+     "lines": [
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 3,
+       "unit_price_cents": 500,
+       "subtotal_cents": 1500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 1500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 195,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 1695
+     },
+     "packing": {
+      "state": "cancelled",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a11d3b-59b3-764f-96cc-f615c70b1568",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a11d3b-508d-773a-8b30-669e4f9b0697",
+     "number": 4,
+     "reference_number": null,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "customer": {
+      "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-08",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-08T20:36:28.000Z",
+     "lines": [
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 5,
+       "unit_price_cents": 700,
+       "subtotal_cents": 3500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 3500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 455,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 3955
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a11d3b-59b4-7430-99ed-d16a356a100c",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a11d3b-5054-72b1-a435-1e81e00d0497",
+     "number": 2,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "order_uid": "01a11d3b-504e-76ff-b436-2be7de6ad502",
+     "order_number": 2,
+     "amount_cents": 4520,
+     "method": "etransfer",
+     "payment_date": "2026-10-08",
+     "reference_number": null,
+     "notes": null,
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-08T20:36:28.000Z"
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a11d3b-59b4-7431-b8e0-4a0abd226db5",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a11d3b-508d-773b-a444-a7f1eb73efaf",
+     "number": 3,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "order_uid": "01a11d3b-508d-773a-8b30-669e4f9b0697",
+     "order_number": 4,
+     "amount_cents": 3955,
+     "method": "cash",
+     "payment_date": "2026-10-08",
+     "reference_number": null,
+     "notes": "POS order #4",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-08T20:36:28.000Z"
+    }
+   }
+  },
+  {
+   "name": "return.received",
+   "version": 1,
+   "key": "01a11d3b-59b4-7432-bafb-4a0562f0a1cf",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "return": {
+     "return_uid": "01a11d3b-5083-7531-bb65-dd8f6556271b",
+     "number": 1,
+     "order_uid": "01a11d3b-504e-76ff-b436-2be7de6ad502",
+     "order_number": 2,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "received_at": "2026-10-08T20:36:28.000Z",
+     "items": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 1,
+       "restocked": true
+      },
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 1,
+       "restocked": false
+      }
+     ],
+     "note": "Crushed tins",
+     "reason": "Crushed tins",
+     "outcome": "credit_note",
+     "amount_cents": 1469,
+     "credit_note_uid": "01a11d3b-5084-724e-b137-fc3088a7dbb3"
+    }
+   }
+  },
+  {
+   "name": "refund.issued",
+   "version": 1,
+   "key": "01a11d3b-59b4-7433-9cab-2eb12c8ca390",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "issued",
+    "refund": {
+     "refund_uid": "01a11d3b-508a-753c-bee4-c7fb5574a8bd",
+     "number": 1,
+     "order_uid": "01a11d3b-4a19-7644-a887-445747f02866",
+     "order_number": 1,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "kind": "refund",
+     "amount_cents": 735,
+     "items": [],
+     "reason": "One tin short",
+     "issued_by": "admin",
+     "created_at": "2026-10-08T20:36:28.000Z",
+     "method": "etransfer",
+     "return_uid": null
+    }
+   }
+  },
+  {
+   "name": "credit_note.issued",
+   "version": 1,
+   "key": "01a11d3b-59b4-7434-b45b-834cf7006ff2",
+   "source": "wom",
+   "time": "2026-10-08T20:36:28.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "credit_note": {
+     "credit_note_uid": "01a11d3b-5084-724e-b137-fc3088a7dbb3",
+     "number": "CN-0001",
+     "order_uid": "01a11d3b-504e-76ff-b436-2be7de6ad502",
+     "order_number": 2,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "amount_cents": 1469,
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 2,
+       "amount_cents": 1469,
+       "subtotal_cents": 1300,
+       "tax_cents": 169
+      }
+     ],
+     "reason": "Crushed tins",
+     "issued_at": "2026-10-08T20:36:28.000Z",
+     "return_uid": "01a11d3b-5083-7531-bb65-dd8f6556271b",
+     "subtotal_cents": 1300,
+     "tax_cents": 169,
+     "shipping_cents": 0
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a11d3b-59b5-765b-ab5e-e43853284e78",
+   "source": "wom",
+   "time": "2026-10-08T20:36:29.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a11d3b-53b9-7717-9c9b-4005c3c13fa5",
+     "number": 5,
+     "reference_number": null,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "customer": {
+      "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-08",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-08T20:36:29.000Z",
+     "lines": [
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 1,
+       "unit_price_cents": 500,
+       "subtotal_cents": 500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 65,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 565
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a11d3b-59b5-765c-a51b-b3eb379f7392",
+   "source": "wom",
+   "time": "2026-10-08T20:36:29.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a11d3b-5278-7201-95c9-214866a9a7db",
+     "number": 4,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "order_uid": null,
+     "order_number": null,
+     "amount_cents": 2000,
+     "method": "cash",
+     "payment_date": "2026-10-08",
+     "reference_number": null,
+     "notes": "On account",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-08T20:36:29.000Z"
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a11d3b-59b5-765d-ba46-3a15a952e2e3",
+   "source": "wom",
+   "time": "2026-10-08T20:36:29.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a11d3b-53b9-7718-8ca6-f5aa95ad0cad",
+     "number": 5,
+     "customer_uid": "01a11d3b-4a0f-77a8-b2b6-1c461be533b0",
+     "order_uid": "01a11d3b-53b9-7717-9c9b-4005c3c13fa5",
+     "order_number": 5,
+     "amount_cents": 565,
+     "method": "cash",
+     "payment_date": "2026-10-08",
+     "reference_number": null,
+     "notes": "POS order #5",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-08T20:36:29.000Z"
+    }
+   }
+  }
+ ]
+}

@@ -15,6 +15,8 @@ import { BusinessChip, Badges, RecordSync, StatusBadge, TextButton } from './par
 import { ClientForm, AccountForm, ContactForm, RelationshipForm, ServiceForm, ConsentForm, ActivityForm } from './forms.jsx';
 import { relationshipsWithoutNextStep } from '@suite/shared/planner';
 import { ClientTasksCard, NoNextStepLine } from '../planner/ClientTasksCard.jsx';
+import { wholesaleItems, activityItem, sumCards } from '../wholesale/logic.js';
+import { WholesaleTimelineItem, AccountWholesale, ClientWholesale } from '../wholesale/parts.jsx';
 import './crm.css';
 
 // One client on one screen (/crm/clients/:id): who they are, their businesses (accounts) with
@@ -40,11 +42,13 @@ function Tags({ value }) {
 }
 
 function LinkLine({ link }) {
-  const app = link.app === 'wom' ? 'Order Manager customer' : `${link.app} record`;
+  // An Order Manager customer is named (and its figures shown) by the account's wholesale box (D1):
+  // its permanent id is only in the tooltip.
+  const app = link.app === 'wom' ? 'an Order Manager customer' : `${link.app} record ${link.external_id}`;
   return (
-    <div style={{ ...muted, display: 'flex', gap: 'var(--space-1)', alignItems: 'center' }} data-testid="link-line">
+    <div style={{ ...muted, display: 'flex', gap: 'var(--space-1)', alignItems: 'center' }} data-testid="link-line" title={link.external_id}>
       <Icon name="link" size={14} />
-      <span>Linked to {app} {link.external_id} · {link.matched_by === 'auto' ? 'matched automatically' : 'approved'}</span>
+      <span>Linked to {app} · {link.matched_by === 'auto' ? 'matched automatically' : 'approved'}</span>
       <Badges record={link} />
     </div>
   );
@@ -52,7 +56,7 @@ function LinkLine({ link }) {
 
 // ---- header -------------------------------------------------------------------------------------
 
-function Header({ client, onEdit, onStatus }) {
+function Header({ client, onEdit, onStatus, wholesale }) {
   const closed = client.status === 'closed';
   return (
     <Card>
@@ -73,6 +77,7 @@ function Header({ client, onEdit, onStatus }) {
             <Button variant="ghost" onClick={() => onStatus(closed ? 'active' : 'closed')}>{closed ? 'Reopen' : 'Close client'}</Button>
           </div>
         </div>
+        <ClientWholesale figures={wholesale} />
         {client.notes ? <p style={preWrap}>{client.notes}</p> : null}
         <RecordSync record={client} what="client" />
       </div>
@@ -128,7 +133,7 @@ function RelationshipItem({ rel, business, services, onEdit, onAddService, onEdi
   );
 }
 
-function AccountItem({ account, rels, servicesByRel, links, businessesById, open, noNextStep, businesses }) {
+function AccountItem({ account, rels, servicesByRel, links, businessesById, open, noNextStep, businesses, wholesaleCards }) {
   const lines = addressLines(account);
   const href = websiteHref(account.website);
   return (
@@ -151,6 +156,7 @@ function AccountItem({ account, rels, servicesByRel, links, businessesById, open
       ) : null}
       {account.notes ? <p style={{ ...preWrap, ...muted }}>{account.notes}</p> : null}
       {links.map((l) => <LinkLine key={l.id} link={l} />)}
+      <AccountWholesale cards={wholesaleCards} figures={sumCards(wholesaleCards)} />
       <RecordSync record={account} what="account" />
       {rels.length ? (
         <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 'var(--space-2)' }}>
@@ -264,7 +270,10 @@ function ActivityItem({ activity, account, business, me }) {
   );
 }
 
-function Timeline({ activities, accounts, businesses, accountsById, businessesById, filter, setFilter, onCapture, me }) {
+// The timeline's items are the client's activities and (D1) its Order Manager orders, payments,
+// returns and refunds, in one list (`items`, from activityItem / wholesaleItems): the Order Manager's
+// are type 'order' ("Orders") and business wholesale, so the filters work the same on both.
+function Timeline({ items: activities, accounts, businesses, accountsById, businessesById, filter, setFilter, onCapture, me }) {
   const [shown, setShown] = useState(PAGE);
   useEffect(() => setShown(PAGE), [filter]);
   const rows = useMemo(() => filterTimeline(activities, filter), [activities, filter]);
@@ -272,6 +281,7 @@ function Timeline({ activities, accounts, businesses, accountsById, businessesBy
   const used = useMemo(() => new Set(activities.map((t) => t.business_id).filter(Boolean)), [activities]);
   const businessOptions = pickableBusinesses(businesses).concat(businesses.filter((b) => b.archived && used.has(b.id)));
   const types = ACTIVITY_TYPES.filter((t) => t !== 'order' || activities.some((x) => x.type === 'order'));
+  const typeLabel = (t) => (t === 'order' ? 'Orders' : ACTIVITY_LABELS[t]);
   return (
     <Card>
       <div style={sectionHead}>
@@ -302,14 +312,16 @@ function Timeline({ activities, accounts, businesses, accountsById, businessesBy
           label="Type"
           value={filter.type}
           onChange={(v) => setFilter({ ...filter, type: v })}
-          options={[{ value: 'all', label: 'All' }, ...types.map((t) => ({ value: t, label: ACTIVITY_LABELS[t] }))]}
+          options={[{ value: 'all', label: 'All' }, ...types.map((t) => ({ value: t, label: typeLabel(t) }))]}
         />
       </div>
       {rows.length ? (
         <ul style={{ listStyle: 'none', margin: 0, padding: 0 }} data-testid="timeline">
-          {rows.slice(0, shown).map((t) => (
-            <ActivityItem key={t.id} activity={t} account={accountsById.get(t.account_id)} business={businessesById.get(t.business_id)} me={me} />
-          ))}
+          {rows.slice(0, shown).map((t) => (t.source === 'activity' ? (
+            <ActivityItem key={t.id} activity={t.record} account={accountsById.get(t.account_id)} business={businessesById.get(t.business_id)} me={me} />
+          ) : (
+            <WholesaleTimelineItem key={t.id} item={t} account={accountsById.get(t.account_id)} business={businessesById.get(t.business_id)} />
+          )))}
         </ul>
       ) : (
         <EmptyState title={activities.length ? 'Nothing matches these filters' : 'Nothing logged yet'}>
@@ -375,7 +387,12 @@ function ClientScreen({ clientId }) {
     const noNextStep = new Set(relationshipsWithoutNextStep({
       relationships: data.relationships, accounts: data.accounts, clients: [data.client], tasks: data.relationshipTasks,
     }).map((r) => r.id));
-    return { businessesById, accountsById, relsByAccount, servicesByRel, consentsByContact, linksBy, working, order, noNextStep };
+    // D1: the Order Manager's records on the timeline beside the activities, and its figures.
+    const items = [...data.activities.map(activityItem), ...wholesaleItems(data.wholesaleOrders, data.wholesaleEntries)];
+    const cardsByAccount = new Map();
+    for (const c of data.wholesaleCustomers) cardsByAccount.set(c.account_id, [...(cardsByAccount.get(c.account_id) ?? []), c]);
+    const wholesale = sumCards(data.wholesaleCustomers);
+    return { businessesById, accountsById, relsByAccount, servicesByRel, consentsByContact, linksBy, working, order, noNextStep, items, cardsByAccount, wholesale };
   }, [data]);
 
   if (!data) return <Card><p style={{ ...muted, margin: 0 }}>{loading ? 'Loading…' : ' '}</p></Card>;
@@ -388,8 +405,8 @@ function ClientScreen({ clientId }) {
       </Card>
     );
   }
-  const { client, accounts, contacts, activities, businesses } = data;
-  const { businessesById, accountsById, relsByAccount, servicesByRel, consentsByContact, linksBy, working, order, noNextStep } = maps;
+  const { client, accounts, contacts, businesses } = data;
+  const { businessesById, accountsById, relsByAccount, servicesByRel, consentsByContact, linksBy, working, order, noNextStep, items, cardsByAccount, wholesale } = maps;
   const open = (s) => setSheet(s);
   const close = () => setSheet(null);
   const capture = (type) => open({
@@ -408,7 +425,7 @@ function ClientScreen({ clientId }) {
 
   return (
     <div className="crm-client">
-      <Header client={client} onEdit={() => open({ kind: 'client', record: client })} onStatus={setStatus} />
+      <Header client={client} onEdit={() => open({ kind: 'client', record: client })} onStatus={setStatus} wholesale={wholesale} />
       {statusError ? <p role="alert" style={{ color: 'var(--danger)', margin: 0 }}>{statusError}</p> : null}
       <div className="crm-client-grid">
         <div className="crm-col">
@@ -430,6 +447,7 @@ function ClientScreen({ clientId }) {
                     open={open}
                     noNextStep={noNextStep}
                     businesses={businesses}
+                    wholesaleCards={cardsByAccount.get(a.id) ?? []}
                   />
                 ))}
               </ul>
@@ -472,7 +490,7 @@ function ClientScreen({ clientId }) {
             filter={filter}
           />
           <Timeline
-            activities={activities}
+            items={items}
             accounts={accounts}
             businesses={businesses}
             accountsById={accountsById}

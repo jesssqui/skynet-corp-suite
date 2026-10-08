@@ -20,7 +20,7 @@ function seed(ctx) {
   };
   const client = make('client', { name: 'Northwind Holdings', status: 'active' });
   const account = make('account', { client_id: client, name: 'Cloud Vape Co' });
-  return { rel: make('relationship', { account_id: account, business_id: W, kind: 'wholesale', status: 'active' }) };
+  return { rel: make('relationship', { account_id: account, business_id: W, kind: 'consulting', status: 'active' }) };
 }
 
 const noSideways = (page) => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -34,7 +34,9 @@ async function connections(page, server, label) {
   await card('backup').getByText('Always on', { exact: true }).waitFor(WAIT);
   await page.getByTestId('always-on-backup').filter({ hasText: 'can’t pause' }).waitFor(WAIT);
   assert.equal(await card('backup').getByRole('switch').count(), 0, 'no switch for backups');
-  for (const [id, pkg] of [['wom', 'D1'], ['calendar', 'C6'], ['stockroom', 'D16']]) {
+  // D1 made the Order Manager's row real (test/e2e/wholesale.e2e.test.js); the others still wait.
+  await page.locator('[data-connection="wom"][data-state="on"]').waitFor(WAIT);
+  for (const [id, pkg] of [['calendar', 'C6'], ['stockroom', 'D16']]) {
     await page.getByTestId(`placeholder-${id}`).filter({ hasText: `Not connected yet · comes with ${pkg}` }).waitFor(WAIT);
     assert.equal(await card(id).getByRole('switch').count(), 0);
   }

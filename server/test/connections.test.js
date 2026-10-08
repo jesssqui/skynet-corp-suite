@@ -67,7 +67,10 @@ test('the page lists the backup (always on), the placeholders (not connected yet
   assert.equal(backup.state, 'always_on');
   assert.equal(backup.pausable, false);
   assert.match(backup.alwaysOnReason, /can’t pause/);
-  for (const p of PLACEHOLDERS) {
+  // D1 registered the real Order Manager connection in the placeholder's slot; the others still wait.
+  const wom = row(body.connections, 'wom');
+  assert.deepEqual([wom.state, wom.pausable, wom.module], ['on', true, 'wholesale']);
+  for (const p of PLACEHOLDERS.filter((x) => x.id !== 'wom')) {
     const c = row(body.connections, p.id);
     assert.deepEqual([c.state, c.comesWith, c.pausable], ['not_connected', p.comesWith, false]);
   }
@@ -132,9 +135,9 @@ test('either person may switch; the backup and placeholders can’t be; bad requ
 
   const backup = await call('PUT', '/api/connections/backup', { paused: true });
   assert.deepEqual([backup.status, backup.body.code], [409, 'not_pausable']);
-  const wom = await call('PUT', '/api/connections/wom', { paused: true });
-  assert.deepEqual([wom.status, wom.body.code], [409, 'not_connected']);
-  assert.match(wom.body.error, /comes with D1/);
+  const calendar = await call('PUT', '/api/connections/calendar', { paused: true });
+  assert.deepEqual([calendar.status, calendar.body.code], [409, 'not_connected']);
+  assert.match(calendar.body.error, /comes with C6/);
   assert.equal((await call('PUT', '/api/connections/nope', { paused: true })).status, 404);
   assert.equal((await call('PUT', '/api/connections/conndemo', { paused: 'yes' })).status, 400);
   assert.equal((await call('PUT', '/api/connections/conndemo', {})).status, 400);

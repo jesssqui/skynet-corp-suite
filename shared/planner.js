@@ -194,6 +194,14 @@ export function isUnplannedTask(task, liveGoals, today = null) {
 }
 
 /**
+ * Relationship kinds the "no next step" rule leaves alone (D1): every account linked to an Order
+ * Manager customer gets an active wholesale relationship, and wholesale customers are followed up
+ * by their orders, not by a hand-set next step — until D3's wholesale check-ins exist, flagging them
+ * would flood Today, the Friday review and the automation.
+ */
+export const NO_NEXT_STEP_EXEMPT_KINDS = Object.freeze(['wholesale']);
+
+/**
  * "Every active relationship always has a next step": the active relationships whose account
  * and client are live, with no open task that names the relationship and has a due date.
  * Records are as a device or server read shows them (deleted ones left out): a relationship
@@ -207,6 +215,7 @@ export function relationshipsWithoutNextStep({ relationships = [], accounts = []
   const covered = new Set();
   for (const t of tasks) if (isOpenTask(t) && t.relationship_id && t.due_date) covered.add(t.relationship_id);
   return relationships.filter((r) => r.status === 'active'
+    && !NO_NEXT_STEP_EXEMPT_KINDS.includes(r.kind)
     && accountClient.has(r.account_id)
     && clientIds.has(accountClient.get(r.account_id))
     && !covered.has(r.id));

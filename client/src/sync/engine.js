@@ -80,7 +80,8 @@ function definitionsFrom(info) {
   for (const e of info?.entities ?? []) {
     const fields = {};
     for (const [name, f] of Object.entries(e.fields ?? {})) fields[name] = { name, ...f };
-    map.set(e.entity, { entity: e.entity, module: e.module, ops: new Set(e.ops), appendOnly: Boolean(e.appendOnly), fields });
+    // readOnly (D1: the Order Manager's records): written by the server only — this device can do none of the ops.
+    map.set(e.entity, { entity: e.entity, module: e.module, ops: new Set(e.readOnly ? [] : e.ops), appendOnly: Boolean(e.appendOnly), readOnly: Boolean(e.readOnly), fields });
   }
   return map;
 }

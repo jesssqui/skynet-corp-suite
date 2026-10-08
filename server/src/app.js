@@ -53,6 +53,21 @@ export async function createApp({ config, db, log, modules = registeredModules, 
       },
     },
   }));
+  // Signed server-to-server routes (D1: the Order Manager's POST /api/wom/events). Each is one exact
+  // method + path that authenticates every request itself (an HMAC signature over the raw body), so
+  // it is mounted before the Origin/JSON guard and the JSON parser — and nothing else is: any other
+  // method or path under it (e.g. GET /api/wom/events, POST /api/wom/events/x) still goes through
+  // the guard like every API request. app.test.js / wholesale.test.js prove the exemption is that narrow.
+  for (const mod of modules) {
+    for (const route of mod.signedRoutes ?? []) {
+      const method = String(route.method).toLowerCase();
+      if (!['post', 'put'].includes(method) || !/^\/api\/[a-z0-9/_-]+$/.test(route.path ?? '')) {
+        throw new Error(`${mod.name}: a signed route needs POST/PUT and an exact /api/... path`);
+      }
+      const modCtx = { ...ctx, log: log.child(mod.name) };
+      app[method](route.path, ...route.handlers(modCtx, ctx.services[mod.name]));
+    }
+  }
   // Origin/CSRF check, JSON-only bodies, and the session (req.auth) for every API request.
   app.use('/api', auth.guard);
   // A module may take bigger JSON bodies on some paths (`bodyLimits: { '/import': '8mb' }`): signed in

@@ -8,6 +8,7 @@
 // built once per such change. So saving a note re-reads only activities, and opening a client
 // after the list reuses what the list already read.
 import { useSyncData } from '../../sync/index.js';
+import { lastOrderByClient, mergeLastActivity } from '../wholesale/logic.js';
 
 // What each CRM type belongs to (its parent chain), for when the engine's definitions aren't here yet.
 const BELONGS_TO = {
@@ -27,6 +28,10 @@ const BELONGS_TO = {
   // C4b: a goal belongs to one of our businesses; a workday to nothing.
   goal: ['business'],
   workday: [],
+  // D1: the Order Manager's records belong to the account their customer is linked to.
+  wholesale_customer: ['account', 'client'],
+  wholesale_order: ['account', 'client'],
+  wholesale_entry: ['account', 'client'],
 };
 
 const caches = new WeakMap(); // engine -> { entries: Map<entity, Promise<Entry>>, off }
@@ -115,8 +120,11 @@ export async function cachedList(engine, entity) {
   return (await cachedLists(engine, [entity]))[0];
 }
 
-const LIST_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'activity'];
-const PAGE_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'service', 'consent', 'activity', 'link', 'task'];
+// D1: the Order Manager's orders count as activity on the list ("last activity"); the client page
+// shows its orders, payments, returns and refunds on the timeline and each account's figures.
+const LIST_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'activity', 'wholesale_order'];
+const PAGE_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'service', 'consent', 'activity', 'link', 'task',
+  'wholesale_customer', 'wholesale_order', 'wholesale_entry'];
 
 /** Last activity per client: Map<client_id, at>. */
 export function lastActivityByClient(activities) {
@@ -131,7 +139,7 @@ export function lastActivityByClient(activities) {
 /** Everything the client list needs (every client; the page builds its index once per change). */
 export function useClientListData() {
   const { data, loading, error } = useSyncData(async (e) => {
-    const [businesses, clients, accounts, contacts, relationships, activities] = await cachedLists(e, LIST_ENTITIES);
+    const [businesses, clients, accounts, contacts, relationships, activities, wholesaleOrders] = await cachedLists(e, LIST_ENTITIES);
     // Read what a client page needs too, in the background, so opening one from the list is quick.
     setTimeout(() => !e.isStopped() && cachedLists(e, PAGE_ENTITIES).catch(() => {}), 250);
     return {
@@ -140,7 +148,8 @@ export function useClientListData() {
       accounts: accounts.records,
       contacts: contacts.records,
       relationships: relationships.records,
-      lastActivity: lastActivityOf(activities),
+      // Activities and (D1) Order Manager orders, whichever is later.
+      lastActivity: mergeLastActivity(lastActivityOf(activities), wholesaleOrders.derive('lastOrderByClient', lastOrderByClient)),
     };
   }, [], { entities: LIST_ENTITIES });
   return { data: data ?? null, loading, error };
@@ -159,7 +168,8 @@ const byName = (a, b) => String(a.name).localeCompare(String(b.name)) || (a.id <
  */
 export function useClientPageData(clientId) {
   const { data, loading, error } = useSyncData(async (e) => {
-    const [businesses, clients, accounts, contacts, relationships, services, consents, activities, links, tasks] = await cachedLists(e, PAGE_ENTITIES);
+    const [businesses, clients, accounts, contacts, relationships, services, consents, activities, links, tasks,
+      wholesaleCustomers, wholesaleOrders, wholesaleEntries] = await cachedLists(e, PAGE_ENTITIES);
     const client = clients.byId().get(clientId) ?? null;
     if (!client) return { client: null };
     const myAccounts = [...accounts.where('client_id', clientId)].sort(byName);
@@ -180,6 +190,11 @@ export function useClientPageData(clientId) {
       // "No next step" flag counts those, whoever's client they were filed under).
       tasks: tasks.where('client_id', clientId),
       relationshipTasks: myRelationships.flatMap((r) => tasks.where('relationship_id', r.id)),
+      // D1: the Order Manager's records under this client's accounts (by account, so a record whose
+      // client_id lags a moved account still shows where its account is).
+      wholesaleCustomers: myAccounts.flatMap((a) => wholesaleCustomers.where('account_id', a.id)),
+      wholesaleOrders: myAccounts.flatMap((a) => wholesaleOrders.where('account_id', a.id)),
+      wholesaleEntries: myAccounts.flatMap((a) => wholesaleEntries.where('account_id', a.id)),
     };
   }, [clientId], { entities: PAGE_ENTITIES });
   return { data: data ?? null, loading, error };

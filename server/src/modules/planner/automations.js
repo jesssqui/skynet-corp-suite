@@ -48,13 +48,17 @@ function momentText(date) {
  * activity, or when they were made), relationships with no next step (C4a's rule), and this
  * week's goals done.
  */
-export function reviewNumbers({ crm, planner }, today) {
+export function reviewNumbers({ crm, planner, services = null }, today) {
   const rels = crm.liveRelationships();
   const accounts = [...new Map(rels.map((r) => [r.account_id, { id: r.account_id, client_id: r.client_id }])).values()];
   const clients = [...new Set(rels.map((r) => r.client_id))].map((id) => ({ id }));
   const cutoff = addDays(today, -QUIET_DAYS);
+  // D1: an Order Manager order counts as activity (read through the wholesale service, like the devices do).
+  const lastOrders = services?.wholesale?.lastOrderAtByClient?.() ?? new Map();
   const quiet = crm.activeClientsWithLastActivity().filter((c) => {
-    const since = dayOf(c.last_activity_at) ?? dayOf(c.created_at);
+    const order = lastOrders.get(c.id) ?? null;
+    const latest = c.last_activity_at && (!order || c.last_activity_at > order) ? c.last_activity_at : order;
+    const since = dayOf(latest) ?? dayOf(c.created_at);
     return since === null || since <= cutoff;
   });
   const goals = planner.goals('week', weekStart(today));
@@ -93,7 +97,7 @@ export function relationshipsToChase({ crm, planner }) {
 }
 
 /** Register both with the automations framework. `planner` is this module's service. */
-export function registerPlannerAutomations({ automations, crm, planner }) {
+export function registerPlannerAutomations({ automations, crm, planner, services = null }) {
   automations.register({
     id: 'friday-review',
     name: 'Friday review list',
@@ -104,7 +108,7 @@ export function registerPlannerAutomations({ automations, crm, planner }) {
     defaults: { enabled: true, alert: true },
     alertLink: '/plan/review',
     run(_ctx, { now, today, period, trigger, made, create, update }) {
-      const numbers = () => reviewNumbers({ crm, planner }, today);
+      const numbers = () => reviewNumbers({ crm, planner, services }, today);
       const notesFor = (lines) => [
         `Prepared by the suite on ${momentText(now)} for the two of you (about ${REVIEW_MINUTES} minutes).`,
         'Open it in the suite: Plan → Friday review (/plan/review).',

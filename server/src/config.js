@@ -89,6 +89,16 @@ export function loadConfig(env = process.env) {
       // scrypt cost (a power of two). Stored with each hash, so raising it later only affects new passwords.
       scryptN: scryptN(env.AUTH_SCRYPT_N),
     },
+    wholesale: {
+      // D1: the key that encrypts the Order Manager connection's shared secret in the database. A file
+      // in the data folder (the Docker volume), never in the database — so backup files (and their
+      // off-machine copies) hold the secret only encrypted, without the key. Made on first use.
+      keyFile: path.resolve(env.WOM_KEY_FILE || path.join(dataDir, 'wom-secret.key')),
+      // The address the Order Manager should be given (shown on the Connections page). The Order
+      // Manager runs in its own container on the same Mac; Docker Desktop's host.docker.internal
+      // reaches the suite's port published on the Mac's 127.0.0.1 (DEPLOY.md, "Order Manager connection").
+      connectUrl: env.WOM_CONNECT_URL || `http://host.docker.internal:${env.SUITE_PORT || 3100}`,
+    },
     automations: {
       // The minute scheduler (C8): on by default in production only, like the backup schedule.
       // "Run now" on the Automations page works either way.

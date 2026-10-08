@@ -10,6 +10,7 @@ import { PageHeader, Card, Badge, Notice, Switch, Button, EmptyState } from '../
 import { formatDateTime } from '../../ui/format.js';
 import { actorLabel } from '../crm/logic.js';
 import SystemTabs from '../health/SystemTabs.jsx';
+import { connectionPanel } from './panels.js';
 
 const STATE = {
   on: { tone: 'ok', label: 'On' },
@@ -36,9 +37,10 @@ function queueText(c) {
   return c.queueSize === 0 ? 'Nothing waiting' : `${c.queueSize} waiting`;
 }
 
-function ConnectionCard({ c, me, offline, onSwitch, busy }) {
+function ConnectionCard({ c, me, offline, onSwitch, busy, onChanged }) {
   const st = STATE[c.state] ?? STATE.on;
   const placeholder = c.state === 'not_connected';
+  const Panel = placeholder ? null : connectionPanel(c.id);
   return (
     <Card style={{ display: 'grid', gap: 'var(--space-3)' }}>
       <div data-connection={c.id} data-state={c.state} style={{ display: 'grid', gap: 'var(--space-3)' }}>
@@ -75,6 +77,7 @@ function ConnectionCard({ c, me, offline, onSwitch, busy }) {
           </div>
         )}
         {c.detail ? <p style={{ ...muted, margin: 0 }}>{c.detail}</p> : null}
+        {Panel ? <Panel connection={c} offline={offline} onChanged={onChanged} /> : null}
         {c.state === 'always_on' ? <p style={{ ...muted, margin: 0 }} data-testid={`always-on-${c.id}`}>{c.alwaysOnReason}</p> : null}
         {c.state === 'paused' ? (
           <Notice tone="warn">
@@ -126,7 +129,7 @@ export default function ConnectionsPage() {
       {problem ? <Notice tone="danger" style={{ marginBottom: 'var(--space-4)' }}>{problem}</Notice> : null}
       {!data && loading ? <EmptyState title="Loading…" /> : null}
       <div style={{ display: 'grid', gap: 'var(--space-3)' }} data-testid="connections">
-        {list.map((c) => <ConnectionCard key={c.id} c={c} me={me} offline={offline} busy={busy === c.id} onSwitch={onSwitch} />)}
+        {list.map((c) => <ConnectionCard key={c.id} c={c} me={me} offline={offline} busy={busy === c.id} onSwitch={onSwitch} onChanged={reload} />)}
       </div>
       {data ? (
         <p style={{ ...muted, marginTop: 'var(--space-4)' }}>

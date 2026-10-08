@@ -51,6 +51,9 @@ if (config.automations.scheduled) {
   log.info('automation scheduler is off (AUTOMATIONS_ENABLED); Run now on the Automations page still works');
 }
 
+// Wholesale (D1): once a minute, pick up Order Manager links made elsewhere (D2, a device).
+const stopWholesale = ctx.services.wholesale.startReconciler();
+
 let shuttingDown = false;
 function shutdown(signal) {
   if (shuttingDown) return;
@@ -58,6 +61,7 @@ function shutdown(signal) {
   log.info(`${signal} received, shutting down`);
   stopBackups();
   stopAutomations();
+  stopWholesale();
   server.close(() => {
     db.close(); // checkpoints the WAL into the main file
     stopHeartbeat();

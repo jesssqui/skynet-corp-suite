@@ -86,7 +86,7 @@ test('a call logged with a next step clears the relationship’s flag, on both d
   const m = mac.engine;
   const client = await m.create('client', { name: 'Northwind Holdings', status: 'active' });
   const account = await m.create('account', { client_id: client, name: 'Cloud Vape Co' });
-  const rel = await m.create('relationship', { account_id: account, business_id: W, kind: 'wholesale', status: 'active' });
+  const rel = await m.create('relationship', { account_id: account, business_id: W, kind: 'consulting', status: 'active' });
   const flagged = async (dev) => {
     const lists = await dev.listMany(['client', 'account', 'relationship', 'task']);
     return relationshipsWithoutNextStep({ clients: lists.client, accounts: lists.account, relationships: lists.relationship, tasks: lists.task }).map((r) => r.id);
