@@ -1357,7 +1357,16 @@ owner), `client_id`, `account_id`, and the account's wholesale relationship (an 
 by the suite: when their reason is gone they are **finished** (`done_at`) with a line in their notes saying why
 ("… — finished by the suite on Oct 17, 2026."). Reads: the holding area (own tables), `crm.liveAccount`,
 `crm.accountRelationships`, `crm.accountContacts` (D3: an account's contacts, then its client's with no account),
-`crm.getBusiness`, `planner.taskState` (now with `notes`, `doneAt`).
+`crm.getBusiness`, `planner.taskState` (now with `notes`, `doneAt`, `clientId`, `accountId`).
+- **Who finished it decides** (review fix): what the suite finished is remembered (`automations_made` key
+  `suite-done:<task id>:<done_at>`). When the reason comes back (a payment removed — a bounced cheque —, the order that
+  ended a quiet spell cancelled, a customer linked again) a task **the suite** finished is **reopened** (done_at
+  cleared, due today, a "— reopened by the suite on …" line); one **a person** finished or deleted is never reopened
+  or made again for that key, and runs count it ("N … already handled by a person"). Titles and notes the suite wrote
+  are remembered too (`wrote:<task id>:<field>:<hash>`): the suite only replaces a title (or a ship task's notes) that is
+  still its own — a person's rename is never put back. **Unlinked** customers: their open check-ins and reminders are
+  finished ("Unlinked from the Order Manager customer"); a customer **deleted** in the Order Manager: "Deleted in the
+  Order Manager".
 - **The rhythm** (`orderRhythm`, one rule for the check-in and the flag): counting orders (active, not deleted;
   history-only count), one per ordering **day**. A **regular** has ≥ 4 ordering days and a usual gap ≤ 90 days; the
   usual gap = the **median of the last 8 gaps** between ordering days (rounded). Quiet when the days since the last
@@ -1366,38 +1375,52 @@ by the suite: when their reason is gone they are **finished** (`done_at`) with a
 - **wholesale-check-in** (every day 07:40; **on**, **silent**): each quiet regular whose client is **active** (closed =
   no next steps) and not deleted in the Order Manager gets "Check in with <account>: no order in N days (usually every
   M)" (+ the customer's name when an account has several linked) with the rhythm and last order in its notes. Key
-  `<customer uid>:<last counting order uid>` — **once per quiet spell** (a finished or deleted check-in isn't made
+  `<customer uid>:<last counting order uid>` — **once per quiet spell** (one a person finished or deleted isn't made
   again for that spell). A newer last order means a new spell: a check-in still open for an older key is finished
-  ("Ordered again (order #N on …)"). At most **10 new a run** (most past their quiet day first; the rest come on the
+  ("Ordered again (order #N on …)"); if that order is then cancelled or deleted, the spell is back and the suite
+  reopens the check-in it finished. At most **10 new a run** (most past their quiet day first; the rest come on the
   next days). Archived wholesale business: no new ones. No events involved, so backfill events can't trigger it.
-- **wholesale-balances** (every day 07:45; **on**, **alert**): **what "owing" means** (`owingByOrder`, the Order
-  Manager's A8 balance — `PAID_ROWS_SQL`): per counting order (active, not deleted; history-only included, as the Order
-  Manager's balances do) `total_cents − live payments on it − store credit applied on it`. **Refunds and credit notes
-  are not taken off**: a credit note is credit held until applied (then it is "store credit applied" — taking off both
-  would count it twice) and a refund is money already given back; the email mentions store credit the customer holds
-  (`credit_cents` of the card). Money not tied to a counting order goes to the **oldest owing orders first** (the Order
-  Manager's aging): payments on account (no order, or an order not held), an overpaid order's extra, and what was paid on
-  a cancelled/deleted order minus what was given back on it (never below 0). Cancelled and deleted orders never owe.
-  **Overdue** = owing on an order whose `order_date` is **more than 30 days** before today. Per customer with overdue
+- **wholesale-balances** (every day 07:45; **on**, **alert**): **what "owing" means** (`owingByOrder`; review fix:
+  exactly the Order Manager's **Balances page**, `routes/customers.js GET /balances` + aging, so a reminder never says
+  something is over 30 days when that page says it isn't): balance = Σ totals of counting orders (active, not deleted;
+  history-only included) − everything paid (`PAID_ROWS_SQL`): **every** live payment of the customer (on any order,
+  cancelled ones included, or on account) + store credit applied (any order) − what was given back (refunds + credit
+  notes) on a cancelled, not-deleted order, never more than was paid there (payments + credit applied there). The aging
+  pays the counting orders **oldest first** (order date, then placed time) with that whole figure — a payment recorded
+  on a newer order still pays the oldest first (A Aug 1 $100 unpaid, B Oct 1 $100 paid on B → $100 current, nothing over
+  30, as the Order Manager shows). **Refunds and credit notes on counting orders are not taken off** (a credit note is
+  credit held until applied — then it is "store credit applied" — and a refund is money given back); payments moved to
+  store credit by a delete are removed payments (credit held, not paid) until a restore records them again; the email
+  mentions store credit the customer holds (`credit_cents` of the card). Cancelled and deleted orders never owe.
+  `balance_cents` (may be negative: credit) = the Order Manager's `GET /api/payments/customer/:id/balance`;
+  `wholesale.owingOf(uid)` gives it. `scripts/wom-e2e.mjs` step 6 checks both the balance and the over-30 figure against
+  the real Order Manager. **Overdue** = owing on an order whose `order_date` is **more than 30 days** before today
+  (the aging's `days > 30`). Per customer with overdue
   orders: one task "Balance owing over 30 days: <account>, $X (N orders)" whose notes hold a **drafted plain-text
   email** (To: the account's first contact with an email, else the Order Manager's email, else a "no email on file"
   line; subject; each overdue order's number, date, amount owing and total; the total; store credit; signed with the
   wholesale business's name) **above `NOTES_MARK`**; what a person writes below that line is kept. Key
-  `<customer uid>:<oldest overdue order uid>`. While a task is open it is **updated** (title, the draft above the line)
-  instead of making a second — only when the money changed (no daily churn, no daily alert) — and filed under the
-  current key too (`remember`); a person who deletes the line takes the notes over (only the title is updated). When
-  nothing over 30 days is owed any more (paid, or credited by the Order Manager) the open task is **finished**
-  ("Nothing owing over 30 days any more"). A task finished or deleted by a person isn't made again while the same
-  order is the oldest overdue one; a different oldest overdue order makes a new one. At most **10 new a run**
-  (biggest first). Closed clients still get them (money is owed either way).
+  `<customer uid>:<oldest overdue order uid>`. While a task is open it is **updated** (the draft above the line, and the
+  title while it is still the suite's) instead of making a second — only when the money changed (no daily churn, no
+  daily alert) — and filed under the current key too (`remember`); a person who deletes the line takes the notes over.
+  When nothing over 30 days is owed any more the open task is **finished** ("Nothing owing over 30 days any more"); owed
+  again later (a payment removed), the suite **reopens** it ("Owing again: $X over 30 days"). A task a person finished
+  or deleted isn't made again while the same order is the oldest overdue one; a different oldest overdue order makes a
+  new one. At most **10 new a run** (biggest first). Closed clients still get them (money is owed either way).
 - **wholesale-ready-to-ship** (event; **on**, **silent**): listens to `order.packed`, `order.shipped`,
-  `order.cancelled`, `order.deleted`, `order.restored`, run key = the event's key (a re-delivered or replayed event is a
-  no-op; the receiver doesn't emit duplicates either). `accept`: never for `backfill: true`; for an order **ready to
-  ship** (active, not deleted, `packing.state === 'packed'`) only when the customer is linked; otherwise only when this
-  automation made a task for that order (to finish it). Ready + no open task for the order (`made(orderUid)`) → "Ship
-  order #N for <account>" (packed by/when, reference, total, items in notes). Not ready (shipped, cancelled, deleted,
-  unpacked, put back) → the open one is finished with the reason. Packed again after an unpack, unshipped, or restored
-  packed → a new task. **Unlinked customers get nothing, and linking one later replays nothing** (only new events
+  `order.cancelled`, `order.deleted`, `order.restored` and (review fix) `order.changed` — an edit of a packed order's
+  lines or customer, or a reopen of a packed-then-cancelled one, makes it `check_again` in the Order Manager and only
+  `order.changed` says so. Run key = the event's key (a re-delivered or replayed event is a no-op; the receiver doesn't
+  emit duplicates either). **Decided on the held order as it is now** (`currentOrder`, review fix): a request's events
+  are all applied before any is emitted, so a catch-up batch with "packed" then "shipped" (or cancelled) makes nothing.
+  `accept`: never for `backfill: true`; for an order **ready to ship** now (active, not deleted, `packing.state ===
+  'packed'`) only when its customer is linked; otherwise only when this automation made a task for that order (to
+  finish or refresh it) — so edits of never-packed orders leave no run rows. Ready + no open task (`made(orderUid)`) →
+  "Ship order #N for <account>" (packed by/when, reference, total, items in notes; no run date, so they change only with
+  the order). Ready + open → brought up to date: account, client and relationship follow the order's customer, title
+  and notes too while they are still the suite's; a customer no longer linked finishes it. Not ready (shipped,
+  cancelled, deleted, unpacked, put back, "Changed in the Order Manager — check again") → the open one is finished with
+  the reason. Packed again after an unpack or a check-again, unshipped, or restored packed → a new task. **Unlinked customers get nothing, and linking one later replays nothing** (only new events
   count). Run now does nothing (it runs on events).
 - **The "Quiet regular" flag**: `wholesale_customer` cards carry `usual_gap_days` and `quiet_from` (nullable; null =
   not a regular or deleted in the Order Manager), computed in `desiredCustomer` by `orderRhythm`. `quiet_from` is a
@@ -1405,7 +1428,8 @@ by the suite: when their reason is gone they are **finished** (`done_at`) with a
   no daily server refresh is needed; a new or changed order dirties the customer and re-projects the card (a new
   `quiet_from`), so the flag goes away. Shown on the client list row (chip, `useClientListData().quietFrom` →
   `buildClientIndex` → `row.quietFrom`; the list now also reads `wholesale_customer`), the client header and the
-  account's wholesale card ("Usually orders every 14 days; none for 32"). **Existing cards**: at start
+  account's wholesale card ("Usually orders every 14 days; none for 32") — **never for a closed client** (review fix:
+  as the check-ins skip them). **Existing cards**: at start
   `checkCardVersion()` marks every held customer dirty once when `wholesale_status.card_version` < `CARD_VERSION` (2),
   and the start's `reconcileAll` projects them through `applyLocal`, so devices pull the new fields (sync rule 7). Raise
   `CARD_VERSION` whenever a package adds card fields.
@@ -1449,8 +1473,9 @@ by the suite: when their reason is gone they are **finished** (`done_at`) with a
 - **D3 (wholesale automations)**: done — see "Wholesale automations". Tasks only (a drafted email in a task's notes,
   never sent); one rhythm rule (`orderRhythm`) for the check-in and the "Quiet regular" flag, stored on the card as a
   date (`quiet_from`) so devices decide "today" themselves; "owing" is the Order Manager's own balance (credit notes
-  and refunds not taken off); ship tasks are finished, never deleted; backfill events and unlinked customers trigger
-  nothing. D2: linking customers in bulk makes them eligible for check-ins/balances on the next daily run (10 new a
+  and refunds not taken off) with the Balances page's oldest-first aging; ship tasks are finished, never deleted, and
+  decided on the held order as it is now; backfill events and unlinked customers trigger nothing; the suite reopens
+  only tasks it finished itself and never overwrites a person's title. D2: linking customers in bulk makes them eligible for check-ins/balances on the next daily run (10 new a
   day each). D5: build on `figures.js` and `automations.js`.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
