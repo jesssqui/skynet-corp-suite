@@ -294,6 +294,25 @@ test('the Done when: the same sample events replayed twice give one timeline ent
   assert.equal(live('wholesale_customers')[0].spend_cents, 12458);
 });
 
+test('the Order Manager’s real events (captured from it by scripts/wom-e2e.mjs) replayed twice: one entry each', async (t) => {
+  const { post, live, client, local } = await setup(t);
+  const { events } = JSON.parse(fs.readFileSync(new URL('./fixtures/wom-captured-events.json', import.meta.url), 'utf8'));
+  const customerUid = events.find((e) => e.name === 'customer.created').data.customer.customer_uid;
+  const { accountId } = client();
+  local('owner', 'link', { account_id: accountId, app: 'wom', external_id: customerUid, matched_by: 'approved' });
+  const orders = new Set(events.filter((e) => e.data.order?.order_uid).map((e) => e.data.order.order_uid));
+  const money = new Set(events.flatMap((e) => [e.data.payment?.payment_uid, e.data.refund?.refund_uid, e.data.return?.return_uid, e.data.credit_note?.credit_note_uid]).filter(Boolean));
+  assert.ok(statuses(await post(events)).every((x) => x === 'applied'));
+  assert.ok(statuses(await post(events)).every((x) => x === 'duplicate'));
+  assert.equal(live('wholesale_orders').length, orders.size);
+  assert.equal(live('wholesale_entries').length, money.size);
+  assert.deepEqual(live('wholesale_orders').map((o) => o.status).sort(), ['active', 'active', 'active', 'active', 'cancelled']);
+  const [card] = live('wholesale_customers');
+  assert.equal(card.name, 'Lefty’s Vape Shop');
+  // The figures the cross-app run checked against the Order Manager's own: spend 133.50 then +5.00, 4 counting orders.
+  assert.deepEqual([card.spend_cents, card.order_count], [13850, 4]);
+});
+
 test('events apply in the order received (not by time); a refused one doesn’t stop the rest', async (t) => {
   const { post, live, client, local } = await setup(t);
   const om = womKit();
