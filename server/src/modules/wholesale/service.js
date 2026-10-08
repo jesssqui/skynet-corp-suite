@@ -26,16 +26,19 @@ import {
   eventProblem, bodyProblem, isoTime, isDate, orderFigures, itemsSummary, ORDER_SNAPSHOT_EVENTS, ORDER_CREATION_EVENTS,
 } from './events.js';
 import { customerFigures, orderMoney } from './figures.js';
-import { loadKey, encryptSecret, decryptSecret, newSecret, signatureProblem } from './secret.js';
+import { loadKey, encryptSecret, decryptSecret, newSecret, signatureProblem, headerProblem } from './secret.js';
 
 export const RECEIVER_PATH = '/api/wom/events';
 export const CONNECTION_ID = 'wom';
 const APP = 'wom';
 const RECONCILE_EVERY_MS = 60 * 1000;
 const PROJECT_CHUNK = 200;
+const RECONCILE_CHUNK = 50; // customers per transaction in reconcileAll (it yields between them)
+const REFUSAL_THROTTLE_MS = 60 * 1000;
 const MONEY_KEY = { payment: 'payment_uid', refund: 'refund_uid', return: 'return_uid', credit_note: 'credit_note_uid' };
 const MONEY_EVENT = { 'payment.recorded': ['payment', 'payment'], 'refund.issued': ['refund', 'refund'], 'return.received': ['return', 'return'], 'credit_note.issued': ['credit_note', 'credit_note'] };
 
+const yieldNow = () => new Promise((r) => setImmediate(r));
 const clip = (s, max) => (s === null || s === undefined ? null : (String(s).length > max ? `${String(s).slice(0, max - 1)}…` : String(s)));
 const json = (v) => (v === undefined ? null : JSON.stringify(v));
 const parse = (s) => {
@@ -51,7 +54,9 @@ export function createWholesaleService(ctx) {
   if (!sync || !crm || !connections) throw new Error('wholesale needs sync, connections and crm registered before it (modules/index.js)');
   const now = () => nowIso(new Date(clock()));
 
-  for (const def of WHOLESALE_ENTITIES) sync.registerEntity({ module: 'wholesale', ...def, check: checkServerOnly });
+  // readOnly: devices get no add/edit/delete for them (/info) and the sync module refuses their steps;
+  // checkServerOnly says the same in plain English should the option ever be dropped.
+  for (const def of WHOLESALE_ENTITIES) sync.registerEntity({ module: 'wholesale', ...def, readOnly: true, check: checkServerOnly });
   const ENTITY = Object.fromEntries(WHOLESALE_ENTITIES.map((d) => [d.entity, d]));
 
   const q = {
@@ -98,13 +103,13 @@ export function createWholesaleService(ctx) {
 
     money: db.prepare('SELECT * FROM wholesale_held_money WHERE uid = ?'),
     upsertMoney: db.prepare(`INSERT INTO wholesale_held_money (uid, kind, sub_kind, customer_uid, order_uid, amount_cents, subtotal_cents,
-        removed, removed_reason, moved_to, at, snapshot, updated_at, dirty)
-      VALUES (@uid, @kind, @sub_kind, @customer_uid, @order_uid, @amount, @subtotal, @removed, @removed_reason, @moved_to, @at_event, @snapshot, @at, 1)
-      ON CONFLICT (uid) DO UPDATE SET kind = excluded.kind, sub_kind = excluded.sub_kind, customer_uid = excluded.customer_uid,
+        removed, removed_reason, moved_to, at, snapshot, updated_at, dirty, return_uid)
+      VALUES (@uid, @kind, @sub_kind, @customer_uid, @order_uid, @amount, @subtotal, @removed, @removed_reason, @moved_to, @at_event, @snapshot, @at, 1, @return_uid)
+      ON CONFLICT (uid) DO UPDATE SET kind = excluded.kind, sub_kind = excluded.sub_kind, customer_uid = excluded.customer_uid, return_uid = excluded.return_uid,
         order_uid = excluded.order_uid, amount_cents = excluded.amount_cents, subtotal_cents = excluded.subtotal_cents,
         removed = excluded.removed, removed_reason = excluded.removed_reason, moved_to = excluded.moved_to, at = excluded.at,
         snapshot = excluded.snapshot, updated_at = excluded.updated_at, dirty = 1`),
-    moneyOf: db.prepare('SELECT kind, sub_kind, amount_cents, subtotal_cents, removed, moved_to, order_uid FROM wholesale_held_money WHERE customer_uid = ?'),
+    moneyOf: db.prepare('SELECT uid, kind, sub_kind, amount_cents, subtotal_cents, removed, moved_to, order_uid, return_uid FROM wholesale_held_money WHERE customer_uid = ?'),
     moneyOnOrder: db.prepare('SELECT kind, sub_kind, amount_cents, subtotal_cents, removed, moved_to FROM wholesale_held_money WHERE order_uid = ?'),
     moneyDone: db.prepare('UPDATE wholesale_held_money SET record_id = ?, dirty = 0 WHERE uid = ?'),
 
@@ -123,6 +128,17 @@ export function createWholesaleService(ctx) {
         (SELECT count(*) FROM wholesale_held_customers WHERE link_problem IS NOT NULL) AS problems`),
   };
   const recordRow = Object.fromEntries(WHOLESALE_ENTITIES.map((d) => [d.entity, db.prepare(`SELECT * FROM ${d.table} WHERE id = ?`)]));
+  // Each synced record names its Order Manager record by uid: the one to adopt (and any extras) after a restore.
+  const UID_FIELD = { wholesale_order: 'order_uid', wholesale_entry: 'uid', wholesale_customer: 'customer_uid' };
+  const liveByUid = Object.fromEntries(WHOLESALE_ENTITIES.map((d) => [d.entity,
+    db.prepare(`SELECT * FROM ${d.table} WHERE ${UID_FIELD[d.entity]} = ? AND deleted_at IS NULL ORDER BY id`)]));
+  const markAllDirty = [
+    db.prepare('UPDATE wholesale_held_customers SET dirty = 1'),
+    db.prepare('UPDATE wholesale_held_orders SET dirty = 1'),
+    db.prepare('UPDATE wholesale_held_money SET dirty = 1'),
+  ];
+  const lastOrders = db.prepare(`SELECT client_id, max(at) AS at FROM wholesale_orders
+    WHERE deleted_at IS NULL AND client_id IS NOT NULL GROUP BY client_id`);
 
   // ---- receiver status (for the Connections row) ------------------------------------------------
   function status() {
@@ -132,11 +148,27 @@ export function createWholesaleService(ctx) {
     for (const [k, v] of Object.entries(values)) q.setStatus.run(k, v === null || v === undefined ? null : String(v));
   };
 
-  /** A request turned away (bad signature, stale, malformed, not set up): counted and shown, never the secret. */
+  /**
+   * A request turned away (bad signature, stale, malformed, not set up): counted and shown, never the secret.
+   * Throttled: the route has no session, so anyone on the tailnet could send bad requests — they are
+   * counted in memory, written to wholesale_status and logged at most once a minute.
+   */
+  const refusals = { count: 0, message: null, at: null, savedAt: 0, loggedAt: 0, sinceLog: 0 };
   function noteRefusedRequest(message) {
-    const st = status();
-    setStatus({ last_error: message, last_error_at: now(), refused_requests: Number(st.refused_requests ?? 0) + 1 });
-    log?.warn?.(`refused a request to ${RECEIVER_PATH}: ${message}`);
+    const at = clock();
+    refusals.count += 1;
+    refusals.sinceLog += 1;
+    refusals.message = message;
+    refusals.at = nowIso(new Date(at));
+    if (at - refusals.savedAt >= REFUSAL_THROTTLE_MS) {
+      refusals.savedAt = at;
+      setStatus({ last_error: message, last_error_at: refusals.at, refused_requests: refusals.count });
+    }
+    if (at - refusals.loggedAt >= REFUSAL_THROTTLE_MS) {
+      log?.warn?.(`refused ${refusals.sinceLog} request${refusals.sinceLog === 1 ? '' : 's'} to ${RECEIVER_PATH} (latest: ${message})`);
+      refusals.loggedAt = at;
+      refusals.sinceLog = 0;
+    }
   }
 
   // ---- the shared secret ------------------------------------------------------------------------
@@ -201,16 +233,14 @@ export function createWholesaleService(ctx) {
     parts.push(`${w.linked} customer${w.linked === 1 ? '' : 's'} linked`);
     if (st.refused_events) parts.push(`${st.refused_events} event${st.refused_events === '1' ? '' : 's'} refused (shown in the Order Manager’s Settings)`);
     if (w.problems) parts.push(`${w.problems} linked to more than one account: undo one link`);
-    const restoredAt = sync.info().lastRestoreAt;
-    if (restoredAt && !(st.last_backfill_at > restoredAt)) {
-      parts.push('The suite was restored from a backup: in the Order Manager, Settings → Suite connection, use “Forget everything” '
-        + 'then “Send existing customers and orders” so nothing it sent since is missing');
-    }
-    const since = Number(st.refused_requests ?? 0);
+    // The latest refusal: from memory when newer than what was last written (writes are throttled).
+    const fresh = refusals.at && !(st.last_error_at > refusals.at);
+    const lastError = fresh ? refusals.message : st.last_error;
+    const since = fresh ? refusals.count : Number(st.refused_requests ?? 0);
     return {
       lastSuccessAt: st.last_ok_at ?? null,
-      lastErrorAt: st.last_error_at ?? null,
-      lastError: st.last_error ? `${st.last_error}${since ? ` (${since} refused since the last good request)` : ''}` : null,
+      lastErrorAt: (fresh ? refusals.at : st.last_error_at) ?? null,
+      lastError: lastError ? `${lastError}${since ? ` (${since} refused since the last good request)` : ''}` : null,
       queueSize,
       queueLabel: queueSize || w.customers
         ? `${queueSize} record${queueSize === 1 ? '' : 's'} from ${w.customers} customer${w.customers === 1 ? '' : 's'} waiting for a client`
@@ -318,6 +348,8 @@ export function createWholesaleService(ctx) {
     const snap = cut && prev?.snapshot ? { ...parse(prev.snapshot), ...s } : s;
     const amount = isInt(snap.amount_cents) ? snap.amount_cents : (prev?.amount_cents ?? 0);
     let subtotal = null;
+    // A10 (Order Manager change): a return carries its own subtotal/tax/shipping; older ones don't (null).
+    if (kind === 'return') subtotal = isInt(snap.subtotal_cents) ? snap.subtotal_cents : null;
     if (kind === 'credit_note') {
       subtotal = isInt(snap.subtotal_cents) ? snap.subtotal_cents
         : amount - (isInt(snap.tax_cents) ? snap.tax_cents : 0) - (isInt(snap.shipping_cents) ? snap.shipping_cents : 0);
@@ -335,6 +367,7 @@ export function createWholesaleService(ctx) {
       removed_reason: removed ? (d.reason ?? 'removed') : null,
       moved_to: removed && d.moved_to === 'store_credit' ? 'store_credit' : null,
       at_event: when,
+      return_uid: kind === 'refund' || kind === 'credit_note' ? (snap.return_uid ?? prev?.return_uid ?? null) : null,
       snapshot: json(snap),
       at,
     });
@@ -405,15 +438,20 @@ export function createWholesaleService(ctx) {
         applied.push({ e, info });
         results.push({ key, status: 'applied' });
       } catch (err) {
-        log?.error?.(`couldn't apply ${e.name} ${e.key}:`, err);
-        results.push({ key, status: 'refused', reason: `The suite couldn’t apply it: ${String(err.message).slice(0, 300)}` });
-        refused += 1;
+        // Not the event's fault (SQLITE_BUSY, a full disk, a bug): answer only what was applied so far.
+        // The Order Manager sends this event and the rest again, in order; `refused` is only for events
+        // that are themselves wrong (it would park them for good).
+        log?.error?.(`couldn't apply ${e.name} ${e.key} (answering the ${results.length} before it; the rest are sent again):`, err);
+        break;
       }
     }
     const at = now();
     const st = status();
+    refusals.count = 0;
+    refusals.at = null;
+    refusals.message = null;
     setStatus({
-      last_ok_at: at, refused_requests: 0,
+      last_ok_at: at, refused_requests: 0, last_error: null, last_error_at: null,
       ...(applied.length ? { last_event_at: at, events_applied: Number(st.events_applied ?? 0) + applied.length } : {}),
       ...(refused ? { refused_events: Number(st.refused_events ?? 0) + refused, last_refused_event: results.find((r) => r.status === 'refused')?.reason } : {}),
       ...(backfill ? { last_backfill_at: at } : {}),
@@ -447,22 +485,39 @@ export function createWholesaleService(ctx) {
   }
 
   /**
-   * The receiver (POST /api/wom/events; routes.js gives it the raw body). → { status, body }.
-   * Order of checks: paused (503, nothing read, nothing logged as a failure) → a secret is set →
-   * signature and timestamp (401) → the body (400) → the events (200 with a result each).
+   * What can be answered from the headers alone, before the body is read (routes.js calls it first, so
+   * an unsigned caller can't make the server read a body): paused → 503 (nothing read, nothing logged
+   * as a failure); a malformed timestamp / signature header → 401; no secret here → 401. → null when
+   * the body should be read.
    */
-  function receive({ rawBody, timestamp, signature, path, method = 'POST' }) {
+  function precheck({ timestamp, signature }) {
     if (handle.isPaused()) {
       return { status: 503, body: { error: 'Paused in the suite (System → Connections): events wait in the Order Manager until it is switched on', code: 'paused' } };
     }
-    const secret = currentSecret();
-    if (!secret) {
+    const bad = headerProblem({ timestamp, signature });
+    if (bad) {
+      noteRefusedRequest(bad.message);
+      return { status: 401, body: { error: bad.message, code: bad.code } };
+    }
+    if (!currentSecret()) {
       const message = secretState().set
         ? 'The suite can’t read its shared secret on this machine: make a new one (System → Connections)'
         : 'No shared secret has been made in the suite yet (System → Connections)';
       noteRefusedRequest(message);
       return { status: 401, body: { error: message, code: 'not_set_up' } };
     }
+    return null;
+  }
+
+  /**
+   * The receiver (POST /api/wom/events; routes.js gives it the raw body after precheck). → { status, body }.
+   * Order of checks: precheck again (the switch may have moved meanwhile) → signature and timestamp
+   * (401) → the body (400) → the events (200 with a result each, or a prefix of them).
+   */
+  function receive({ rawBody, timestamp, signature, path, method = 'POST' }) {
+    const early = precheck({ timestamp, signature });
+    if (early) return early;
+    const secret = currentSecret();
     const problem = signatureProblem({ secret, timestamp, signature, method, path, rawBody, nowMs: clock() });
     if (problem) {
       noteRefusedRequest(problem.message);
@@ -491,14 +546,18 @@ export function createWholesaleService(ctx) {
    * project(). `only`: the customer uids to look at (default: all). `actor`: who caused it (the
    * person linking; 'system' for a link found by the minute check).
    */
-  function reconcile({ only = null, actor = 'system' } = {}) {
+  function linksByUid() {
     const byUid = new Map();
     for (const l of crm.liveAccountLinks(APP)) {
       const list = byUid.get(l.external_id);
       if (list) list.push(l);
       else byUid.set(l.external_id, [l]);
     }
-    const rows = only ? [...only].map((uid) => q.customer.get(uid)).filter(Boolean) : q.allCustomers.all();
+    return byUid;
+  }
+
+  /** Attach / move / detach `rows` (held customers) to match the links, in one transaction. → how many changed. */
+  function reconcileRows(rows, byUid, actor) {
     const at = now();
     let changed = 0;
     db.transaction(() => {
@@ -515,8 +574,64 @@ export function createWholesaleService(ctx) {
         changed += 1;
       }
     })();
+    return changed;
+  }
+
+  /**
+   * For a few customers (`only`: after a request, a link here), synchronously. Without `only` it does
+   * them all in one go — tests and small databases; the server's own full passes use reconcileAll.
+   */
+  function reconcile({ only = null, actor = 'system' } = {}) {
+    const rows = only ? [...only].map((uid) => q.customer.get(uid)).filter(Boolean) : q.allCustomers.all();
+    const changed = reconcileRows(rows, linksByUid(), actor);
     project();
     return { changed };
+  }
+
+  /**
+   * Every customer, RECONCILE_CHUNK at a time (one small transaction each), projecting what changed
+   * and giving the event loop a turn in between — so a thousand customers linked at once (D2's
+   * auto-links, a restore) never holds the server up. One pass at a time; a call meanwhile waits for it.
+   */
+  let running = null;
+  function reconcileAll({ actor = 'system' } = {}) {
+    if (running) return running;
+    running = (async () => {
+      try {
+        const byUid = linksByUid();
+        const rows = q.allCustomers.all();
+        let changed = 0;
+        for (let i = 0; i < rows.length; i += RECONCILE_CHUNK) {
+          // Read each row afresh: a request may have changed it while this pass waited.
+          const chunk = rows.slice(i, i + RECONCILE_CHUNK).map((r) => q.customer.get(r.uid)).filter(Boolean);
+          changed += reconcileRows(chunk, byUid, actor);
+          await projectAsync();
+          await yieldNow();
+        }
+        await projectAsync(); // anything still dirty (a crash, a restore)
+        return { changed };
+      } finally {
+        running = null;
+      }
+    })();
+    return running;
+  }
+
+  /**
+   * At start: a restore (the sync generation changed since this module last looked) brings back the
+   * synced records as they were in the backup, while the holding area (kept across restores, like the
+   * secret) is as the Order Manager last said. So every held row is marked dirty: projecting adopts each
+   * record by its uid, puts it right (a status, a deletion), deletes extras and re-creates the missing.
+   */
+  function checkRestore() {
+    const generation = sync.info().generation;
+    const seen = status().sync_generation ?? null;
+    if (seen && seen !== generation) {
+      db.transaction(() => { for (const s of markAllDirty) s.run(); })();
+      log?.info?.('the suite was restored: Order Manager records are being put back as it last said (from the holding area)');
+    }
+    if (seen !== generation) setStatus({ sync_generation: generation });
+    return seen !== null && seen !== generation;
   }
 
   /**
@@ -563,16 +678,23 @@ export function createWholesaleService(ctx) {
    * Make the synced record match `desired` (field values, or null = it shouldn't exist): create,
    * update only what differs, or delete (detach). → the record id to remember (null when none).
    */
-  function syncRecord(entity, recordId, desired) {
-    const row = recordId ? recordRow[entity].get(recordId) : null;
-    const live = row && row.deleted_at === null;
+  function syncRecord(entity, recordId, desired, uid) {
+    // The record to keep: the one remembered, else (after a restore, or a crash between the write and
+    // its bookkeeping) the oldest live one naming the same uid. Any other live one naming it is an extra.
+    const byUid = uid ? liveByUid[entity].all(uid) : [];
+    const mine = recordId ? recordRow[entity].get(recordId) : null;
+    const row = mine && mine.deleted_at === null ? mine : (byUid[0] ?? null);
+    const live = Boolean(row);
+    const remove = (id) => {
+      const r = sync.applyLocal({ entity, op: 'delete', recordId: id });
+      if (r.status === 'rejected') throw new Error(`${entity} delete: ${r.code} ${r.reason}`);
+    };
+    for (const extra of byUid) if (extra.id !== row?.id) remove(extra.id);
     if (!desired) {
-      if (live) {
-        const r = sync.applyLocal({ entity, op: 'delete', recordId });
-        if (r.status === 'rejected') throw new Error(`${entity} delete: ${r.code} ${r.reason}`);
-      }
+      if (live) remove(row.id);
       return null;
     }
+    recordId = row?.id ?? null; // eslint-disable-line no-param-reassign
     if (live) {
       const have = current(entity, row);
       const fields = {};
@@ -677,7 +799,7 @@ export function createWholesaleService(ctx) {
   /** One dirty row → its synced record. A failure is logged and left dirty (tried again next time). */
   function projectOne(entity, row, desired, done, key) {
     try {
-      db.transaction(() => done.run(syncRecord(entity, row.record_id, desired), key))();
+      db.transaction(() => done.run(syncRecord(entity, row.record_id, desired, key), key))();
       return true;
     } catch (err) {
       log?.error?.(`couldn't bring ${entity} ${key} up to date (tried again later):`, err);
@@ -685,24 +807,39 @@ export function createWholesaleService(ctx) {
     }
   }
 
-  /** Bring every dirty held row's synced record up to date (in chunks; failures stay dirty). */
-  function project() {
-    let failed = 0;
-    const run = (select, entity, desired, done) => {
+  /** The projection in chunks of PROJECT_CHUNK rows, one transaction each; yields after each chunk. */
+  function* projectChunks(state) {
+    const kinds = [
+      [q.dirtyOrders, 'wholesale_order', desiredOrder, q.orderDone],
+      [q.dirtyMoney, 'wholesale_entry', desiredEntry, q.moneyDone],
+      [q.dirtyCustomers, 'wholesale_customer', desiredCustomer, q.customerDone],
+    ];
+    for (const [select, entity, desired, done] of kinds) {
       let after = '';
       for (;;) {
         const rows = select.all(after);
-        if (!rows.length) return;
+        if (!rows.length) break;
         db.transaction(() => {
-          for (const r of rows) if (!projectOne(entity, r, desired(r), done, r.uid)) failed += 1;
+          for (const r of rows) if (!projectOne(entity, r, desired(r), done, r.uid)) state.failed += 1;
         })();
         after = rows[rows.length - 1].uid;
+        yield;
       }
-    };
-    run(q.dirtyOrders, 'wholesale_order', desiredOrder, q.orderDone);
-    run(q.dirtyMoney, 'wholesale_entry', desiredEntry, q.moneyDone);
-    run(q.dirtyCustomers, 'wholesale_customer', desiredCustomer, q.customerDone);
-    return { failed };
+    }
+  }
+
+  /** Bring every dirty held row's synced record up to date (in chunks; failures stay dirty). */
+  function project() {
+    const state = { failed: 0 };
+    for (const _ of projectChunks(state)); // eslint-disable-line no-unused-vars, no-empty
+    return state;
+  }
+
+  /** The same, giving the event loop a turn between chunks (big reconciles, the start after a restore). */
+  async function projectAsync() {
+    const state = { failed: 0 };
+    for (const _ of projectChunks(state)) await yieldNow(); // eslint-disable-line no-unused-vars
+    return state;
   }
 
   // ---- people's actions (the Wholesale page) ---------------------------------------------------
@@ -883,18 +1020,16 @@ export function createWholesaleService(ctx) {
   /** Every minute (production, src/index.js): pick up links made elsewhere (D2, a device). → stop(). */
   function startReconciler({ everyMs = RECONCILE_EVERY_MS } = {}) {
     const timer = setInterval(() => {
-      try {
-        reconcile();
-      } catch (err) {
-        log?.error?.('reconcile failed:', err);
-      }
+      reconcileAll().catch((err) => log?.error?.('reconcile failed (tried again in a minute):', err));
     }, everyMs);
     timer.unref?.();
     return () => clearInterval(timer);
   }
 
   return {
-    receive, applyEvents, reconcile, project, describe, status, startReconciler,
+    receive, precheck, applyEvents, reconcile, reconcileAll, checkRestore, project, describe, status, startReconciler,
+    /** Latest Order Manager order time per client (Map client_id -> at), for "last activity" elsewhere (planner). */
+    lastOrderAtByClient: () => new Map(lastOrders.all().map((r) => [r.client_id, r.at])),
     makeSecret, secretState, connectionInfo,
     linkToClient, createClient, unlink, list, waitingCounts,
     isPaused: () => handle.isPaused(),

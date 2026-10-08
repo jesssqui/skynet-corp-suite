@@ -5,9 +5,11 @@
 //  • An order counts while it is active and not deleted (cancelled and binned orders drop out, with
 //    whatever was given back on them). History-only (catch-up) orders count: they are real sales.
 //  • sales = Σ goods of the counting orders, goods = subtotal − discounts: before tax, no shipping.
-//  • given back (before tax, so tax is never taken off twice): a credit note's own subtotal; any other
-//    refund with an amount (money back, or store credit put on the account) in its order's proportion
-//    goods / (goods + tax). Store credit *used* later never counts (it would undo or double the
+//  • given back (before tax, so tax is never taken off twice): for a refund or credit note made by a
+//    return that carries its own subtotal (A10's return.received has subtotal/tax/shipping since the
+//    Order Manager's D1 follow-up), that subtotal — exact even when shipping went back too; else a
+//    credit note's own subtotal; any other refund with an amount (money back, or store credit put on
+//    the account) in its order's proportion goods / (goods + tax) (older returns without the fields). Store credit *used* later never counts (it would undo or double the
 //    credit note / refund that made it).
 //  • spend = sales − given back (what the plan calls "total spend").
 //  • paid = live payments (removed ones don't count; a payment kept as store credit when its order was
@@ -19,7 +21,7 @@
 
 /**
  * @param {Array<{ uid, status, deleted, goods_cents, tax_cents, order_date, has_snapshot }>} orders
- * @param {Array<{ kind, sub_kind, amount_cents, subtotal_cents, removed, moved_to, order_uid }>} money
+ * @param {Array<{ uid, kind, sub_kind, amount_cents, subtotal_cents, removed, moved_to, order_uid, return_uid }>} money
  */
 export function customerFigures(orders, money) {
   const counting = new Map();
@@ -39,6 +41,12 @@ export function customerFigures(orders, money) {
   let givenBack = 0;
   let paid = 0;
   let credit = 0;
+  // Returns that say what their goods were worth before tax (and weren't removed).
+  const returnNet = new Map();
+  for (const m of money) {
+    if (m.kind === 'return' && !m.removed && Number.isSafeInteger(m.subtotal_cents)) returnNet.set(m.uid, m.subtotal_cents);
+  }
+  const fromReturn = (m) => (m.return_uid && returnNet.has(m.return_uid) ? returnNet.get(m.return_uid) : null);
   for (const m of money) {
     if (m.kind === 'payment') {
       if (!m.removed) paid += m.amount_cents;
@@ -48,14 +56,14 @@ export function customerFigures(orders, money) {
     if (m.removed) continue;
     if (m.kind === 'credit_note') {
       credit += m.amount_cents;
-      if (counting.has(m.order_uid)) givenBack += m.subtotal_cents ?? m.amount_cents;
+      if (counting.has(m.order_uid)) givenBack += fromReturn(m) ?? m.subtotal_cents ?? m.amount_cents;
     } else if (m.kind === 'refund') {
       if (m.sub_kind === 'store_credit_applied') {
         credit += m.amount_cents; // negative: credit used up
         continue;
       }
       if (m.sub_kind === 'store_credit') credit += m.amount_cents;
-      if (m.amount_cents > 0 && counting.has(m.order_uid)) givenBack += netOfTax(m.amount_cents, counting.get(m.order_uid));
+      if (m.amount_cents > 0 && counting.has(m.order_uid)) givenBack += fromReturn(m) ?? netOfTax(m.amount_cents, counting.get(m.order_uid));
     }
   }
   return {

@@ -17,6 +17,9 @@ import { customerFigures, netOfTax } from '../src/modules/wholesale/figures.js';
 import { eventProblem } from '../src/modules/wholesale/events.js';
 import { decryptSecret, encryptSecret, loadKey } from '../src/modules/wholesale/secret.js';
 import { tmpDir, testConfig, ensureTestUsers, sessionFor } from './helpers.js';
+import { relationshipsToChase, reviewNumbers } from '../src/modules/planner/automations.js';
+import { addDays } from '@suite/shared/planner';
+import { localDate } from '@suite/shared/time';
 import { womKit, postEvents, sampleStream, sign, EVENTS_PATH } from './fixtures/wom.js';
 
 function capturingLog(lines = []) {
@@ -374,8 +377,8 @@ test('malformed events are refused with a reason (never a 500); a bad body is 40
   assert.equal(eventProblem({ ...om.customerCreated(c), version: '1' }) !== null, true);
 });
 
-test('backfill events (old times, backfill: true) apply in the order received; a restored suite asks for a resend until one arrives', async (t) => {
-  const { post, live, client, local, svc, ctx, db } = await setup(t);
+test('backfill events (old times, backfill: true) apply in the order received', async (t) => {
+  const { post, live, client, local, svc, db } = await setup(t);
   const om = womKit();
   const c = om.customer();
   const { accountId } = client();
@@ -393,13 +396,7 @@ test('backfill events (old times, backfill: true) apply in the order received; a
   assert.ok(svc.status().last_backfill_at);
   assert.equal(db.prepare('SELECT backfill FROM wholesale_events ORDER BY received_at, key').all().filter((e) => e.backfill).length, 2);
 
-  // After a restore of the suite the row says to resend from the Order Manager, until backfill events come in.
-  const restoredAt = new Date(Date.now() + 1000).toISOString();
-  ctx.services.sync.info = ((orig) => () => ({ ...orig(), lastRestoreAt: restoredAt }))(ctx.services.sync.info);
-  assert.match(svc.describe().detail, /restored from a backup: in the Order Manager.*Forget everything/);
-  await new Promise((r) => setTimeout(r, 1100));
-  await post([om.customerUpdated(c, { backfill: true })]);
-  assert.doesNotMatch(svc.describe().detail, /restored from a backup/);
+  assert.doesNotMatch(svc.describe().detail, /restored|Forget everything/, 'no resend is ever asked for (the holding area survives restores)');
 });
 
 test('held deletes arriving later: gone marks the order deleted (kept on the timeline); a creation brings it back', async (t) => {
@@ -753,4 +750,192 @@ test('emits each applied event for automations (D3), with the customer’s accou
   assert.equal(seen.length, 1);
   assert.deepEqual([seen[0].key, seen[0].orderUid, seen[0].customerUid, seen[0].accountId, seen[0].clientId, seen[0].linked, seen[0].backfill],
     [placed.key, o.order_uid, c.customer_uid, accountId, clientId, true, false]);
+});
+
+// ---- review fixes ------------------------------------------------------------------------------
+
+test('restore: orders and payments deleted after the backup stay deleted; records re-adopted by uid, nothing doubled or resent', async (t) => {
+  const dir = tmpDir(t);
+  const config = testConfig(dir);
+  fs.mkdirSync(config.backup.offsiteDir, { recursive: true });
+  fs.writeFileSync(`${config.backup.offsiteDir}/.suite-backup-target`, '');
+  const first = await setup(t, { config });
+  const om = womKit();
+  const c = om.customer();
+  const { accountId } = first.client();
+  first.local('owner', 'link', { account_id: accountId, app: 'wom', external_id: c.customer_uid, matched_by: 'approved' });
+  const o = om.order(c, [{ name: 'Zyn', quantity: 2, unit_price_cents: 1000 }]);
+  const p = om.payment(o, 2260);
+  const o2 = om.order(c, [{ name: 'Alp', quantity: 1, unit_price_cents: 1000 }]);
+  const p2 = om.payment(o2, 1130);
+  assert.ok(statuses(await first.post([om.customerCreated(c), om.orderPlaced(o), om.paymentRecorded(p), om.orderPlaced(o2), om.paymentRecorded(p2)])).every((x) => x === 'applied'));
+  const backup = await runBackup({ db: first.db, dir: config.backup.dir, offsiteDir: config.backup.offsiteDir, keepDays: 30 });
+
+  // After the backup: the paid order deleted (its payment kept as store credit), a payment deleted by
+  // hand, a new order — and the customer unlinked and linked again (new record ids).
+  const o3 = om.order(c, [{ name: 'Velo', quantity: 1, unit_price_cents: 500 }]);
+  const after = [om.paymentRemoved(p, { reason: 'order_deleted', moved_to: 'store_credit' }), om.orderDeleted(o), om.paymentRemoved(p2), om.orderPlaced(o3)];
+  assert.ok(statuses(await first.post(after)).every((x) => x === 'applied'));
+  assert.equal((await first.call('POST', `/api/wholesale/customers/${c.customer_uid}/unlink`, {})).status, 200);
+  assert.equal((await first.call('POST', `/api/wholesale/customers/${c.customer_uid}/link`, { clientId: first.ctx.services.crm.liveAccount(accountId).client_id, accountId })).status, 200);
+  const view = (env) => ({
+    orders: env.live('wholesale_orders').map((r) => [r.order_uid, r.status]).sort(),
+    entries: env.live('wholesale_entries').map((r) => [r.uid, r.status, r.moved_to]).sort(),
+    card: env.live('wholesale_customers').map((r) => [r.spend_cents, r.paid_cents, r.credit_cents, r.order_count]),
+  });
+  const want = view(first);
+  assert.deepEqual(want.orders.map((x) => x[1]).sort(), ['active', 'active', 'deleted']);
+  await first.close();
+
+  await restoreBackup({ from: backup.file, dbPath: config.dbPath, backupDir: config.backup.dir });
+  const again = await setup(t, { config, secret: false });
+  await again.svc.reconcileAll();
+  assert.deepEqual(view(again), want, 'as the Order Manager last said — the deleted order and payments stay deleted');
+  for (const table of ['wholesale_orders', 'wholesale_entries', 'wholesale_customers']) {
+    const field = { wholesale_orders: 'order_uid', wholesale_entries: 'uid', wholesale_customers: 'customer_uid' }[table];
+    assert.equal(again.db.prepare(`SELECT count(*) AS n FROM (SELECT ${field} FROM ${table} WHERE deleted_at IS NULL GROUP BY ${field} HAVING count(*) > 1)`).get().n, 0, `no doubles in ${table}`);
+  }
+  // The Order Manager resending what it already delivered changes nothing; the secret still works.
+  assert.ok(statuses(await postEvents(again.base, first.secret, after)).every((x) => x === 'duplicate'));
+  assert.doesNotMatch(again.svc.describe().detail, /restored|Forget everything/);
+});
+
+test('extras naming the same uid are removed, and a lost record id is found again by uid', async (t) => {
+  const { post, live, client, local, svc, db, ctx } = await setup(t);
+  const om = womKit();
+  const c = om.customer();
+  const { accountId, clientId } = client();
+  local('owner', 'link', { account_id: accountId, app: 'wom', external_id: c.customer_uid, matched_by: 'approved' });
+  const o = om.order(c, [{ name: 'Zyn', quantity: 1, unit_price_cents: 500 }]);
+  await post([om.customerCreated(c), om.orderPlaced(o)]);
+  const [kept] = live('wholesale_orders');
+  ctx.services.sync.applyLocal({ entity: 'wholesale_order', op: 'create', fields: { account_id: accountId, client_id: clientId, customer_uid: c.customer_uid, order_uid: o.order_uid, at: kept.at, status: 'active' } });
+  db.prepare('UPDATE wholesale_held_orders SET dirty = 1, record_id = NULL').run();
+  svc.project();
+  assert.deepEqual(live('wholesale_orders').map((r) => r.id), [kept.id], 'the oldest kept, the extra deleted');
+  assert.equal(db.prepare('SELECT record_id FROM wholesale_held_orders').get().record_id, kept.id);
+});
+
+test('spend: a return refunded with shipping uses the return’s own subtotal; older returns fall back to the proportion', async (t) => {
+  const { post, live, client, local } = await setup(t);
+  const om = womKit();
+  const spendOf = (uid) => live('wholesale_customers').find((x) => x.customer_uid === uid).spend_cents;
+  const run = async (withFields, outcome) => {
+    const c = om.customer();
+    const { accountId } = client(`C ${withFields} ${outcome}`);
+    local('owner', 'link', { account_id: accountId, app: 'wom', external_id: c.customer_uid, matched_by: 'approved' });
+    // 2 × $25 + 13 % + $15 shipping = $71.50; one returned, shipping refunded too: $25 + $3.25 + $15 = $43.25.
+    const o = om.order(c, [{ name: 'Kit', quantity: 2, unit_price_cents: 2500 }], { shipping_cents: 1500 });
+    const ret = om.return(o, [{ name: 'Kit', quantity: 1, restocked: true }], { outcome, amount_cents: 4325 });
+    if (withFields) Object.assign(ret, { subtotal_cents: 2500, tax_cents: 325, shipping_cents: 1500 });
+    const money = outcome === 'refund'
+      ? om.refundIssued(om.refund(o, 4325, { return_uid: ret.return_uid }))
+      : om.creditNoteIssued(om.creditNote(o, { subtotal_cents: 2500, tax_cents: 325, shipping_cents: 1500, return_uid: ret.return_uid }));
+    assert.ok(statuses(await post([om.customerCreated(c), om.orderPlaced(o), om.returnReceived(ret), money])).every((x) => x === 'applied'));
+    return spendOf(c.customer_uid);
+  };
+  assert.equal(await run(true, 'refund'), 2500, 'the Order Manager’s own figure: $50 − $25');
+  assert.equal(await run(false, 'refund'), 5000 - Math.round((4325 * 5000) / 5650), 'an older return: the proportion');
+  assert.equal(await run(true, 'credit_note'), 2500);
+  assert.equal(await run(false, 'credit_note'), 2500, 'a credit note always had its own subtotal');
+});
+
+test('an unexpected error while applying answers only the events before it (they are sent again), never refused', async (t) => {
+  const { post, live, client, local, db } = await setup(t);
+  const om = womKit();
+  const c = om.customer();
+  const { accountId } = client();
+  local('owner', 'link', { account_id: accountId, app: 'wom', external_id: c.customer_uid, matched_by: 'approved' });
+  const o = om.order(c, [{ name: 'Zyn', quantity: 1, unit_price_cents: 500 }]);
+  const events = [om.customerCreated(c), om.orderPlaced(o), om.paymentRecorded(om.payment(o, 565))];
+  db.exec(`CREATE TEMP TRIGGER wholesale_test_busy BEFORE INSERT ON main.wholesale_held_orders WHEN NEW.uid = '${o.order_uid}'
+    BEGIN SELECT RAISE(ABORT, 'database is locked (simulated)'); END`);
+  const res = await post(events);
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.results.map((r) => [r.key, r.status]), [[events[0].key, 'applied']], 'a prefix: the rest come again');
+  db.exec('DROP TRIGGER wholesale_test_busy');
+  assert.deepEqual(statuses(await post(events)), ['duplicate', 'applied', 'applied']);
+  assert.equal(live('wholesale_orders')[0].paid_cents, 565);
+});
+
+test('the receiver answers from the headers before reading a body; bodies over 2 MB are 413; refusals are written and logged at most once a minute', async (t) => {
+  const { base, secret, svc, db, lines, call } = await setup(t);
+  const big = 'x'.repeat(3 * 1024 * 1024);
+  const raw = (headers) => fetch(`${base}/api/wom/events`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: big })
+    .then((r) => r.status).catch((e) => `error ${e.cause?.code ?? e.message}`);
+  // Unsigned: 401 at once (whether the client sees it before it has sent all 3 MB or not, nothing was read).
+  const unsigned = await raw({});
+  assert.ok(unsigned === 401 || /^error/.test(unsigned), String(unsigned));
+  // Well-formed headers: the body is read — up to 2 MB.
+  const ts = Math.floor(Date.now() / 1000);
+  assert.equal(await raw({ 'x-wom-timestamp': String(ts), 'x-wom-signature': sign(secret, ts, 'POST', EVENTS_PATH, big) }), 413);
+  // Paused: 503 before anything.
+  await call('PUT', '/api/connections/wom', { paused: true });
+  const paused = await raw({ 'x-wom-timestamp': String(ts), 'x-wom-signature': 'a'.repeat(64) });
+  assert.ok(paused === 503 || /^error/.test(paused), String(paused));
+  await call('PUT', '/api/connections/wom', { paused: false });
+
+  // Ten bad signatures in a row: one status write, one warning; the row still counts them all.
+  const writes = () => db.prepare("SELECT value FROM wholesale_status WHERE key = 'refused_requests'").get()?.value;
+  const before = lines.filter((l) => l.level === 'warn' && l.tag.includes('wholesale')).length;
+  for (let i = 0; i < 10; i += 1) assert.equal((await postEvents(base, 'wrong-secret-wrong-secret', [])).status, 401);
+  assert.ok(Number(writes()) <= 2, `written at most once a minute (${writes()})`);
+  assert.ok(lines.filter((l) => l.level === 'warn' && l.tag.includes('wholesale')).length - before <= 1);
+  assert.match(svc.describe().lastError, /refused since the last good request/);
+  assert.match(svc.describe().lastError, /\((1[0-3]) refused/);
+});
+
+test('through Tailscale Serve (HTTPS, forwarded Host and address): the signature still checks out', async (t) => {
+  const { post } = await setup(t);
+  const om = womKit();
+  const res = await post([om.customerCreated(om.customer())], {
+    headers: { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'mac-mini.tail1234.ts.net', 'x-forwarded-for': '100.101.102.103' },
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual(statuses(res), ['applied']);
+});
+
+test('reconcileAll links many customers in small transactions, giving the event loop turns', async (t) => {
+  const { post, live, client, local, svc } = await setup(t);
+  const om = womKit();
+  const { accountId } = client('Big group');
+  const events = [];
+  const customers = [];
+  for (let i = 0; i < 120; i += 1) {
+    const c = om.customer({ business_name: `Store ${i}` });
+    customers.push(c);
+    events.push(om.customerCreated(c), om.orderPlaced(om.order(c, [{ name: 'Zyn', quantity: 1, unit_price_cents: 500 }])));
+  }
+  for (let i = 0; i < events.length; i += 50) await post(events.slice(i, i + 50));
+  // Linked elsewhere (as D2's auto-links would), all at once: one account each.
+  for (const c of customers) {
+    const a = local('owner', 'account', { client_id: client(`Client ${c.number}`).clientId, name: c.business_name });
+    local('owner', 'link', { account_id: a, app: 'wom', external_id: c.customer_uid, matched_by: 'auto' });
+  }
+  assert.ok(accountId);
+  let turns = 0;
+  const timer = setInterval(() => { turns += 1; }, 0);
+  const done = await svc.reconcileAll();
+  clearInterval(timer);
+  assert.equal(done.changed, 120);
+  assert.equal(live('wholesale_orders').length, 120);
+  assert.ok(turns >= 2, `the event loop ran in between (${turns} turns)`);
+});
+
+test('wholesale relationships never count as "no next step"; an order counts as activity for quiet clients', async (t) => {
+  const { post, client, local, ctx } = await setup(t);
+  const om = womKit();
+  const c = om.customer();
+  const { accountId, clientId } = client('Ordering often');
+  local('owner', 'link', { account_id: accountId, app: 'wom', external_id: c.customer_uid, matched_by: 'approved' });
+  const inFuture = (days) => new Date(Date.now() + days * 86_400_000).toISOString();
+  await post([om.customerCreated(c), om.orderPlaced(om.order(c, [{ name: 'Zyn', quantity: 1, unit_price_cents: 500 }], { created_at: inFuture(85) }))]);
+  const { crm, planner } = ctx.services;
+  assert.equal(crm.accountRelationships(accountId)[0].kind, 'wholesale');
+  assert.equal(relationshipsToChase({ crm, planner }).length, 0, 'the linked account’s new wholesale relationship isn’t flagged');
+  const quiet = local('owner', 'client', { name: 'Quiet one', status: 'active' });
+  const today = addDays(localDate(), 90);
+  const n = reviewNumbers({ crm, planner, services: ctx.services }, today);
+  assert.equal(n.quiet, 1, `only the client with no order is quiet (${quiet}, not ${clientId})`);
+  assert.equal(reviewNumbers({ crm, planner }, today).quiet, 2, 'without the wholesale read both would be');
 });

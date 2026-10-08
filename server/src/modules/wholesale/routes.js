@@ -15,11 +15,23 @@ import express, { Router } from 'express';
 import { HttpError } from '../../lib/httpError.js';
 import { RECEIVER_PATH } from './service.js';
 
-/** The body limit for the receiver: 50 events, each an order with its lines, fit easily. */
-export const RECEIVER_BODY_LIMIT = '10mb';
+/**
+ * The body limit for the receiver: a batch of 50 events is typically 50–150 KB (an order snapshot with
+ * 20 lines is ~4 KB). A bigger one is answered 413 and the Order Manager retries the same batch, so
+ * raise this if an outsized order ever gets stuck there.
+ */
+export const RECEIVER_BODY_LIMIT = '2mb';
 
 export function receiverHandlers(_ctx, service) {
   return [
+    // Headers first: paused, malformed signature headers and "no secret" are answered before a byte
+    // of the body is read (the route has no session). The connection is closed after such an answer.
+    (req, res, next) => {
+      const early = service.precheck({ timestamp: req.get('x-wom-timestamp'), signature: req.get('x-wom-signature') });
+      if (!early) return next();
+      res.set({ 'Cache-Control': 'no-store', Connection: 'close' });
+      res.status(early.status).json(early.body);
+    },
     // The raw bytes: the signature covers them exactly as sent, so nothing may parse them first.
     express.raw({ type: () => true, limit: RECEIVER_BODY_LIMIT }),
     (req, res) => {

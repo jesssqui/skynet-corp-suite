@@ -9,6 +9,8 @@ import { startServer, makeDevice } from './helpers.js';
 import { postEvents, sampleStream } from '../../server/test/fixtures/wom.js';
 import { sessionFor } from '../../server/test/helpers.js';
 import { cachedLists, lastActivityOf } from '../src/modules/crm/data.js';
+import { reviewLastActivity } from '../src/modules/planner/data.js';
+import { SyncError } from '../src/sync/engine.js';
 import { filterTimeline } from '../src/modules/crm/logic.js';
 import {
   wholesaleItems, activityItem, sumCards, orderItem, entryItem, lastOrderByClient, mergeLastActivity,
@@ -67,6 +69,8 @@ test('a device pulls a linked customer’s orders, payments, returns and refunds
   // The client list's "last activity" counts its latest order.
   const last = mergeLastActivity(lastActivityOf(activities), lastOrderByClient(orders.records));
   assert.equal(last.get(clientId), orders.where('client_id', clientId).map((o) => o.at).sort().at(-1));
+  // …and so does the Friday review's "quiet clients" (the same rule as the server's automation).
+  assert.equal(reviewLastActivity(activities, orders).get(clientId), last.get(clientId));
 
   // Offline: everything is still there (the device's own copy).
   phone.online = false;
@@ -74,11 +78,17 @@ test('a device pulls a linked customer’s orders, payments, returns and refunds
   assert.equal(again.wholesale_order.length + again.wholesale_entry.length, 13);
   phone.online = true;
 
-  // A device can't write them: the server refuses (Needs attention).
-  const id = await e.create('wholesale_entry', { account_id: vape, client_id: clientId, customer_uid: customer.customer_uid, uid: customer.customer_uid, kind: 'payment', at: '2026-10-06T12:00:00.000Z', status: 'live' });
-  await e.syncNow();
-  const attention = await e.attentionList();
-  assert.ok(attention.some((a) => a.step.recordId === id && a.code === 'op_not_allowed'), JSON.stringify(attention));
+  // A device can't write them: /info says they are read-only, so the store refuses at once (the
+  // server would too) and /sync/data offers no add, edit or delete.
+  assert.equal(e.definition('wholesale_entry').readOnly, true);
+  assert.equal(e.definition('wholesale_entry').ops.size, 0);
+  await assert.rejects(
+    e.create('wholesale_entry', { account_id: vape, client_id: clientId, customer_uid: customer.customer_uid, uid: customer.customer_uid, kind: 'payment', at: '2026-10-06T12:00:00.000Z', status: 'live' }),
+    (err) => err instanceof SyncError && err.code === 'op_not_allowed',
+  );
+  const someOrder = orders.where('client_id', clientId)[0];
+  await assert.rejects(e.update('wholesale_order', someOrder.id, { total_cents: 1 }), (err) => err.code === 'op_not_allowed');
+  await assert.rejects(e.remove('wholesale_order', someOrder.id), (err) => err.code === 'op_not_allowed');
 });
 
 test('timeline items and figures, on their own', () => {

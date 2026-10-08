@@ -73,9 +73,16 @@ export function sign(secret, ts, method, pathAndQuery, rawBody) {
  * @param {{ secret: string, timestamp: string|undefined, signature: string|undefined, method: string,
  *   path: string, rawBody: Buffer, nowMs: number }} r
  */
-export function signatureProblem({ secret, timestamp, signature, method, path: p, rawBody, nowMs }) {
+/** The headers' shape (checked before the body is read): null when both look right. */
+export function headerProblem({ timestamp, signature }) {
   if (!timestamp || !/^\d{1,12}$/.test(timestamp)) return { code: 'no_timestamp', message: 'No x-wom-timestamp header' };
   if (!signature || !/^[0-9a-f]{64}$/i.test(signature)) return { code: 'no_signature', message: 'No valid x-wom-signature header' };
+  return null;
+}
+
+export function signatureProblem({ secret, timestamp, signature, method, path: p, rawBody, nowMs }) {
+  const bad = headerProblem({ timestamp, signature });
+  if (bad) return bad;
   const expected = Buffer.from(sign(secret, timestamp, method, p, rawBody), 'hex');
   const given = Buffer.from(signature.toLowerCase(), 'hex');
   if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
