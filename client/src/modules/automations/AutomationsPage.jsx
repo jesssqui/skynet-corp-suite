@@ -53,7 +53,7 @@ function AutomationCard({ a, me, offline, scheduled, onChange, onRun, busy, resu
           <Row label="Last run" testId={`last-run-${a.id}`}>
             {last ? (
               <>
-                <span style={{ display: 'block', ...(last.status === 'error' ? { color: 'var(--danger)' } : {}) }}>{runWhat(last)}</span>
+                <span style={{ display: 'block', ...(last.status === 'error' ? { color: 'var(--danger)' } : last.status === 'missed' ? { color: 'var(--warn)' } : {}) }}>{runWhat(last)}</span>
                 <span style={{ display: 'block', ...muted, fontSize: 'var(--text-xs)' }}>{runWhen(last, me)}</span>
               </>
             ) : <strong>Never run</strong>}

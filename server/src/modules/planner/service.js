@@ -102,7 +102,7 @@ export function createPlannerService({ db, services, log }) {
       WHERE deleted_at IS NULL AND done_at IS NULL AND due_date IS NOT NULL AND due_date < ?`),
     relTasks: db.prepare(`SELECT id, relationship_id, due_date, done_at FROM planner_tasks
       WHERE deleted_at IS NULL AND done_at IS NULL AND relationship_id IS NOT NULL`),
-    task: db.prepare('SELECT id, deleted_at, done_at FROM planner_tasks WHERE id = ?'),
+    task: db.prepare('SELECT id, deleted_at, done_at, relationship_id, title, due_date FROM planner_tasks WHERE id = ?'),
   };
 
   const service = {
@@ -142,12 +142,15 @@ export function createPlannerService({ db, services, log }) {
     overdueCount: (today) => q.overdue.get(today).n,
     /** Open tasks that name a relationship (for C4a's "no next step" rule on the server). */
     openRelationshipTasks: () => q.relTasks.all(),
-    /** { live, open } for a task id (live = not deleted; open = live and not done), or null. */
+    /**
+     * { live, open, relationshipId, title, dueDate } for a task id (live = not deleted; open = live
+     * and not done), or null.
+     */
     taskState(id) {
       const t = q.task.get(id);
       if (!t) return null;
       const live = t.deleted_at === null;
-      return { live, open: live && t.done_at === null };
+      return { live, open: live && t.done_at === null, relationshipId: t.relationship_id, title: t.title, dueDate: t.due_date };
     },
   };
 

@@ -31,7 +31,8 @@ import { newId } from '@suite/shared/ids';
 import { nowIso, localDate } from '@suite/shared/time';
 import { ACTORS } from '@suite/shared/actors';
 import { HttpError } from '../../lib/httpError.js';
-import { checkTrigger, triggerText, periodOf } from './schedule.js';
+import { addDays } from '@suite/shared/planner';
+import { checkTrigger, triggerText, periodOf, atLocal, clockText } from './schedule.js';
 
 const ID_RE = /^[a-z][a-z0-9-]{0,59}$/;
 /** After a failed scheduled run, try that period again no sooner than this. */
@@ -60,11 +61,24 @@ export const ALERT_ENTITY = {
 /** Each person's read flag on an alert. */
 export const ALERT_READ_FIELDS = Object.freeze(Object.fromEntries(ACTORS.map((a) => [a, `read_by_${a}`])));
 
-/** Alerts are written by the server; a device's update may only mark it read or unread. */
-export function checkAlert({ op, fields }) {
+/**
+ * Alerts are made by the server only; a device may only mark one read for its own person
+ * (`read_by_<actor>`). Right in any arrival order: it looks at the step's own fields and who sent it.
+ */
+export function checkAlert({ op, fields, actor, server }) {
+  if (server) return null;
+  if (op === 'create') return { code: 'op_not_allowed', reason: 'alert: alerts are made by the suite, not by devices' };
   if (op !== 'update' || !fields) return null;
-  const other = Object.keys(fields).filter((k) => !Object.values(ALERT_READ_FIELDS).includes(k));
-  return other.length ? { code: 'invalid_value', reason: `alert: only read_by_owner / read_by_partner change (${other.join(', ')})` } : null;
+  const own = ALERT_READ_FIELDS[actor];
+  const other = Object.keys(fields).filter((k) => k !== own);
+  return other.length ? { code: 'invalid_value', reason: `alert: you can only mark it read for yourself (${own ?? 'read_by_<you>'}), not ${other.join(', ')}` } : null;
+}
+
+/** Text cut to `max` characters, ending "…" when cut; null stays null. */
+export function clip(text, max) {
+  if (text === null || text === undefined) return null;
+  const s = String(text);
+  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
 }
 
 export function createAutomationsService(ctx) {
@@ -93,6 +107,7 @@ export function createAutomationsService(ctx) {
     remember: db.prepare(`INSERT OR IGNORE INTO automations_made (automation_id, key, entity, record_id, run_id, made_at)
       VALUES (?, ?, ?, ?, ?, ?)`),
     alert: db.prepare('SELECT * FROM automations_alerts WHERE id = ?'),
+    ranBefore: db.prepare('SELECT 1 FROM automations_runs WHERE automation_id = ? AND started_at < ? LIMIT 1'),
   };
 
   /** id -> definition, in registration order (the page's order). */
@@ -151,9 +166,17 @@ export function createAutomationsService(ctx) {
 
   // ---- runs ----------------------------------------------------------------------------------
 
-  /** Make an in-app alert (a synced record both people get). Inside a transaction is fine. */
+  /**
+   * Make an in-app alert (a synced record both people get). Inside a transaction is fine. Title and
+   * body are clipped to the field limits (an over-long one must never fail the run that raises it).
+   */
   function createAlert({ source = null, title, body = null, link = null, at = nowIso(new Date(clock())) }) {
-    const r = sync.applyLocal({ entity: 'alert', op: 'create', fields: { source, title, body, link, at } });
+    const { fields: f } = ALERT_ENTITY;
+    const r = sync.applyLocal({
+      entity: 'alert',
+      op: 'create',
+      fields: { source: clip(source, f.source.max), title: clip(title, f.title.max) || 'Alert', body: clip(body, f.body.max), link: clip(link, f.link.max), at },
+    });
     if (r.status !== 'applied') throw new Error(`could not create the alert: ${r.code ?? r.status} ${r.reason ?? ''}`);
     return r.recordId;
   }
@@ -201,7 +224,15 @@ export function createAutomationsService(ctx) {
           runKey = null; // Run now again in a period that already ran: runs, without the key
         }
         const created = [];
+        const updated = [];
         const made = (key) => q.made.all(def.id, String(key));
+        // Change a record the automation made before (refresh a summary, numbers): through sync too.
+        const update = (entity, id, fields) => {
+          const r = sync.applyLocal({ entity, op: 'update', recordId: id, fields });
+          if (r.status !== 'applied' && r.status !== 'clash') throw new Error(`could not update the ${entity}: ${r.code ?? r.status} ${r.reason ?? ''}`.trim());
+          updated.push({ entity, id });
+          return id;
+        };
         const create = (entity, fields, { key = null } = {}) => {
           const r = sync.applyLocal({ entity, op: 'create', fields });
           if (r.status !== 'applied') throw new Error(`could not create the ${entity}: ${r.code ?? r.status} ${r.reason ?? ''}`.trim());
@@ -210,12 +241,12 @@ export function createAutomationsService(ctx) {
           return r.recordId;
         };
         const out = def.run(ctx, {
-          now: nowDate, nowMs, today: localDate(nowDate), period, trigger, actor, data, made, create,
+          now: nowDate, nowMs, today: localDate(nowDate), period, trigger, actor, data, made, create, update,
         }) ?? {};
         if (out && typeof out.then === 'function') throw new Error(`${def.id}: run() must be synchronous`);
         for (const c of out.created ?? []) if (!created.some((x) => x.id === c.id)) created.push({ entity: c.entity, id: c.id });
         const summary = out.summary ?? (created.length ? `Made ${created.length}` : 'Nothing to do');
-        if (settings.alert && created.length) {
+        if (settings.alert && (created.length || updated.length)) {
           const a = out.alert ?? {};
           alertId = createAlert({
             source: def.id,
@@ -281,13 +312,46 @@ export function createAutomationsService(ctx) {
   }
 
   /**
+   * A weekly automation whose previous week went by without a run (the server was off from Friday
+   * to Sunday, or every try failed) gets one 'missed' run for that week, holding its run key: the
+   * page says so, and no late task is made for a week that is over. Only for an automation that
+   * had run before that week (a fresh install hasn't missed anything). Returns the run or null.
+   */
+  function noteMissed(def, nowMs) {
+    if (def.trigger.every !== 'week') return null;
+    const current = periodOf(def.trigger, new Date(nowMs));
+    const prev = periodOf(def.trigger, atLocal(addDays(current.start, -7), '12:00'));
+    const runKey = `${def.id}:${prev.key}`;
+    if (q.runKeyTaken.get(runKey) || !q.ranBefore.get(def.id, prev.dueAt.toISOString())) return null;
+    const at = nowIso(new Date(nowMs));
+    const rec = {
+      id: newId(), automation_id: def.id, trigger: 'schedule', period_key: prev.key, run_key: runKey, actor: null,
+      device_id: null, started_at: at, finished_at: at, status: 'missed', created_count: 0, created: null, alert_id: null,
+      error: null,
+      summary: `Missed the week of ${atLocal(prev.start, '12:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })} (due ${atLocal(prev.day, '12:00').toLocaleDateString('en-CA', { weekday: 'long', month: 'short', day: 'numeric' })} at ${clockText(def.trigger.at)}): the server was off or `
+        + 'failing until the week was over. Nothing was made late for it.',
+    };
+    try {
+      q.insertRun.run(rec);
+    } catch (err) {
+      if (!/UNIQUE/.test(err.message)) throw err; // another server noted it first
+      return null;
+    }
+    log?.warn?.(`${def.id}: ${rec.summary}`);
+    return runRow(rec);
+  }
+
+  /**
    * One look by the scheduler: every switched-on scheduled automation whose period's time has
-   * passed and whose period has no successful scheduled run runs once. Returns the runs made.
+   * passed and whose period has no successful scheduled run runs once (and a weekly one whose
+   * whole previous week went by without a run gets a 'missed' run). Returns the runs made.
    */
   function tick(nowMs = clock()) {
     const runs = [];
     for (const def of registry.values()) {
       if (def.trigger.type !== 'schedule' || !settingsOf(def).enabled) continue;
+      const missed = noteMissed(def, nowMs);
+      if (missed) runs.push({ automation: def.id, ...missed });
       const st = scheduleState(def, nowMs);
       if (!st.due) continue;
       const run = execute(def, { trigger: 'schedule', nowMs, period: st.period, runKey: st.runKey });

@@ -252,7 +252,7 @@ export function createCrmService({ db, services, log }) {
   // ---- reads for other modules (C8: the planner's automations) -----------------------------
   const live = {
     relationships: db.prepare(`SELECT r.*, a.name AS account_name, a.client_id AS client_id, c.name AS client_name,
-        c.status AS client_status, b.name AS business_name
+        c.status AS client_status, b.name AS business_name, b.archived AS business_archived
       FROM crm_relationships r ${REL_PARENTS}
       JOIN crm_clients c ON c.id = a.client_id AND c.deleted_at IS NULL
       WHERE r.deleted_at IS NULL ORDER BY c.name COLLATE NOCASE, a.name COLLATE NOCASE, r.id`),
@@ -284,7 +284,8 @@ export function createCrmService({ db, services, log }) {
     /**
      * Every live relationship (its account, client and business live) with its account's and
      * client's names, the client's status and the business's name — rows as stored (snake_case),
-     * plus account_name, client_id, client_name, client_status, business_name. For server-side
+     * plus account_name, client_id, client_name, client_status, business_name, business_archived
+     * (1 when archived). For server-side
      * rules like C4a's "no next step" (the planner's automations).
      */
     liveRelationships: () => live.relationships.all(),

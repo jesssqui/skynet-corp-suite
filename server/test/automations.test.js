@@ -8,10 +8,12 @@ process.env.TZ = 'America/Toronto';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BUSINESS_IDS } from '@suite/shared/crm';
+import { newId } from '@suite/shared/ids';
+import { createHlc } from '@suite/shared/hlc';
 import { modules } from '../src/modules/index.js';
 import { checkTrigger, triggerText, clockText, isoWeekKey, periodOf, atLocal } from '../src/modules/automations/schedule.js';
-import { RETRY_MS } from '../src/modules/automations/service.js';
-import { relationshipsToChase } from '../src/modules/planner/automations.js';
+import { RETRY_MS, checkAlert, clip } from '../src/modules/automations/service.js';
+import { relationshipsToChase, NEXT_STEP_CAP, listBody } from '../src/modules/planner/automations.js';
 import { tmpDir, testConfig, startApp, ensureTestUsers, sessionFor, testClock } from './helpers.js';
 
 const W = BUSINESS_IDS.wholesale;
@@ -185,7 +187,7 @@ test('two servers on one database, and a restart, never run a period twice', asy
   a.setNow(at('2026-10-16 08:05'));
   const ra = a.autos.tick();
   const rb = b.autos.tick();
-  assert.deepEqual(ra.map((r) => r.automation).sort(), ['friday-review', 'no-next-step']);
+  assert.deepEqual(ra.map((r) => r.automation), ['friday-review'], 'no-next-step is off by default');
   assert.deepEqual(rb, [], 'the second server finds the periods done');
   assert.equal(tasks(a.db, 'title = ?', 'Friday review').length, 1);
   await a.close();
@@ -381,6 +383,7 @@ test('No next step: one task per flagged relationship, for the business’s defa
   const r = seedRelationships(env);
   const { db } = env;
   env.autos.setSettings('friday-review', { enabled: false }, { actor: 'owner' });
+  env.autos.setSettings('no-next-step', { enabled: true }, { actor: 'owner' });
   const services = env.ctx.services;
   assert.deepEqual(relationshipsToChase({ crm: services.crm, planner: services.planner }).map((x) => x.id).sort(), [r.flagged, r.agency, r.undated].sort());
 
@@ -434,6 +437,7 @@ test('alerts only for automations set to alert: No next step is silent until swi
   let heard = [];
   const off = env.autos.onAlert((a) => heard.push(a)); // C5's seam
   env.autos.setSettings('friday-review', { enabled: false }, { actor: 'owner' });
+  env.autos.setSettings('no-next-step', { enabled: true }, { actor: 'owner' });
   env.setNow(at('2026-10-14 07:30'));
   env.autos.tick();
   assert.equal(alerts(env.db).length, 0);
@@ -453,10 +457,164 @@ test('alerts only for automations set to alert: No next step is silent until swi
   assert.equal(alerts(env.db).length, 1);
   off();
   heard = [];
-  // Devices may only mark alerts read.
-  const sync = env.sync;
-  assert.equal(sync.applyLocal({ actor: 'owner', entity: 'alert', op: 'update', recordId: alert.id, fields: { read_by_owner: true } }).status, 'applied');
-  const bad = sync.applyLocal({ actor: 'owner', entity: 'alert', op: 'update', recordId: alert.id, fields: { title: 'changed' } });
-  assert.deepEqual([bad.status, bad.code], ['rejected', 'invalid_value']);
-  assert.equal(sync.applyLocal({ actor: 'owner', entity: 'alert', op: 'delete', recordId: alert.id }).status, 'rejected');
+});
+
+// ---- review fixes ------------------------------------------------------------------------------------
+
+/** n active relationships on n clients (all flagged), made in order (oldest first). */
+function manyRelationships({ make }, n, business = W) {
+  const ids = [];
+  for (let i = 0; i < n; i += 1) {
+    const c = make('client', { name: `Client ${String(i).padStart(3, '0')}`, status: 'active' });
+    const a = make('account', { client_id: c, name: `Shop ${String(i).padStart(3, '0')}` });
+    ids.push(make('relationship', { account_id: a, business_id: business, kind: 'wholesale', status: 'active' }));
+  }
+  return ids;
+}
+
+test('No next step is off by default: the scheduler leaves it alone until someone switches it on', async (t) => {
+  const env = await setup(t);
+  manyRelationships(env, 3);
+  const view = env.autos.get('no-next-step');
+  assert.deepEqual([view.enabled, view.defaults.enabled, view.nextRunAt], [false, false, null]);
+  env.setNow(at('2026-10-14 07:30'));
+  assert.deepEqual(env.autos.tick().filter((r) => r.automation === 'no-next-step'), []);
+  assert.equal(tasks(env.db, "title LIKE 'Set the next step%'").length, 0);
+});
+
+test('No next step with 80 flagged and Alert on: 10 tasks a run (oldest first), one summary task for the rest, a short alert — never a failed run', async (t) => {
+  const env = await setup(t);
+  const rels = manyRelationships(env, 80);
+  env.autos.setSettings('friday-review', { enabled: false }, { actor: 'owner' });
+  await env.call('PUT', '/api/automations/no-next-step', { enabled: true, alert: true });
+  env.setNow(at('2026-10-14 07:30'));
+  const started = Date.now();
+  const [run] = env.autos.tick();
+  assert.ok(Date.now() - started < 1500, 'a small run');
+  assert.equal(run.status, 'ok', run.error);
+  assert.equal(run.summary, 'Made 10 tasks; 70 more waiting (one summary task made)');
+  const made = tasks(env.db, "title LIKE 'Set the next step%'");
+  assert.equal(made.length, NEXT_STEP_CAP);
+  assert.deepEqual(made.map((x) => x.relationship_id).sort(), rels.slice(0, 10).sort(), 'the oldest relationships first');
+  const [summary] = tasks(env.db, "title LIKE '%have no next step'");
+  assert.deepEqual([summary.title, summary.owner, summary.business_id, summary.due_date, summary.relationship_id],
+    ['70 more relationships have no next step', 'shared', PERSONAL, '2026-10-14', null]);
+  assert.match(summary.notes, /Today → No next step/);
+  const [alert] = alerts(env.db);
+  assert.equal(alert.title, '80 relationships need a next step');
+  const lines = alert.body.split('\n');
+  assert.equal(lines.length, 6);
+  assert.equal(lines[5], 'and 75 more');
+  // The next day: 10 more, the same summary task now counts 60.
+  env.setNow(at('2026-10-15 07:30'));
+  const [day2] = env.autos.tick();
+  assert.equal(day2.summary, 'Made 10 tasks; 60 more waiting (counted on one summary task)');
+  const summaries = tasks(env.db, "title LIKE '%have no next step'");
+  assert.deepEqual(summaries.map((x) => [x.id, x.title, x.due_date]), [[summary.id, '60 more relationships have no next step', '2026-10-15']]);
+  // Nothing over the cap any more: the suite finishes its own summary task.
+  for (const id of rels.slice(20)) env.update('relationship', id, { status: 'paused' });
+  const done = (await env.call('POST', '/api/automations/no-next-step/run', {})).body.run;
+  assert.equal(done.createdCount, 0);
+  assert.ok(tasks(env.db, 'id = ?', summary.id)[0].done_at, 'the summary task is finished');
+});
+
+test('alerts are clipped to their limits; listBody says "and N more"', async (t) => {
+  const env = await setup(t);
+  const id = env.autos.createAlert({ source: 'x'.repeat(200), title: 'T'.repeat(500), body: 'B'.repeat(10_000), link: '/x' });
+  const a = alerts(env.db).find((x) => x.id === id);
+  assert.deepEqual([a.title.length, a.body.length, a.source.length], [200, 4000, 80]);
+  assert.ok(a.title.endsWith('…'));
+  assert.equal(clip(null, 5), null);
+  assert.equal(listBody(['a', 'b'], 0, 5), 'a\nb');
+  assert.equal(listBody(['a', 'b', 'c'], 4, 2), 'a\nb\nand 5 more');
+});
+
+test('No next step: a task re-filed under another relationship no longer counts for the first; archived businesses are skipped', async (t) => {
+  const env = await setup(t);
+  env.autos.setSettings('friday-review', { enabled: false }, { actor: 'owner' });
+  env.autos.setSettings('no-next-step', { enabled: true }, { actor: 'owner' });
+  const [r1, r2] = manyRelationships(env, 2);
+  const [agency] = manyRelationships(env, 1, AGENCY);
+  env.update('business', AGENCY, { archived: true });
+  env.setNow(at('2026-10-14 07:30'));
+  assert.equal(env.autos.tick()[0].summary, 'Made 2 tasks');
+  assert.equal(tasks(env.db, 'relationship_id = ?', agency).length, 0, 'archived business: nothing');
+  const [t1] = tasks(env.db, 'relationship_id = ?', r1);
+  // Re-filed under r2 (still open and dated): r1 is flagged again and gets a new task.
+  env.update('task', t1.id, { relationship_id: r2 });
+  const again = (await env.call('POST', '/api/automations/no-next-step/run', {})).body.run;
+  assert.equal(again.summary, 'Made 1 task');
+  assert.equal(tasks(env.db, 'relationship_id = ? AND done_at IS NULL', r1).length, 1);
+});
+
+test('Friday review: Run now early in the week, then Friday’s run refreshes its numbers and still alerts', async (t) => {
+  const env = await setup(t);
+  env.setNow(at('2026-10-14 10:00')); // Wednesday
+  const early = (await env.call('POST', '/api/automations/friday-review/run', {})).body.run;
+  assert.equal(early.createdCount, 1);
+  const [review] = tasks(env.db, 'title = ?', 'Friday review');
+  assert.match(review.notes, /• 0 overdue tasks/);
+  env.make('task', { title: 'Late', owner: 'owner', business_id: PERSONAL, due_date: '2026-10-15' });
+  env.setNow(at('2026-10-16 08:00'));
+  const [run] = env.autos.tick();
+  assert.match(run.summary, /^Updated this week’s review with today’s numbers: 1 overdue/);
+  assert.equal(run.createdCount, 0);
+  const after = tasks(env.db, 'title = ?', 'Friday review');
+  assert.equal(after.length, 1);
+  assert.match(after[0].notes, /• 1 overdue task \(both/);
+  assert.match(after[0].notes, /Fri, Oct 16, 8:00 a\.m\./);
+  assert.equal(alerts(env.db).length, 2, 'Wednesday’s and Friday’s');
+  assert.equal(run.alertId, alerts(env.db)[1].id);
+  // A Run now after that doesn't touch it again.
+  const later = (await env.call('POST', '/api/automations/friday-review/run', {})).body.run;
+  assert.match(later.summary, /already there/);
+});
+
+test('a weekly run missed for a whole week is shown as missed — no late task — once; a fresh install has missed nothing', async (t) => {
+  const env = await setup(t);
+  env.autos.setSettings('no-next-step', { enabled: false }, { actor: 'owner' });
+  env.setNow(at('2026-10-14 10:00'));
+  assert.deepEqual(env.autos.tick(), [], 'never ran before: nothing missed');
+  env.setNow(at('2026-10-16 08:00'));
+  assert.equal(env.autos.tick()[0].status, 'ok');
+  // Off from Thursday Oct 22 to Monday Oct 26: Friday Oct 23's run never happened.
+  env.setNow(at('2026-10-26 09:00'));
+  const [missed] = env.autos.tick();
+  assert.deepEqual([missed.automation, missed.status, missed.periodKey, missed.createdCount], ['friday-review', 'missed', '2026-W43', 0]);
+  assert.match(missed.summary, /^Missed the week of Oct 19 \(due Friday, Oct 23 at 8:00 a\.m\.\)/);
+  assert.equal(env.autos.get('friday-review').lastRun.status, 'missed');
+  assert.deepEqual(tasks(env.db, 'title = ?', 'Friday review').map((x) => x.due_date), ['2026-10-16'], 'no late task');
+  env.setNow(at('2026-10-27 09:00'));
+  assert.deepEqual(env.autos.tick(), [], 'noted once');
+  env.setNow(at('2026-10-30 08:00'));
+  assert.equal(env.autos.tick()[0].status, 'ok', 'the next Friday runs as usual');
+});
+
+test('alerts from devices: no creates, and each person may only mark it read for themselves', async (t) => {
+  const env = await setup(t);
+  const alertId = env.autos.createAlert({ source: 'friday-review', title: 'The Friday review is ready' });
+  const partner = sessionFor(env.ctx, env.users.partner);
+  const clock = createHlc(partner.deviceId);
+  const pulled = await (await fetch(`${env.base}/api/sync/pull?limit=1000`, { headers: { cookie: partner.cookie } })).json();
+  const push = async (op, recordId, fields) => {
+    const res = await fetch(`${env.base}/api/sync/push`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: partner.cookie, origin: env.base },
+      body: JSON.stringify({ steps: [{ key: newId(), entity: 'alert', recordId, op, fields, hlc: clock.now(), seen: pulled.cursor }] }),
+    });
+    return (await res.json()).results[0];
+  };
+  const create = await push('create', newId(), { title: 'Fake', at: new Date().toISOString() });
+  assert.deepEqual([create.status, create.code], ['rejected', 'op_not_allowed']);
+  const other = await push('update', alertId, { read_by_owner: true });
+  assert.deepEqual([other.status, other.code], ['rejected', 'invalid_value']);
+  const title = await push('update', alertId, { title: 'Changed' });
+  assert.equal(title.status, 'rejected');
+  assert.equal((await push('update', alertId, { read_by_partner: true })).status, 'applied');
+  const row = alerts(env.db)[0];
+  assert.deepEqual([row.title, row.read_by_owner, row.read_by_partner], ['The Friday review is ready', null, 1]);
+  // The rule itself: server code may do anything; devices only their own flag.
+  assert.equal(checkAlert({ op: 'create', fields: {}, actor: 'system', server: true }), null);
+  assert.equal(checkAlert({ op: 'update', fields: { read_by_owner: true }, actor: 'owner', server: false }), null);
+  assert.equal(checkAlert({ op: 'update', fields: { read_by_owner: true }, actor: 'partner', server: false }).code, 'invalid_value');
 });
