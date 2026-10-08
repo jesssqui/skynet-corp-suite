@@ -32,6 +32,10 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       SESSION_IDLE_DAYS: ${SESSION_IDLE_DAYS:-30}
       SESSION_MAX_DAYS: ${SESSION_MAX_DAYS:-90}
+      # D1: the address the Connections page tells you to enter in the Order Manager (its container
+      # reaches this suite through Docker Desktop's host.docker.internal; see DEPLOY.md).
+      SUITE_PORT: ${SUITE_PORT:-3100}
+      WOM_CONNECT_URL: ${WOM_CONNECT_URL:-}
     volumes:
       # Live database: a Docker named volume (inside Docker's Linux VM), which is
       # where SQLite's WAL locking is reliable. Not a folder on the Mac.

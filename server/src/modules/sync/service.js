@@ -446,6 +446,9 @@ export function createSyncService({ db, log }) {
     const rec = getRecord.get(entry.entity, step.recordId);
     if (!rec) throw new StepError('not_found', 'no such record');
     if (rec.deleted) return { status: 'applied', alreadyDeleted: true, clashes: [] };
+    // The module's own rule sees deletes too (fields null; D1: devices may not delete the Order
+    // Manager's records, only the server detaches them). Every check written before D1 lets them by.
+    moduleCheck(ctx, registry.decodeRow(entry, entry.selectRow.get(step.recordId)));
 
     const unseen = unseenChange(entry, step.recordId, who.deviceId, seen);
     const edit = unseen?.step;

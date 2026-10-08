@@ -271,11 +271,49 @@ export function createCrmService({ db, services, log }) {
     return [...liveLink.account.all(app, externalId), ...liveLink.contact.all(app, externalId)].map((r) => view('link', r));
   }
 
+  // ---- reads for the wholesale connection (D1) -------------------------------------------
+  const forLinks = {
+    accountLinks: db.prepare(`SELECT l.id, l.external_id, l.account_id, a.client_id, l.matched_by, l.created_at, l.created_by
+      FROM crm_links l
+      JOIN crm_accounts a ON a.id = l.account_id AND a.deleted_at IS NULL
+      JOIN crm_clients c ON c.id = a.client_id AND c.deleted_at IS NULL
+      WHERE l.app = ? AND l.deleted_at IS NULL ORDER BY l.external_id, l.id`),
+    account: db.prepare(`SELECT a.*, c.name AS client_name, c.status AS client_status FROM crm_accounts a
+      JOIN crm_clients c ON c.id = a.client_id AND c.deleted_at IS NULL
+      WHERE a.id = ? AND a.deleted_at IS NULL`),
+    accountRelationships: db.prepare(`SELECT r.* FROM crm_relationships r
+      JOIN crm_businesses b ON b.id = r.business_id AND b.deleted_at IS NULL
+      WHERE r.account_id = ? AND r.deleted_at IS NULL ORDER BY r.id`),
+    clientNames: db.prepare(`SELECT c.id, c.name, c.status FROM crm_clients c
+      WHERE c.deleted_at IS NULL AND c.id IN (SELECT value FROM json_each(?))`),
+  };
+
+  /**
+   * Every live account link of one app (its account and that account's client live), with the
+   * account's client: [{ id, external_id, account_id, client_id, matched_by, created_at, created_by }].
+   * Contact links aren't listed: D1 attaches an outside customer's records to an account.
+   */
+  const liveAccountLinks = (app) => forLinks.accountLinks.all(app);
+
+  /** One live account (its client live too) with client_name and client_status, or null. */
+  function liveAccount(id) {
+    if (!isId(id)) return null;
+    const row = forLinks.account.get(id);
+    return row ? { ...view('account', row, { withSync: false }), client_name: row.client_name, client_status: row.client_status } : null;
+  }
+
   return {
     seedBusinesses,
     // C7: the accounting CSV import (preview, commit in chunks, batches). See import.js.
     imports: createImportService({ db, sync, log }),
     liveLinks,
+    // D1 (the wholesale connection): live account links of an app, one live account, its relationships.
+    liveAccountLinks,
+    liveAccount,
+    /** The live relationships of one account (with a live business of ours), as stored. */
+    accountRelationships: (accountId) => (isId(accountId) ? forLinks.accountRelationships.all(accountId).map((r) => view('relationship', r, { withSync: false })) : []),
+    /** id -> { id, name, status } for the live clients among `ids`. */
+    clientNames: (ids) => new Map(forLinks.clientNames.all(JSON.stringify([...new Set(ids)])).map((r) => [r.id, r])),
     listBusinesses,
     getBusiness: (id) => (isId(id) ? view('business', q.business.get(id)) : null),
     listClients,

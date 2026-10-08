@@ -18,7 +18,7 @@ const apps = new Map();
 async function startApp(t, config) {
   // The sync rules, proven with the test-only syncdemo module. The CRM (its seeded businesses
   // would shift every count and seq here) is tested with sync in crm.test.js.
-  const env = await startTestApp(t, config, { modules: [...modules.filter((m) => !['automations', 'crm', 'planner'].includes(m.name)), syncdemo] });
+  const env = await startTestApp(t, config, { modules: [...modules.filter((m) => !['automations', 'crm', 'planner', 'wholesale'].includes(m.name)), syncdemo] });
   const users = await ensureTestUsers(env.ctx);
   // A separate signed-in browser for requests that aren't about a particular device (clash lists, info).
   const observer = sessionFor(env.ctx, users.owner);
@@ -892,7 +892,7 @@ test('a module’s check hook learns who made the step (actor) and whether serve
       });
     },
   };
-  const env = await startTestApp(t, testConfig(tmpDir(t)), { modules: [...modules.filter((m) => !['automations', 'crm', 'planner'].includes(m.name)), syncdemo, memo] });
+  const env = await startTestApp(t, testConfig(tmpDir(t)), { modules: [...modules.filter((m) => !['automations', 'crm', 'planner', 'wholesale'].includes(m.name)), syncdemo, memo] });
   const users = await ensureTestUsers(env.ctx);
   const s = sessionFor(env.ctx, users.partner);
   const clock = createHlc(s.deviceId);

@@ -16,7 +16,9 @@
 // whose subtree changed unseen is kept (flagged). See service.js, "belonging".
 // `format` (text fields): the value is stored normalised (@suite/shared/normalize); see fields.js.
 // `check({ op, recordId, fields, current, actor, server })` (optional): a module's own rule, run in
-// the step's transaction before it is written (after the field and reference checks); return null,
+// the step's transaction before it is written (after the field and reference checks; for a delete,
+// fields is null and `current` is the row — D1 added deletes, so the Order Manager's records can't
+// be deleted by devices); return null,
 // or { code, reason } to refuse the step (devices put it in Needs attention). Reads only.
 // `actor` is who made the step (from the session, or 'system'); `server` is true for server code
 // (sync.applyLocal) and false for a device's push (C8: alerts are made by the server only).
