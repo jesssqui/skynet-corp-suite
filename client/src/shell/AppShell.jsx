@@ -5,6 +5,7 @@ import { useAuth } from '../auth/session.jsx';
 import BackupBanner from './BackupBanner.jsx';
 import UpdateBanner from './UpdateBanner.jsx';
 import { SyncBar } from '../sync/components.jsx';
+import { AlertsBell, AlertsStrip } from '../modules/automations/AlertsBell.jsx';
 import './shell.css';
 
 const linkClass = (base) => ({ isActive }) => `${base}${isActive ? ' active' : ''}`;
@@ -25,6 +26,7 @@ export default function AppShell({ children }) {
             {item.Badge ? <item.Badge /> : null}
           </NavLink>
         ))}
+        <AlertsBell className={linkClass('shell-nav-link shell-bell')} />
         <div className="shell-signed-in">
           <span>{session.user.displayName}</span>
           <span className="shell-signed-in-device">{session.device.name}</span>
@@ -34,6 +36,7 @@ export default function AppShell({ children }) {
       <main className="shell-main">
         <div className="shell-content">
           <SyncBar />
+          <AlertsStrip />
           <UpdateBanner />
           <BackupBanner />
           {children}

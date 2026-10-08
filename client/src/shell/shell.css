@@ -29,6 +29,16 @@
   gap: var(--space-2);
 }
 
+/* "Alerts" (automations, C8): a sidebar entry under the nav, set a little apart. */
+.shell-bell {
+  margin-top: var(--space-3);
+}
+
+/* Phones: a strip at the top of the page while an alert is unread (no sidebar to hold the bell). */
+.shell-alerts-strip {
+  display: none;
+}
+
 .shell-brand-mark {
   width: 26px;
   height: 26px;
@@ -157,6 +167,32 @@
 
   .shell-tab.active {
     color: var(--accent);
+  }
+
+  .shell-alerts-strip {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+    padding: var(--space-2) var(--space-3);
+    min-height: var(--tap);
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+    color: var(--text);
+    text-decoration: none;
+    font-size: var(--text-sm);
+  }
+
+  .shell-alerts-strip > svg:first-child {
+    color: var(--accent);
+  }
+
+  .shell-alerts-strip-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 

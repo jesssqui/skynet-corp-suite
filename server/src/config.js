@@ -89,6 +89,11 @@ export function loadConfig(env = process.env) {
       // scrypt cost (a power of two). Stored with each hash, so raising it later only affects new passwords.
       scryptN: scryptN(env.AUTH_SCRYPT_N),
     },
+    automations: {
+      // The minute scheduler (C8): on by default in production only, like the backup schedule.
+      // "Run now" on the Automations page works either way.
+      scheduled: bool(env.AUTOMATIONS_ENABLED, production),
+    },
     backup: {
       // Scheduler on by default in production only; `npm run backup` works either way.
       enabled: bool(env.BACKUP_ENABLED, production),

@@ -15,7 +15,7 @@ const log = createLogger('suite');
 
 fs.mkdirSync(config.dataDir, { recursive: true });
 const db = openDb(config.dbPath);
-const { app } = await createApp({ config, db, log });
+const { app, ctx } = await createApp({ config, db, log });
 const stopHeartbeat = startHeartbeat(lockPathFor(config.dbPath));
 
 const server = app.listen(config.port, config.host, () => {
@@ -43,12 +43,21 @@ if (config.backup.enabled) {
   log.info('nightly backup schedule is off (BACKUP_ENABLED); `npm run backup` still works');
 }
 
+// Automations (C8): one look a minute for due ones, in this container's TZ.
+let stopAutomations = () => {};
+if (config.automations.scheduled) {
+  stopAutomations = ctx.services.automations.startScheduler();
+} else {
+  log.info('automation scheduler is off (AUTOMATIONS_ENABLED); Run now on the Automations page still works');
+}
+
 let shuttingDown = false;
 function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   log.info(`${signal} received, shutting down`);
   stopBackups();
+  stopAutomations();
   server.close(() => {
     db.close(); // checkpoints the WAL into the main file
     stopHeartbeat();

@@ -18,7 +18,7 @@ const apps = new Map();
 async function startApp(t, config) {
   // The sync rules, proven with the test-only syncdemo module. The CRM (its seeded businesses
   // would shift every count and seq here) is tested with sync in crm.test.js.
-  const env = await startTestApp(t, config, { modules: [...modules.filter((m) => !['crm', 'planner'].includes(m.name)), syncdemo] });
+  const env = await startTestApp(t, config, { modules: [...modules.filter((m) => !['automations', 'crm', 'planner'].includes(m.name)), syncdemo] });
   const users = await ensureTestUsers(env.ctx);
   // A separate signed-in browser for requests that aren't about a particular device (clash lists, info).
   const observer = sessionFor(env.ctx, users.owner);
@@ -875,4 +875,42 @@ test('a signed-out device can no longer push or pull; the other device carries o
 
   await b.pull();
   assert.equal((await one(b, b.step('update', 'item', itemId, { title: 'Partner edit' }))).status, 'applied');
+});
+
+test('a module’s check hook learns who made the step (actor) and whether server code made it (server); old hooks are unaffected', async (t) => {
+  const calls = [];
+  const memo = {
+    name: 'memo',
+    createService({ services, db }) {
+      db.exec('CREATE TABLE IF NOT EXISTS memo_notes (id TEXT PRIMARY KEY, deleted_at TEXT, body TEXT)');
+      services.sync.registerEntity({
+        module: 'memo', entity: 'memo', table: 'memo_notes', fields: { body: { type: 'text' } },
+        check(args) {
+          calls.push(args);
+          return args.fields?.body === 'refuse devices' && !args.server ? { code: 'invalid_value', reason: 'not from a device' } : null;
+        },
+      });
+    },
+  };
+  const env = await startTestApp(t, testConfig(tmpDir(t)), { modules: [...modules.filter((m) => !['automations', 'crm', 'planner'].includes(m.name)), syncdemo, memo] });
+  const users = await ensureTestUsers(env.ctx);
+  const s = sessionFor(env.ctx, users.partner);
+  const clock = createHlc(s.deviceId);
+  const push = async (fields) => {
+    const res = await fetch(`${env.base}/api/sync/push`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: s.cookie, origin: env.base },
+      body: JSON.stringify({ steps: [{ key: newId(), entity: 'memo', recordId: newId(), op: 'create', fields, hlc: clock.now() }] }),
+    });
+    return (await res.json()).results[0];
+  };
+  assert.equal((await push({ body: 'hello' })).status, 'applied');
+  assert.deepEqual([(await push({ body: 'refuse devices' })).code], ['invalid_value']);
+  assert.equal(env.ctx.services.sync.applyLocal({ entity: 'memo', op: 'create', fields: { body: 'refuse devices' } }).status, 'applied');
+  assert.equal(env.ctx.services.sync.applyLocal({ actor: 'owner', entity: 'memo', op: 'create', fields: { body: 'x' } }).status, 'applied');
+  assert.deepEqual(calls.map((c) => [c.op, c.actor, c.server]),
+    [['create', 'partner', false], ['create', 'partner', false], ['create', 'system', true], ['create', 'owner', true]]);
+  assert.ok(calls.every((c) => 'recordId' in c && 'fields' in c && 'current' in c), 'the earlier arguments are all still there');
+  // An item without a check (syncdemo) still applies as before.
+  assert.equal(env.ctx.services.sync.applyLocal({ entity: 'item', op: 'create', fields: { title: 'plain' } }).status, 'applied');
 });

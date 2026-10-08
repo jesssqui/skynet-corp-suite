@@ -13,7 +13,10 @@ planner from **C4a** (module `planner`: tasks, the shared list, the capture inbo
 plan, and the "No next step" flag on relationships — all synced and offline), and planning from **C4b** (same module:
 week goals and month priorities, the Monday and monthly plans, the Friday review, Focus, the overbooked-day warning),
 and client intake from **C7** (Quick add — a one-line-per-client brain dump saved offline — and the accounting CSV
-import, which runs on the server and never overwrites or creates anything twice).
+import, which runs on the server and never overwrites or creates anything twice), and from **C8** the Connections
+screen (module `connections`: every connection's last success, queue and last error, with an off switch) and the
+automation framework (module `automations`: trigger, on/off, silent/alert, runs, the minute scheduler, synced in-app
+alerts) with the first two automations (the planner's Friday review list and relationships with no next step).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -69,13 +72,20 @@ server/src/
                            in chunks through applyLocal, remembered rows, batches), migrations/001_create_crm.sql,
                            002_import.sql (crm_import_batches, crm_import_rows: not synced)
   modules/planner/         tasks + inbox (C4a), goals + workdays (C4b): entities.js, service.js (registration,
-                           checkTask/checkGoal/checkWorkday, automatedOwnerFor, goals(), seedWorkdays),
-                           migrations/001_create_planner.sql, 002_goals.sql; no routes
-  backup/                  backup.js, restore.js, schedule.js
+                           checkTask/checkGoal/checkWorkday, automatedOwnerFor, goals(), seedWorkdays; C8 reads for
+                           its automations), migrations/001_create_planner.sql, 002_goals.sql; no routes.
+                           C8: automations.js (friday-review, no-next-step: reviewNumbers, relationshipsToChase)
+  modules/connections/     C8: service.js (the registry: register/placeholder/setPaused/list, the backup row,
+                           PLACEHOLDERS), routes.js (GET /, PUT /:id), migrations/001 (connections_switches, _changes)
+  modules/automations/     C8: service.js (registry, execute/runNow/tick/emit, startScheduler, alerts + onAlert),
+                           schedule.js (triggers, triggerText, periodOf, isoWeekKey — local time, DST-safe),
+                           routes.js (GET /, PUT /:id, POST /:id/run), migrations/001 (settings, changes, runs, made,
+                           the synced automations_alerts)
+  backup/                  backup.js, restore.js (+ carryKeptTables: modules' keepOnRestore), schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file)
 server/scripts/            backup.js, restore.js, users.js (CLIs)
 server/test/               node --test; helpers.js: tmpDir/testConfig/startApp/testClock/ensureTestUsers/sessionFor/dumpDb;
-                           fixtures/syncdemo = test-only synced module
+                           fixtures/syncdemo = test-only synced module; fixtures/conndemo = test-only connection (C8)
 client/src/
   main.jsx, App.jsx        providers + router built from the module list, behind AuthGate and SyncProvider;
                            main.jsx registers the service worker (production builds)
@@ -88,12 +98,18 @@ client/src/
   shell/                   AppShell (sidebar on desktop, bottom tab bar on phones), shell.css, SyncBar slot,
                            UpdateBanner ("new version ready · Reload"), BackupBanner
   ui/                      the shared look: theme.css (tokens, light/dark), theme.jsx, components.jsx (incl. Sheet, SelectField,
-                           TextAreaField, CheckboxField), ui.css (the Sheet's media queries), icons.jsx; import from ui/index.js.
+                           TextAreaField, CheckboxField, Switch), ui.css (the Sheet's media queries), icons.jsx; import from ui/index.js.
                            ui/format.js: formatDate/formatDateTime/formatDay (local time), toDateTimeInput/fromDateTimeInput
   modules/index.js         client module registration list -> nav + routes (a module's `nav` may be a list; `Badge`)
   modules/<name>/          index.jsx ({ id, nav, routes }) + pages
   api/client.js            fetch wrapper (api.get/post/put/del, ApiError); sends X-Suite-Device; 401 session codes
                            fire SESSION_LOST_EVENT
+  api/useServerData.js     C8: pages of server settings (not synced): load, re-check on foreground/online/30 s, `offline`
+  modules/health/          SystemPage (/system), SystemTabs.jsx (System · Connections · Automations)
+  modules/connections/     C8: ConnectionsPage (/system/connections; /connections redirects)
+  modules/automations/     C8: AutomationsPage (/system/automations; /automations redirects), AlertsPage (/alerts),
+                           AlertsBell.jsx (sidebar "Alerts" + count, the phone strip, useUnreadAlerts), alerts.js +
+                           logic.js (no React; client/test/automations.test.js)
   modules/sync/            /sync (Offline data), /sync/attention (Needs attention), /sync/data/:entity (plain records view)
   modules/crm/             C3b screens: ClientListPage (/crm), ClientPage (/crm/clients/:id), BusinessesPage
                            (/crm/businesses), forms.jsx (add/edit sheets), parts.jsx (chips, RecordSync, FormSheet),
@@ -116,14 +132,16 @@ client/public/             manifest.webmanifest, icons (placeholders)
 client/test/               node --test: the engine against a real server with syncdemo + fixtures/chk (a UNIQUE column),
                            overlay, the CRM screens' logic (clients.test.js) and forms with two devices
                            (clients-forms.test.js), the planner's logic (planner.test.js, plan.test.js) and two
-                           devices (planner-forms.test.js, planning-forms.test.js); fake-indexeddb
+                           devices (planner-forms.test.js, planning-forms.test.js), automations on devices
+                           (automations.test.js); fake-indexeddb
 test/e2e/                  Playwright end-to-end tests (npm run test:e2e); proxy.js cuts the server off for real outages
 ```
 
 ## Modules
 One folder per module on each side, same name on both (`server/src/modules/health`, `client/src/modules/health`).
 - **Server shape** (`modules/<name>/index.js`): `{ name, migrationsDir, createService(ctx), createRouter(ctx, service),
-  createPublicRouter?, start?, bodyLimits? }`. `bodyLimits: { '/import': '8mb' }` lets a path take JSON bodies bigger
+  createPublicRouter?, start?, bodyLimits?, keepOnRestore? }`. `keepOnRestore: ['table', …]` (C8): those tables keep the
+  current rows across a restore (`restore.js` copies them into the restored copy) — for switches, never for data. `bodyLimits: { '/import': '8mb' }` lets a path take JSON bodies bigger
   than the app's 1 MB (signed in only; crm's CSV import). `start(ctx, service)` runs once every service exists (auth uses it to notice a
   restore). Routes mount at `/api/<name>`. **Every `createRouter` route requires a signed-in session**
   (app.js puts `auth.requireSession` in front; `req.auth = { user: { id, actor, username, displayName }, device: { id,
@@ -366,9 +384,13 @@ gets 401 `device_signed_out`):
      device, re-sent after a restore). With SQL FKs it would be `constraint` → Needs attention instead.
    - `parent: true` (with `ref`): what the record **belongs to**. See "Belonging" below.
    A `not_found` rejection says what is missing: `missing: { field, entity, id }` (`field` null = the record itself).
-   Also on registerEntity: `check({ op, recordId, fields, current })` — the module's own rule, run inside the step's
+   Also on registerEntity: `check({ op, recordId, fields, current, actor, server })` — the module's own rule
+   (`actor`: who made the step, from the session or `system`; `server`: true for `applyLocal`, false for a device's
+   push — C8's alerts use both; hooks that ignore them are unaffected), run inside the step's
    transaction after the field and reference checks (reads only); return `{ code, reason }` to refuse the step
-   (devices show it in Needs attention). The CRM uses it for "one live link per outside record". Two limits: it sees
+   (devices show it in Needs attention). The CRM uses it for "one live link per outside record". It also gets
+   `actor` (who made the step: from the session, or `system`) and `server` (true for `applyLocal`, false for a
+   device's push) — C8's alerts use them (made by the server only; a device marks only its own read flag). Two limits: it sees
    the **step's** fields (for an update: only what that step changes, plus `current`, the row before it) — not what
    the update ends up writing (a field that loses a clash isn't written), so a rule over the final row must be
    written for that; and its answer depends on **arrival order** — the same step can be refused where it first
@@ -1028,6 +1050,127 @@ Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (
   an automation should use `goalPeriod(kind, day)` for its period and `position: null`.
 - Open: per-weekday day lengths (weekends) and time off are not modelled; done goals and tasks accumulate (pull scope).
 
+## Connections (connections module, C8)
+Code `server/src/modules/connections/`, page `client/src/modules/connections/`, tests `server/test/connections.test.js`
+(with the test-only `server/test/fixtures/conndemo`) and `test/e2e/automations.e2e.test.js`. The plan's rule: every
+connection is visible and switchable; one screen shows each one's last success, queue size and last error, and an off
+switch pauses it without breaking the app.
+- **Registering** (in the module's `createService`; `connections` comes right after `sync` in `modules/index.js`):
+  ```js
+  const handle = ctx.services.connections.register({
+    id: 'wom', name: 'Wholesale Order Manager', module: 'wom', description: '…',
+    describe: ({ now }) => ({ lastSuccessAt, lastErrorAt, lastError, queueSize, queueLabel?, detail? }),
+    pause() { … }, resume() { … },        // or pausable: false + alwaysOnReason (why it can't be paused)
+  });
+  handle.isPaused();                       // also ctx.services.connections.isPaused(id)
+  ```
+  A real `register` with a placeholder's id takes the placeholder's place and slot. `describe()` errors show as the
+  row's last error (the page never breaks).
+- **The contract** (conndemo proves it): paused → **no outside work and nothing logged as a failure**; jobs keep
+  queueing in the module's own outbox (written in the same transaction as the change) and `describe()` keeps answering,
+  so the page shows the queue growing; `resume()` catches up, in order. `pause()` is called at registration when the
+  stored switch is off, before any work. A failing pause/resume is logged; the switch stays as asked.
+- **Switches** are server settings (`connections_switches`; no row = on), **not synced**: changing one needs the
+  server (the page says so offline and disables the switches). Either person may switch; every change is in
+  `connections_changes` (actor, device, time) and the log. **They survive restores**: the module lists
+  `keepOnRestore: ['connections_switches', 'connections_changes']`, and `restore.js` (`carryKeptTables`) copies those
+  tables from the database being replaced into the restored copy — a restore never quietly switches a paused connection
+  back on. (A backup from before C8 has no such table: its switches start on. Restores by hand aren't covered.)
+- **Rows today**: the off-machine backup (from `backup/status.json`: last success, last error, "queue" = whole days
+  behind once the last good backup is over 26 h old; `pausable: false` — backups are never pausable from the app) and
+  placeholders "Not connected yet · comes with …": Order Manager (D1), Apple Calendar (C6), Stockroom (D16).
+- **API** (signed in; writes follow the JSON/Origin rules): `GET /api/connections` → `{ connections: [{ id, name,
+  module, description, state: on|paused|always_on|not_connected, pausable, alwaysOnReason, comesWith, lastSuccessAt,
+  lastErrorAt, lastError, queueSize, queueLabel, detail, changedAt, changedBy }] }`; `PUT /api/connections/:id
+  { paused }` → `{ connection }` (404 unknown, 409 `not_pausable` / `not_connected`, 400 bad body).
+- **Page**: System → Connections (`/system/connections`), desktop and phone; re-checks every 30 s while open.
+
+## Automations (automations module, C8)
+Framework `server/src/modules/automations/`, the first automations `server/src/modules/planner/automations.js`, page
+and alerts `client/src/modules/automations/`; tests `server/test/automations.test.js` (TZ America/Toronto),
+`client/test/automations.test.js`, `test/e2e/automations.e2e.test.js`. The plan's four rules: they prepare, you approve
+(tasks and in-app alerts only — **never anything sent outside**); each business has a default owner
+(`automatedOwnerFor`); each has an on/off switch and shows when it last ran; each arrives with the package whose data
+it uses.
+- **Registering** (`createService` of a module after `automations` in the list, or its `start`):
+  ```js
+  ctx.services.automations.register({
+    id: 'friday-review', name, description, module: 'planner',
+    trigger: { type: 'schedule', every: 'week', day: 'fri', at: '08:00' }   // or every: 'day', at: '07:30'
+          // or { type: 'event', event: 'order.placed', key: (data) => data.orderId, label? }
+    defaults: { enabled: true, alert: false }, alertLink?: '/plan/review',
+    run(ctx, { now, nowMs, today, period, trigger, actor, data, made, create }) {
+      if (made(period.key).length) return { summary: 'Already there' };
+      create('task', { … }, { key: period.key });       // sync.applyLocal as 'system', remembered under key
+      return { summary: 'Made 1 task', alert?: { title, body, link } };
+    },
+  });
+  ```
+  `run` is **synchronous** and the whole run is **one transaction** (`.immediate()`) with its bookkeeping: what it
+  creates, `automations_made`, the run row and the alert commit together or not at all. A run that throws changes
+  nothing and is recorded as an error. Writes go through sync (`create()` or `ctx.services.sync.applyLocal` as
+  `system`), so devices pull them like anything else; reads through other modules' services.
+- **Triggers** (`schedule.js`): times are the server's local time (the container's `TZ`, America/Toronto), built from
+  the calendar day + "HH:MM" with the local Date constructor, so 8:00 stays 8:00 across DST (a time that doesn't exist
+  on the spring-forward night runs an hour later that day). Plain English via `triggerText` ("Every Friday at 8:00 a.m.").
+- **Idempotency rule**: a scheduled automation runs once per **period** (its day, or its Monday–Sunday week: period key
+  `2026-10-08` / ISO week `2026-W41`). The run key `<id>:<period key>` is stored only on a successful run and is
+  `UNIQUE` (`automations_runs.run_key`), checked inside the run's IMMEDIATE transaction — restarts, catch-ups and two
+  servers on one database never run a period twice. The scheduler only looks at the **current** period: after
+  downtime it catches up once (if the period's time has passed and it hasn't run), never once per missed tick, and
+  earlier missed periods are not replayed. A weekly automation whose whole previous week went by without a run (the
+  server off from Friday to Sunday, or every try failed) gets one **missed** run for that week (status `missed`, holding
+  its run key) the first time the scheduler looks afterwards — the page shows it; no late task is made for a week
+  that is over; nothing is noted for an automation that had never run before. A failed scheduled run is retried no sooner than 15 min later (`RETRY_MS`).
+  `run` also gets `update(entity, id, fields)` (sync, as `system`) for records it made before; an alert is raised
+  when a run created **or updated** something.
+  Every `run` must also be idempotent by content (`made(key)` = what it made before): **Run now** (`POST …/run`) relies
+  on that. A successful Run now after the period's time claims the period (the scheduler won't run it again); one
+  before the time doesn't. Event runs use `<id>:<trigger.key(data)>` (a re-delivered event is a no-op).
+- **Scheduler**: `startScheduler()` (from `src/index.js` when `AUTOMATIONS_ENABLED`, on by default in production) —
+  one look 15 s after start, then every minute; runs are synchronous so looks never overlap. Tests call `tick()` and
+  move `ctx.now` (all run times use the module's clock). `emit(event, data)` is the event hook (no events exist yet).
+- **Switches**: `automations_settings` (no row = the automation's defaults), changes logged in
+  `automations_changes` (who, device); kept across restores like the connections' (`keepOnRestore`). Off = the
+  scheduler and events skip it; Run now still works.
+- **Alerts** (the C5 seam): an automation set to **alert** whose run created something makes one `alert` — a
+  **synced record** (`automations_alerts`, ops create/update; fields source, title, body, link, at, `read_by_owner`,
+  `read_by_partner`). Both people get every alert; each marks it read on their own boolean field (offline too; two of
+  one person's devices agree, so no clash; there is no "unread"). `checkAlert` refuses device updates to anything else.
+  Devices can't create alerts and may only set their own person's flag (`checkAlert`, using the hook's `actor` and
+  `server`); the server clips title and body to the field limits so a long alert never fails its run.
+  The shell shows "Alerts" with the unread count in the sidebar and, on phones, a strip at the top of the page while
+  something is unread; `/alerts` lists them. **For C5**: `automations.onAlert(fn)` is called with each alert row after
+  it is committed — phone notifications (quiet hours, the morning digest, silent vs alert) hang off it;
+  `createAlert({ source, title, body, link })` is there for other modules' alerts.
+- **API** (signed in): `GET /api/automations` → `{ automations: [{ id, name, description, module, trigger, when,
+  enabled, alert, defaults, changedAt, changedBy, lastRun, nextRunAt, recent }], scheduled, timeZone }`;
+  `PUT /api/automations/:id { enabled?, alert? }`; `POST /api/automations/:id/run` → `{ run, automation }` (200 also
+  when the run failed: `run.status: 'error'`). Page: System → Automations (`/system/automations`): what it does, when,
+  on/off, silent/alert, last run ("Never run" until it has), next run, Run now (then `store.syncNow()`).
+- **Friday review list** (`friday-review`; Fri 08:00; **alert** by default): one task "Friday review" on the **shared
+  list** (always: it is done together, whatever Personal's default owner becomes), business **Personal** (the review
+  spans every business; Personal is the planner's catch-all), due that Friday, 15 minutes, notes with the review's
+  numbers read on the server like `reviewLists`: overdue (both people + shared), renewals in 30 days, active clients
+  quiet 60 days, relationships with no next step (C4a's rule), this week's goals done, and the path `/plan/review`.
+  If this week's task (made by it, not deleted) exists: Run now does nothing; **Friday's scheduled run refreshes
+  its notes** with that morning's numbers (a review made by Run now early in the week isn't stale) and still alerts
+  when set to alert. A deleted one is made again only by Run now.
+- **Relationships with no next step** (`no-next-step`; daily 07:30; **off** and **silent** by default — someone
+  switches it on, so a database with thousands of imported clients isn't met all at once): for each relationship C4a's
+  rule flags **whose client is active and whose business isn't archived** (closing a client means "no next steps";
+  paused/ended relationships and anything under a deleted record are never flagged), a task "Set the next step for
+  <account> (<business>)" with `relationship_id`, `account_id`, `client_id`, the business's default owner, due
+  **today** — at most **10 a run** (`NEXT_STEP_CAP`), oldest relationships first; the rest are counted on **one summary
+  task** on the shared list (Personal, due today: "N more relationships have no next step", pointing at Today's list
+  and the review), kept up to date while open and finished by the suite when nothing is left over; the run says
+  "N more waiting". Its alert lists 5 titles and "and N more". Never a second one while its earlier task for that
+  relationship is open **and still names it** (even moved to no date; re-filed under another relationship it no longer
+  counts); done or deleted and still flagged → a new one.
+  **Decision**: being dated, the task *is* a dated next step and clears the flag while open. That is intended: the
+  flag's job moves to the owner's Today (and turns overdue if ignored) instead of a passive flag; finishing it
+  without setting a real next step brings the flag back, and the next run makes a new task.
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
@@ -1043,6 +1186,17 @@ Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (
   belongs to a day **or** a goal (plain `goal_id`), and "unplanned" is derived, never stored; each person's day length
   is a synced `workday` record with a fixed id. Next: C5 capture by Siri and the share sheet (`inbox_item.source`), C8
   the overview (goals against targets), D2 matching (links), the pull scope when volumes need it.
+- **C8 (connections and automations)**: done — see "Connections" and "Automations". Switches are server settings
+  (not synced) kept across restores; alerts are synced records. What comes next:
+  - **D1** (Order Manager receiver) registers the real `wom` connection (replacing the placeholder): its inbox/outbox
+    queue as `queueSize`, last good exchange, last error; `pause()` stops accepting/pulling without logging failures,
+    `resume()` catches up in order. Its events (`order.placed`, …) go through `automations.emit`.
+  - **C6** (Apple Calendar) registers `calendar` (CalDAV pull: last success, error; pausing stops the pull and the
+    feed's refresh, never deletes anything); **D16** registers `stockroom` (read-only pull) the same way.
+  - **D3 and later** add automations with `register()` in their own module (wholesale check-ins, balances, renewals…):
+    tasks via `automatedOwnerFor`, `made(key)` for "once per order/customer/period", event triggers with a `key`.
+  - **C5** turns alerts into phone notifications through `onAlert` (and adds quiet hours / the morning digest); until
+    then "alert" means the in-app alert.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -1052,8 +1206,12 @@ Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (
 (`createApp` + `listen(0)`) — no mocks of the database. Client tests (`client/test`) run the sync engine in Node with
 fake-indexeddb against such a server (helpers.js: `startServer`, `makeDevice` with an on/off connection switch); the
 client build must succeed. The sync engine tests (`server/test/sync.test.js`, `client/test/engine.test.js`) run without
-the crm module (nor the planner, which needs it) so its seeded businesses don't shift their counts;
-`startServer(t, config, { crm: true })` includes both. `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
+the crm module (nor the planner, which needs it, nor the automations with their synced alerts) so seeded records don't
+shift their counts; `startServer(t, config, { crm: true })` includes them. A restore of a broken live database still
+works with `--force`: carrying the switches is best effort (a warning, then the backup's switches) and the restored
+copy must pass `integrity_check`. Tests that depend on local time set
+`process.env.TZ = 'America/Toronto'` at the top (automations.test.js). The e2e `startServer(t, { extraModules })` adds
+test-only modules (conndemo). `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
 touching the engine, the service worker or the sync UI. Write a test with every module and every bug fix.
 
 ## Git

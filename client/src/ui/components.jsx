@@ -347,6 +347,49 @@ export function CheckboxField({ label, id, checked, onChange, hint }) {
 }
 
 /**
+ * An on/off switch (role="switch"), a full tap target high. `label` names it for screen readers and
+ * shows beside it unless `hideLabel`; `onChange(next)` gets the new state. Disabled while saving or
+ * offline.
+ */
+export function Switch({ checked, onChange, label, hideLabel = false, disabled = false, id, testId }) {
+  const on = Boolean(checked);
+  return (
+    <button
+      id={id}
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={hideLabel ? label : undefined}
+      disabled={disabled}
+      data-testid={testId}
+      onClick={() => onChange(!on)}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)', minHeight: 'var(--tap)', padding: 0,
+        border: 0, background: 'transparent', color: 'var(--text)', fontSize: 'var(--text-sm)', fontWeight: 600,
+        cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.55 : 1,
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: 44, height: 26, borderRadius: 999, flexShrink: 0, position: 'relative',
+          background: on ? 'var(--ok)' : 'var(--surface-2)', border: `1px solid ${on ? 'var(--ok)' : 'var(--border)'}`,
+          transition: 'background 120ms',
+        }}
+      >
+        <span
+          style={{
+            position: 'absolute', top: 2, left: on ? 20 : 2, width: 20, height: 20, borderRadius: '50%',
+            background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,0.25)', transition: 'left 120ms',
+          }}
+        />
+      </span>
+      {hideLabel ? null : label}
+    </button>
+  );
+}
+
+/**
  * A dialog for a short form: a sheet from the bottom on phones, a centred panel on wider
  * screens (ui.css). Escape, a tap outside or the close button call onClose (which may ask first); the page behind doesn't scroll
  * while it is open. `footer` (the buttons) stays visible at the bottom while the body scrolls.
