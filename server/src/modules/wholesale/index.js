@@ -22,6 +22,11 @@ export default {
     } catch (err) {
       ctx.log.error('checking for a restore failed:', err);
     }
+    try {
+      service.checkCardVersion(); // D3: new card fields → every card brought up to date (below)
+    } catch (err) {
+      ctx.log.error('checking the card fields failed:', err);
+    }
     service.reconcileAll().catch((err) => ctx.log.error('reconcile at start failed (tried again within a minute):', err));
   },
   // Kept across a restore — the one exception to "keepOnRestore is for switches, never data":

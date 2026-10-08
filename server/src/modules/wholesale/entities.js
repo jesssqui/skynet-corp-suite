@@ -37,6 +37,11 @@ export const WHOLESALE_ENTITIES = [
       spend_cents: CENTS,
       paid_cents: CENTS,
       credit_cents: CENTS,
+      // D3: a regular's ordering rhythm (figures.js orderRhythm), null when not a regular. The card
+      // shows "Quiet regular" from quiet_from on — a date, so each device sees it on the right day
+      // without the card changing; a new order moves it (the card is projected again).
+      usual_gap_days: { type: 'integer' },
+      quiet_from: { type: 'date' },
     },
   },
   {
