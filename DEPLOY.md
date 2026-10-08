@@ -169,6 +169,11 @@ shows *A new version of the suite is ready · Reload*.
 than `BACKUP_KEEP_DAYS` (default 30; the newest is always kept). If the container was down at backup time, it catches
 up two minutes after it starts. Nothing to set up on the Mac — no launchd plist, no Node on the Mac, no cron.
 
+The automations (System → Automations: the Friday review list at 8:00 on Fridays, "no next step" at 7:30 daily) run
+the same way: a scheduler inside the server, in the container's `TZ`, on by default in production
+(`AUTOMATIONS_ENABLED=false` turns it off; *Run now* on that page works either way). After downtime each catches up
+once for the current day or week.
+
 Why not launchd: a plist would have to run `docker compose exec …` from your user session and fail quietly when Docker
 isn't up yet, and it would not move with the app. The trade-off is that no backup is made while the app is down — but
 nothing changes while it is down, and the catch-up run covers it when it comes back.
