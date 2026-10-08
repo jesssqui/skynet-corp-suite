@@ -175,67 +175,68 @@ export const isQuiet = (r, today) => Boolean(r?.quiet_from) && today >= r.quiet_
 export const OVERDUE_AFTER_DAYS = 30;
 
 /**
- * What each order still owes, by the Order Manager's own balance rule (its A8 "Balance" and
- * utils/money.js PAID_ROWS_SQL): balance = order totals − payments − store credit applied. Refunds
- * and credit notes are NOT taken off an order's balance — a credit note is credit the customer
- * holds until it is applied (then it is "store credit applied" on an order, so taking off both would
- * count it twice), and money refunded went back to the customer. Per order:
+ * What each order still owes, exactly as the Order Manager's **Balances page** works it out
+ * (routes/customers.js `GET /balances` with its aging, and `GET /api/payments/customer/:id/balance`):
  *
- *  • orders that count (active, not deleted; history-only ones too, as in the Order Manager):
- *    owing = total_cents − live payments on it − store credit applied on it;
- *  • money not tied to a counting order goes to the oldest owing orders first (the Order Manager's
- *    aging does the same): payments on account (no order, or an order not held here), what an
- *    overpaid order paid beyond its total, and what was paid on a cancelled or deleted order less
- *    what was given back on it (refunds + credit notes; never below 0 — PAID_ROWS_SQL's rule).
+ *  • balance = Σ totals of the orders that count (active, not deleted — history-only ones too)
+ *    − everything paid (utils/money.js PAID_ROWS_SQL): **every** live payment of the customer (on any
+ *    order, cancelled ones included, or on account), plus store credit applied (on any order), less
+ *    what was given back (refunds + credit notes) on a cancelled, not-deleted order — never more than
+ *    was paid on that order (payments + credit applied there);
+ *  • the aging pays the counting orders off **oldest first** (order date, then when placed) with that
+ *    whole paid figure — so a payment recorded against a newer order still pays the oldest first, as
+ *    the Order Manager's aging does; what is left on each order is what it owes.
+ *  Refunds and credit notes on orders that count are NOT taken off (a credit note is credit held until
+ *  it is applied — then it is "store credit applied" — and a refund is money already given back), and
+ *  payments moved to store credit when an order was deleted are removed payments (credit held, not paid).
  *
  * orders: rows { uid, number, order_date, placed_at, status, deleted, has_snapshot, total_cents }
  * money:  rows { kind, sub_kind, amount_cents, removed, order_uid }
- * → { orders: [{ uid, number, order_date, total_cents, paid_cents, owing_cents }] oldest first (counting
- *     orders only), balance_cents (Σ owing), unused_cents (money left over after every order is paid) }
+ * → { orders: [{ uid, number, order_date, total_cents, owing_cents }] oldest first (counting orders only),
+ *     owing_cents (Σ owing, ≥ 0), balance_cents (the Order Manager's balance: may be negative = credit),
+ *     paid_cents (what counts as paid), unused_cents (paid beyond every order) }
  */
 export function owingByOrder(orders, money) {
   const counting = orders.filter(countsAsOrder);
-  const isCounting = new Set(counting.map((o) => o.uid));
-  const known = new Set(orders.map((o) => o.uid));
+  const cancelled = new Set(orders.filter((o) => o.status === 'cancelled' && !o.deleted).map((o) => o.uid));
   const paidOn = new Map();
   const backOn = new Map();
   const add = (m, k, v) => m.set(k, (m.get(k) ?? 0) + v);
-  let pool = 0;
+  let paid = 0;
   for (const m of money) {
     if (m.removed) continue;
-    let paid = 0;
-    if (m.kind === 'payment') paid = m.amount_cents;
-    else if (m.kind === 'refund' && m.sub_kind === 'store_credit_applied') paid = -m.amount_cents; // stored negative
+    let p = null;
+    if (m.kind === 'payment') p = m.amount_cents;
+    else if (m.kind === 'refund' && m.sub_kind === 'store_credit_applied') p = -m.amount_cents; // stored negative
     else if ((m.kind === 'refund' && m.amount_cents > 0) || m.kind === 'credit_note') {
       if (m.order_uid) add(backOn, m.order_uid, m.amount_cents);
       continue;
-    } else continue;
-    if (m.order_uid && known.has(m.order_uid)) add(paidOn, m.order_uid, paid);
-    else pool += paid; // on account
-  }
-  for (const o of orders) {
-    if (isCounting.has(o.uid)) continue;
-    pool += Math.max(0, (paidOn.get(o.uid) ?? 0) - (backOn.get(o.uid) ?? 0));
-  }
-  const rows = counting.map((o) => {
-    const paid = paidOn.get(o.uid) ?? 0;
-    let owing = (o.total_cents ?? 0) - paid;
-    if (owing < 0) {
-      pool += -owing;
-      owing = 0;
     }
-    return { uid: o.uid, number: o.number ?? null, order_date: o.order_date ?? null, placed_at: o.placed_at ?? null, total_cents: o.total_cents ?? 0, paid_cents: paid, owing_cents: owing };
-  }).sort((a, b) => -newestFirst(a, b));
+    if (p === null) continue;
+    paid += p;
+    if (m.order_uid) add(paidOn, m.order_uid, p);
+  }
+  // Given back on a cancelled order is taken off what was paid — never more than was paid there.
+  for (const uid of cancelled) paid -= Math.min(backOn.get(uid) ?? 0, Math.max(0, paidOn.get(uid) ?? 0));
+  const rows = counting.map((o) => ({ uid: o.uid, number: o.number ?? null, order_date: o.order_date ?? null, placed_at: o.placed_at ?? null, total_cents: o.total_cents ?? 0 }))
+    .sort((a, b) => -newestFirst(a, b));
+  const invoiced = rows.reduce((s, r) => s + r.total_cents, 0);
+  let left = paid;
   for (const r of rows) {
-    if (pool <= 0) break;
-    const take = Math.min(pool, r.owing_cents);
-    r.owing_cents -= take;
-    pool -= take;
+    if (left >= r.total_cents) {
+      r.owing_cents = 0;
+      left -= r.total_cents;
+    } else {
+      r.owing_cents = r.total_cents - Math.max(0, left);
+      left = 0;
+    }
   }
   return {
     orders: rows.map(({ placed_at: _p, ...r }) => r),
-    balance_cents: rows.reduce((s, r) => s + r.owing_cents, 0),
-    unused_cents: Math.max(0, pool),
+    owing_cents: rows.reduce((s, r) => s + r.owing_cents, 0),
+    balance_cents: invoiced - paid,
+    paid_cents: paid,
+    unused_cents: Math.max(0, left),
   };
 }
 
