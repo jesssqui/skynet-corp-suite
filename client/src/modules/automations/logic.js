@@ -4,13 +4,22 @@ import { actorLabel } from '../crm/logic.js';
 
 const SOON_MS = 90 * 1000;
 
-/** "Oct 9, 2026, 8:00 AM · on schedule · Made the Friday review…" / "… · Run now by you · Failed: …". */
-export function runText(run, me) {
+/** What a run did: its summary, or "Failed: …". */
+export function runWhat(run) {
+  return run.status === 'error' ? `Failed: ${run.error}` : run.summary;
+}
+
+/** When and how a run happened: "Oct 9, 2026, 8:00 AM · on schedule" / "… · Run now by you". */
+export function runWhen(run, me) {
   const how = run.trigger === 'schedule' ? 'on schedule'
     : run.trigger === 'event' ? 'after an event'
       : `Run now${run.actor ? ` by ${(actorLabel(run.actor, me) ?? run.actor).toLowerCase()}` : ''}`;
-  const what = run.status === 'error' ? `Failed: ${run.error}` : run.summary;
-  return `${formatDateTime(run.startedAt)} · ${how} · ${what}`;
+  return `${formatDateTime(run.startedAt)} · ${how}`;
+}
+
+/** Both on one line: "Oct 9, 2026, 8:00 AM · on schedule · Made the Friday review…". */
+export function runText(run, me) {
+  return `${runWhen(run, me)} · ${runWhat(run)}`;
 }
 
 /** When it runs next: a time, "Due now (within a minute)", "Switched off", or for event triggers "When it happens". */

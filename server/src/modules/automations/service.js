@@ -185,7 +185,7 @@ export function createAutomationsService(ctx) {
    * Returns the run (or null when a scheduled period turned out to be done already — another
    * server got there first).
    */
-  function execute(def, { trigger, nowMs, period = null, runKey = null, actor = null, deviceId = null, data = null }) {
+  function execute(def, { trigger, nowMs, period = null, runKey = null, claimIfFree = false, actor = null, deviceId = null, data = null }) {
     const nowDate = new Date(nowMs);
     // Times come from the module's clock (ctx.now: real time in production, moved by tests), so
     // "last ran", retries and what the scheduler compares all agree.
@@ -196,7 +196,10 @@ export function createAutomationsService(ctx) {
     let alertId = null;
     try {
       const row = db.transaction(() => {
-        if (runKey && q.runKeyTaken.get(runKey)) return null;
+        if (runKey && q.runKeyTaken.get(runKey)) {
+          if (!claimIfFree) return null;
+          runKey = null; // Run now again in a period that already ran: runs, without the key
+        }
         const created = [];
         const made = (key) => q.made.all(def.id, String(key));
         const create = (entity, fields, { key = null } = {}) => {
@@ -250,12 +253,20 @@ export function createAutomationsService(ctx) {
     }
   }
 
-  /** Run now (from the page): idempotent through the automation's own checks; works when switched off too. */
+  /**
+   * Run now (from the page): idempotent through the automation's own checks; works when switched
+   * off too. A successful Run now after this period's time has come counts as the period's run
+   * (it takes the run key when free), so the scheduler doesn't run it again minutes later; one
+   * before that time doesn't (things may change before the scheduled run).
+   */
   function runNow(id, { actor = null, deviceId = null } = {}) {
     const def = need(id);
     const nowMs = clock();
     const period = def.trigger.type === 'schedule' ? periodOf(def.trigger, new Date(nowMs)) : null;
-    return execute(def, { trigger: 'manual', nowMs, period, actor, deviceId });
+    const due = period && nowMs >= period.dueAt.getTime();
+    return execute(def, {
+      trigger: 'manual', nowMs, period, actor, deviceId, ...(due ? { runKey: `${def.id}:${period.key}`, claimIfFree: true } : {}),
+    });
   }
 
   /** What the scheduler would do for one scheduled automation at `nowMs`: { due, period, runKey, retryAt }. */

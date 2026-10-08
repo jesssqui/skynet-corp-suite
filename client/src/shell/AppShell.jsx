@@ -17,8 +17,7 @@ export default function AppShell({ children }) {
       <nav className="shell-sidebar" aria-label="Main">
         <div className="shell-brand">
           <img className="shell-brand-mark" src="/icons/icon.svg" alt="" />
-          <span className="shell-brand-name">Skynet Corp Suite</span>
-          <AlertsBell />
+          Skynet Corp Suite
         </div>
         {navItems.map((item) => (
           <NavLink key={item.id} to={item.path} end={item.path === '/'} className={linkClass('shell-nav-link')}>
@@ -27,6 +26,7 @@ export default function AppShell({ children }) {
             {item.Badge ? <item.Badge /> : null}
           </NavLink>
         ))}
+        <AlertsBell className={linkClass('shell-nav-link shell-bell')} />
         <div className="shell-signed-in">
           <span>{session.user.displayName}</span>
           <span className="shell-signed-in-device">{session.device.name}</span>

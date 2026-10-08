@@ -13,13 +13,13 @@ import { actorLabel } from '../crm/logic.js';
 import SystemTabs from '../health/SystemTabs.jsx';
 import { useUnreadAlerts } from './AlertsBell.jsx';
 import { unreadText } from './alerts.js';
-import { runText, nextRunText } from './logic.js';
+import { runText, runWhat, runWhen, nextRunText } from './logic.js';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
 
 function Row({ label, children, testId }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(84px, 110px) 1fr', gap: 'var(--space-3)', alignItems: 'baseline' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '76px 1fr', gap: 'var(--space-3)', alignItems: 'baseline' }}>
       <span style={{ ...muted, fontSize: 'var(--text-xs)', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 600 }}>{label}</span>
       <span style={{ fontSize: 'var(--text-sm)', minWidth: 0, overflowWrap: 'anywhere' }} data-testid={testId}>{children}</span>
     </div>
@@ -35,8 +35,7 @@ function AutomationCard({ a, me, offline, scheduled, onChange, onRun, busy, resu
           <div style={{ minWidth: 0, flex: '1 1 260px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
               <h2 style={{ fontSize: 'var(--text-md)', fontWeight: 650, margin: 0 }}>{a.name}</h2>
-              <Badge tone={a.enabled ? 'ok' : 'neutral'}>{a.enabled ? 'On' : 'Off'}</Badge>
-              {a.alert ? <Badge tone="accent"><Icon name="bell" size={12} />Alert</Badge> : <Badge>Silent</Badge>}
+              {a.enabled ? null : <Badge>Off</Badge>}
             </div>
             <p style={{ ...muted, margin: 'var(--space-1) 0 0' }}>{a.description}</p>
           </div>
@@ -53,7 +52,10 @@ function AutomationCard({ a, me, offline, scheduled, onChange, onRun, busy, resu
           <Row label="When" testId={`when-${a.id}`}>{a.when}</Row>
           <Row label="Last run" testId={`last-run-${a.id}`}>
             {last ? (
-              <span style={last.status === 'error' ? { color: 'var(--danger)' } : undefined}>{runText(last, me)}</span>
+              <>
+                <span style={{ display: 'block', ...(last.status === 'error' ? { color: 'var(--danger)' } : {}) }}>{runWhat(last)}</span>
+                <span style={{ display: 'block', ...muted, fontSize: 'var(--text-xs)' }}>{runWhen(last, me)}</span>
+              </>
             ) : <strong>Never run</strong>}
           </Row>
           <Row label="Next run" testId={`next-run-${a.id}`}>{nextRunText(a, { scheduled })}</Row>
@@ -181,7 +183,7 @@ export default function AutomationsPage() {
       {data ? (
         <p style={{ ...muted, marginTop: 'var(--space-4)' }}>
           Times are the server’s ({data.timeZone}). Each runs once per period — a restart or a missed night never makes
-          it twice — and Run now only adds what is missing. Alert puts a note under the bell for both of you; silent
+          it twice — and Run now only adds what is missing. Alert puts a note in Alerts for both of you; silent
           ones just add their tasks.
         </p>
       ) : null}

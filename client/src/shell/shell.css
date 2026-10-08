@@ -29,39 +29,9 @@
   gap: var(--space-2);
 }
 
-.shell-brand-name {
-  flex: 1;
-  min-width: 0;
-}
-
-/* The alerts bell (automations, C8): beside the name on wide screens. */
+/* "Alerts" (automations, C8): a sidebar entry under the nav, set a little apart. */
 .shell-bell {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius);
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.shell-bell:hover,
-.shell-bell.has-unread {
-  color: var(--text);
-  background: var(--surface-2);
-}
-
-.shell-bell .shell-bell-count {
-  position: absolute;
-  top: -2px;
-  right: -4px;
-  margin: 0;
-  height: 17px;
-  min-width: 17px;
-  padding: 0 4px;
-  font-size: 10px;
+  margin-top: var(--space-3);
 }
 
 /* Phones: a strip at the top of the page while an alert is unread (no sidebar to hold the bell). */

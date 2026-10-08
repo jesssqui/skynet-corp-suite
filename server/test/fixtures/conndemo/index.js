@@ -50,7 +50,6 @@ export default {
         lastErrorAt: state.lastErrorAt,
         lastError: state.lastError,
         queueSize: q.count.get().n,
-        detail: state.paused ? 'Paused: jobs wait here' : null,
       }),
       pause() {
         state.paused = true;
