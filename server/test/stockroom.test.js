@@ -477,6 +477,50 @@ test('deliveries: one task per confirmed purchase order, due on its expected day
   assert.equal(s.task(one.id).done_at, null);
   assert.match(s.task(one.id).notes, /reopened by the suite/);
   assert.equal(s.tasks("title LIKE 'Receive delivery%'").length, 2, 'never a second task for one order');
+  assert.match(s.task(one.id).notes, /10 of 100 tins/, 'reopened with the order as it is now');
+  // …and it keeps following the order (review fix: the notes froze after a reopen).
+  s.hub.state.deliveries.items[1] = po({ po_id: 1, expected_on: '2026-10-22', remaining_tins: 4 });
+  s.clock.advance(61 * 60_000);
+  await s.svc.pullRound();
+  assert.match(s.task(one.id).notes, /4 of 100 tins/);
+  assert.equal(s.task(one.id).title, 'Receive delivery PO-0001 from Swedish Match: 4 tins');
+  // A person's own notes are never replaced.
+  s.edit(one.id, { notes: 'Call them first' });
+  s.hub.state.deliveries.items[1] = po({ po_id: 1, expected_on: '2026-10-22', remaining_tins: 3 });
+  s.clock.advance(61 * 60_000);
+  await s.svc.pullRound();
+  assert.equal(s.task(one.id).notes, 'Call them first');
+});
+
+test('deliveries with Stockroom’s B10 fields: finished with how the order ended; a truncated open list finishes nothing', async (t) => {
+  const s = await setup(t, { connect: false });
+  const ended = (o) => ({ po_id: o.po_id, number: `PO-000${o.po_id}`, supplier: 'Swedish Match', supplier_id: 7, status: o.status, ended_at: '2026-10-12T15:00:00.000Z', reason: o.reason ?? null });
+  s.hub.state.deliveries = { ...s.hub.state.deliveries, items: [1, 2, 3, 4].map((id) => po({ po_id: id })), ended: [], purchase_orders_truncated: false };
+  await s.call('PUT', '/api/stockroom/connection', { body: { code: s.hub.code } });
+  await s.svc.pullRound();
+  const byPo = (n) => s.tasks(`title LIKE 'Receive delivery PO-000${n} %'`)[0];
+  assert.equal(s.open("title LIKE 'Receive delivery%'").length, 4);
+  // Over 500 open (cut): orders missing from the list may still be open — nothing is finished.
+  s.hub.state.deliveries = { ...s.hub.state.deliveries, items: [po({ po_id: 4 })], purchase_orders_truncated: true };
+  s.clock.advance(61 * 60_000);
+  await s.svc.pullRound();
+  assert.equal(s.open("title LIKE 'Receive delivery%'").length, 4);
+  // Whole again: each finished with how it ended.
+  s.hub.state.deliveries = {
+    ...s.hub.state.deliveries, purchase_orders_truncated: false,
+    ended: [ended({ po_id: 1, status: 'received' }), ended({ po_id: 2, status: 'cancelled', reason: 'Supplier out of stock' }), ended({ po_id: 3, status: 'closed_short', reason: '' })],
+  };
+  s.clock.advance(61 * 60_000);
+  await s.svc.pullRound();
+  assert.match(byPo(1).notes, /Received in full in Stockroom — finished by the suite/);
+  assert.match(byPo(2).notes, /Cancelled in Stockroom: Supplier out of stock — finished by the suite/);
+  assert.match(byPo(3).notes, /Closed short in Stockroom — finished by the suite/);
+  assert.equal(byPo(4).done_at, null);
+  // Gone and not in `ended` (ended over 30 days ago, say): the general reason.
+  s.hub.state.deliveries = { ...s.hub.state.deliveries, items: [] };
+  s.clock.advance(61 * 60_000);
+  await s.svc.pullRound();
+  assert.ok(byPo(4).notes.includes(DELIVERY_GONE));
 });
 
 test('differences: one task per open difference at or over Stockroom’s limit; finished when marked investigated; a truncated list finishes nothing; at most 10 new a day', async (t) => {
@@ -508,6 +552,64 @@ test('differences: one task per open difference at or over Stockroom’s limit; 
   s.clock.advance(24 * 60 * 60_000);
   await s.svc.pullRound();
   assert.equal(s.open("title LIKE 'Investigate%Product 1__%'").length, 15);
+});
+
+test('differences: a limit raised in Stockroom doesn’t close what is still open — the task stays until it is investigated; no new tasks under the limit', async (t) => {
+  const s = await setup(t, { connect: false });
+  s.hub.state.differences = { threshold_tins: 3, open: 1, truncated: false, items: [diff({ id: 1, variance: -5 })] };
+  await s.call('PUT', '/api/stockroom/connection', { body: { code: s.hub.code } });
+  await s.svc.pullRound();
+  const [task] = s.open("title LIKE 'Investigate%'");
+  s.hub.state.differences = { threshold_tins: 10, open: 2, truncated: false, items: [diff({ id: 1, variance: -5 }), diff({ id: 2, variance: -6 })] };
+  s.clock.advance(61 * 60_000);
+  await s.svc.pullRound();
+  assert.equal(s.task(task.id).done_at, null, 'still open in Stockroom: not “investigated”');
+  assert.equal(s.tasks("title LIKE 'Investigate%'").length, 1, 'none made for a difference under the new limit');
+  s.hub.state.differences = { threshold_tins: 10, open: 1, truncated: false, items: [diff({ id: 2, variance: -6 })] };
+  s.clock.advance(61 * 60_000);
+  await s.svc.pullRound();
+  assert.ok(s.task(task.id).done_at);
+  assert.ok(s.task(task.id).notes.includes(DIFFERENCE_GONE));
+});
+
+test('a forced round asked for while one runs is run after it — once, however many ask (Pull now, a new code)', async (t) => {
+  const s = await setup(t);
+  s.hub.delayMs.deliveries = 150;
+  s.clock.advance(61 * 60_000);
+  const before = s.hub.calls('order-soon');
+  const first = s.svc.pullRound();
+  const a = s.svc.pullRound({ force: true });
+  const b = s.svc.pullRound({ force: true });
+  assert.equal(a, b, 'coalesced');
+  assert.notEqual(a, first);
+  assert.equal(s.svc.pullRound(), first, 'a plain request shares the running round');
+  assert.deepEqual((await first).got, ['deliveries', 'differences', 'counts']);
+  assert.deepEqual((await a).got, ['deliveries', 'differences', 'counts', 'order-soon'], 'the forced round read everything');
+  assert.equal(s.hub.calls('deliveries'), 3, 'connect + the first round + one forced round');
+  assert.equal(s.hub.calls('order-soon'), before + 1);
+});
+
+test('the order-soon re-read after deliveries change survives a failure and its backoff; a new day alone isn’t a change', async (t) => {
+  const s = await setup(t);
+  const want = () => s.db.prepare("SELECT wanted FROM stockroom_pulls WHERE endpoint = 'order-soon'").get().wanted;
+  // Only the calendar moved (today, overdue, counts): no re-read.
+  s.hub.state.deliveries = { ...s.hub.state.deliveries, today: '2026-10-13', counts: { orders: 0, tins: 0, overdue: 1 } };
+  s.clock.advance(61 * 60_000);
+  const r0 = await s.svc.pullRound();
+  assert.deepEqual([r0.got, r0.changed], [['deliveries', 'differences', 'counts'], []]);
+  // An order confirmed while order-soon fails: kept wanted through the backoff.
+  s.hub.state.deliveries = { ...s.hub.state.deliveries, items: [po({ po_id: 1 })] };
+  s.hub.fail['order-soon'] = { status: 503, times: 1 };
+  s.clock.advance(61 * 60_000);
+  const r1 = await s.svc.pullRound();
+  assert.deepEqual([r1.changed, r1.failed], [['deliveries'], ['order-soon']]);
+  assert.equal(want(), 1);
+  assert.deepEqual((await s.svc.pullRound()).got, [], 'not before the backoff');
+  s.clock.advance(2 * 60_000 + 1000);
+  assert.deepEqual((await s.svc.pullRound()).got, ['order-soon'], 'read once the backoff is over');
+  assert.equal(want(), 0);
+  s.clock.advance(5 * 60_000);
+  assert.deepEqual((await s.svc.pullRound()).got, []);
 });
 
 test('each task once: replays of an event, Run now, a restart and another pull make nothing twice', async (t) => {

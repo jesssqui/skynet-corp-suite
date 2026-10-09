@@ -80,9 +80,11 @@ export function createStockroomService(ctx) {
     ok: db.prepare(`INSERT INTO stockroom_pulls (endpoint, hub_url, etag, body, as_of, fetched_at, changed_at, last_attempt_at, failures, next_try_at)
       VALUES (@endpoint, @hub, @etag, @body, @asOf, @at, @at, @at, 0, NULL)
       ON CONFLICT (endpoint) DO UPDATE SET hub_url = excluded.hub_url, etag = excluded.etag, body = excluded.body, as_of = excluded.as_of,
-      fetched_at = excluded.fetched_at, changed_at = CASE WHEN stockroom_pulls.body IS excluded.body AND stockroom_pulls.hub_url IS excluded.hub_url
-      THEN stockroom_pulls.changed_at ELSE excluded.changed_at END, last_attempt_at = excluded.last_attempt_at, failures = 0, next_try_at = NULL`),
-    same: db.prepare('UPDATE stockroom_pulls SET fetched_at = @at, last_attempt_at = @at, failures = 0, next_try_at = NULL, etag = COALESCE(@etag, etag) WHERE endpoint = @endpoint'),
+      fetched_at = excluded.fetched_at, changed_at = CASE WHEN @changed = 1 THEN excluded.changed_at ELSE stockroom_pulls.changed_at END,
+      last_attempt_at = excluded.last_attempt_at, failures = 0, next_try_at = NULL, wanted = 0`),
+    same: db.prepare(`UPDATE stockroom_pulls SET fetched_at = @at, last_attempt_at = @at, failures = 0, next_try_at = NULL, wanted = 0,
+      etag = COALESCE(@etag, etag) WHERE endpoint = @endpoint`),
+    want: db.prepare('UPDATE stockroom_pulls SET wanted = 1 WHERE endpoint = ?'),
     fail: db.prepare(`INSERT INTO stockroom_pulls (endpoint, last_attempt_at, last_error_at, last_error, failures, next_try_at)
       VALUES (@endpoint, @at, @at, @error, 1, @next)
       ON CONFLICT (endpoint) DO UPDATE SET last_attempt_at = excluded.last_attempt_at, last_error_at = excluded.last_error_at,
@@ -192,10 +194,13 @@ export function createStockroomService(ctx) {
   }
 
   // ---- pulls ------------------------------------------------------------------------------------
-  /** Is this read due now? `extra` = endpoints the round says are due anyway (order-soon after deliveries changed). */
-  function due(r, row, nowMs, { force = false, extra = new Set() } = {}) {
+  /**
+   * Is this read due now? `wanted` (order-soon after the deliveries changed) is a flag on its row, kept until a read
+   * succeeds — a backoff or a restart in between doesn't lose it; the backoff still applies to it.
+   */
+  function due(r, row, nowMs, { force = false } = {}) {
     if (row?.next_try_at && Date.parse(row.next_try_at) > nowMs && !force) return false;
-    if (force || extra.has(r.endpoint) || !row?.fetched_at) return true;
+    if (force || row?.wanted === 1 || !row?.fetched_at) return true;
     const fetched = Date.parse(row.fetched_at);
     if (r.everyMs) return nowMs - fetched >= r.everyMs;
     if (nowMs - fetched >= 24 * HOUR) return true;
@@ -213,14 +218,38 @@ export function createStockroomService(ctx) {
   }
 
   let running = null;
+  let forcedNext = null;
   /**
    * One pull round: every read that is due (all with `force`), in order. Never throws for Stockroom's
    * problems (they are recorded on the reads). → { skipped? , got: [endpoints], changed: [endpoints], failed: [endpoints] }
+   * One round at a time: a plain request while one runs gets that round; a forced one (Pull now, a new code) gets
+   * ONE forced round chained after it — several such requests meanwhile share it (review fix: the force was dropped).
    */
   function pullRound(opts = {}) {
-    if (running) return running;
-    running = doRound(opts).finally(() => { running = null; });
-    return running;
+    if (!running) {
+      running = doRound(opts).finally(() => { running = null; });
+      return running;
+    }
+    if (!opts.force) return running;
+    forcedNext ??= running.catch(() => {}).then(() => {
+      forcedNext = null;
+      return pullRound({ force: true });
+    });
+    return forcedNext;
+  }
+
+  /**
+   * An answer's contents, for "did it change?": without `as_of` (every answer has a new one) and, for deliveries,
+   * without what moves with the calendar alone (`today`, `counts`, each order's `overdue`, `ended`) — so a new day isn't
+   * a change.
+   */
+  function stable(endpoint, body) {
+    if (!body || typeof body !== 'object') return JSON.stringify(body);
+    const { as_of: _asOf, ...rest } = body;
+    if (endpoint !== 'deliveries') return JSON.stringify(rest);
+    // (`ended` and its flag too: an order ending also leaves `items`; one only ageing out of the 30 days isn't news.)
+    const { today: _t, counts: _c, items, ended: _e, ended_truncated: _et, ...more } = rest;
+    return JSON.stringify({ ...more, items: Array.isArray(items) ? items.map(({ overdue: _o, ...i }) => i) : items });
   }
 
   async function doRound({ force = false } = {}) {
@@ -234,12 +263,11 @@ export function createStockroomService(ctx) {
     const got = [];
     const changed = [];
     const failed = [];
-    const extra = new Set();
     for (let i = 0; i < READS.length; i += 1) {
       const r = READS[i];
       const nowMs = clock();
       const prev = q.pull.get(r.endpoint);
-      if (!due(r, prev, nowMs, { force, extra })) continue;
+      if (!due(r, prev, nowMs, { force })) continue;
       // Switched off (or another code pasted) while the round ran: stop before the next call.
       if (handle.isPaused() || q.connection.get()?.secret_enc !== row.secret_enc) break;
       try {
@@ -250,12 +278,16 @@ export function createStockroomService(ctx) {
           q.same.run({ endpoint: r.endpoint, at: when, etag: res.etag ?? null });
         } else {
           const body = JSON.stringify(res.body);
-          const isChange = !(sameHub && prev.body === body);
-          q.ok.run({ endpoint: r.endpoint, hub: row.hub_url, etag: res.etag ?? null, body, asOf: typeof res.body.as_of === 'string' ? res.body.as_of : null, at: when });
-          if (isChange) {
-            changed.push(r.endpoint);
-            if (r.endpoint === 'deliveries' && prev?.body) extra.add('order-soon');
-          }
+          let before = null;
+          try { before = sameHub ? stable(r.endpoint, JSON.parse(prev.body)) : null; } catch { before = null; }
+          const isChange = before !== stable(r.endpoint, res.body);
+          db.transaction(() => {
+            q.ok.run({ endpoint: r.endpoint, hub: row.hub_url, etag: res.etag ?? null, body, asOf: typeof res.body.as_of === 'string' ? res.body.as_of : null, at: when, changed: isChange ? 1 : 0 });
+            // The deliveries changed (an order confirmed, received, cancelled): what is on order changed, so the
+            // order-soon list is read again — this round, or after its backoff, or after a restart.
+            if (isChange && r.endpoint === 'deliveries' && before !== null) q.want.run('order-soon');
+          })();
+          if (isChange) changed.push(r.endpoint);
         }
         got.push(r.endpoint);
       } catch (err) {
@@ -281,7 +313,7 @@ export function createStockroomService(ctx) {
         if (stop) {
           // The others due this round would fail the same way: they wait with it (same backoff).
           for (const rest of READS.slice(i + 1)) {
-            if (due(rest, q.pull.get(rest.endpoint), clock(), { force, extra })) {
+            if (due(rest, q.pull.get(rest.endpoint), clock(), { force })) {
               recordFailure(rest.endpoint, new Error(`Not tried: ${err.message}`), clock());
               failed.push(rest.endpoint);
             }

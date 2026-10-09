@@ -266,7 +266,10 @@ export function spotCheckPlan({ counts, today, made, madeLike, planner }) {
 
 /**
  * One task per subject key (a purchase order, a difference). items: [{ key, title, notes, due,
- * dueFollows, order }] — the subjects Stockroom lists now; `complete` = the list is whole (a
+ * dueFollows, order }] — the subjects to have a task now; `listedKeys` = every subject Stockroom still lists (a
+ * superset of the items' keys: a difference under a raised limit is still open, so its task stays — default: the
+ * items' keys); `goneWhy` = the reason (a string, or (key) → string) a task is finished when its subject is no longer
+ * listed; `complete` = the list is whole (a
  * truncated list can't say a subject is gone). → [action]
  *   { action: 'create', key, order, title, fields }
  *   { action: 'update', key, taskId, fields, title }
@@ -274,10 +277,10 @@ export function spotCheckPlan({ counts, today, made, madeLike, planner }) {
  *   { action: 'finish', key, taskIds, why, title }             no longer listed
  *   { action: 'handled', key }                                 a person finished or deleted it: final
  */
-export function keyedPlan({ prefix, items, complete, goneWhy, today, made, madeLike, planner, ownerFor }) {
+export function keyedPlan({ prefix, items, listedKeys = null, complete, goneWhy, today, made, madeLike, planner, ownerFor }) {
   const io = { planner, made };
   const open = openByKey(madeLike, planner, prefix);
-  const listed = new Set(items.map((i) => i.key));
+  const listed = new Set([...(listedKeys ?? []), ...items.map((i) => i.key)]);
   const plan = [];
   for (const item of items) {
     const tasks = open.get(item.key) ?? [];
@@ -308,12 +311,16 @@ export function keyedPlan({ prefix, items, complete, goneWhy, today, made, madeL
     const due = item.due ?? today;
     if (st.dueDate !== due && suiteWrote(io, id, 'due_date', st.dueDate)) fields.due_date = due;
     if (item.title !== st.title && suiteWrote(io, id, 'title', st.title)) fields.title = item.title;
-    plan.push({ action: 'reopen', key: item.key, taskId: id, fields, notes: st.notes, title: fields.title ?? st.title });
+    // Notes: the subject's current ones when the task's notes are still the suite's (so they keep following it
+    // after the reopen); otherwise a person's notes with a line added.
+    const ownNotes = suiteWrote(io, id, 'notes', st.notes);
+    plan.push({ action: 'reopen', key: item.key, taskId: id, fields, notes: ownNotes ? item.notes : st.notes, ownNotes, title: fields.title ?? st.title });
   }
   if (complete) {
     for (const [key, tasks] of open) {
       if (listed.has(key)) continue;
-      plan.push({ action: 'finish', key, taskIds: tasks.map((t) => t.id), why: goneWhy, title: tasks[tasks.length - 1].state.title });
+      const why = typeof goneWhy === 'function' ? goneWhy(key) : goneWhy;
+      plan.push({ action: 'finish', key, taskIds: tasks.map((t) => t.id), why, title: tasks[tasks.length - 1].state.title });
     }
   }
   return plan;
@@ -341,12 +348,27 @@ export function deliveryItem(po, { today }) {
   return { key: deliveryKey(po), title, notes, due: po.expected_on ?? null, dueFollows: Boolean(po.expected_on), order: po.expected_on ?? '9999-12-31' };
 }
 
+/** A purchase order that left the list without Stockroom saying how (a Stockroom from before B10, or ended long ago). */
 export const DELIVERY_GONE = 'No longer expected in Stockroom (received in full, cancelled or closed short)';
+
+/** How an ended purchase order ended (B10's `ended`), in plain English. */
+export function endedWhy(e) {
+  const reason = typeof e?.reason === 'string' && e.reason.trim() ? `: ${e.reason.trim()}` : '';
+  if (e?.status === 'received') return 'Received in full in Stockroom';
+  if (e?.status === 'cancelled') return `Cancelled in Stockroom${reason}`;
+  if (e?.status === 'closed_short') return `Closed short in Stockroom${reason}`;
+  return DELIVERY_GONE;
+}
 
 export function deliveriesPlan({ deliveries, today, made, madeLike, planner, ownerFor }) {
   if (!deliveries?.body) return [];
   const items = (deliveries.body.items ?? []).filter((p) => p && p.po_id !== undefined && p.po_id !== null).map((p) => deliveryItem(p, { today }));
-  return keyedPlan({ prefix: 'po:', items, complete: true, goneWhy: DELIVERY_GONE, today, made, madeLike, planner, ownerFor });
+  // B10 (newer Stockroom): `ended` says how each order ended in the last 30 days; `purchase_orders_truncated` says the
+  // open list was cut (then a missing order may still be open: nothing is finished). A Stockroom without them: the list
+  // is whole, and an order that left it is finished with the general reason.
+  const ended = new Map((Array.isArray(deliveries.body.ended) ? deliveries.body.ended : []).map((e) => [`po:${e.po_id}`, e]));
+  const goneWhy = (key) => (ended.has(key) ? endedWhy(ended.get(key)) : DELIVERY_GONE);
+  return keyedPlan({ prefix: 'po:', items, complete: deliveries.body.purchase_orders_truncated !== true, goneWhy, today, made, madeLike, planner, ownerFor });
 }
 
 // ---- differences ---------------------------------------------------------------------------------
@@ -376,9 +398,14 @@ export function differencesPlan({ differences, today, made, madeLike, planner, o
   if (!differences?.body) return [];
   const b = differences.body;
   const threshold = Number.isFinite(b.threshold_tins) && b.threshold_tins > 0 ? b.threshold_tins : 1;
-  const items = (b.items ?? []).filter((d) => d && d.id !== undefined && d.id !== null && overLimit(d, threshold)).map(differenceItem);
+  const open = (b.items ?? []).filter((d) => d && d.id !== undefined && d.id !== null);
+  // New tasks only for differences at or over the limit; but every difference still listed is still open in
+  // Stockroom (a limit raised later doesn't close it), so its task stays until it is really marked investigated.
+  const items = open.filter((d) => overLimit(d, threshold)).map(differenceItem);
   // A truncated list (over 500 open) can't say one is gone: nothing is finished until it is whole again.
-  return keyedPlan({ prefix: 'diff:', items, complete: !b.truncated, goneWhy: DIFFERENCE_GONE, today, made, madeLike, planner, ownerFor });
+  return keyedPlan({
+    prefix: 'diff:', items, listedKeys: open.map(differenceKey), complete: !b.truncated, goneWhy: DIFFERENCE_GONE, today, made, madeLike, planner, ownerFor,
+  });
 }
 
 // ---- carrying out a keyed or spot-check plan -------------------------------------------------------
@@ -394,7 +421,7 @@ export function applyPlan(plan, { now, today, made, madeLike, remember, create, 
     if (p.action === 'handled') out.handled += 1;
     else if (p.action === 'finish') {
       let k = 0;
-      for (const id of p.taskIds ?? [p.taskId]) if (finishTask(io, id, p.why, now)) k += 1;
+      for (const id of p.taskIds ?? [p.taskId]) if (finishOwn(io, id, p.why, now)) k += 1;
       if (k) out.finished.push(`${p.title}: ${p.why}`);
     } else if (p.action === 'update') {
       update('task', p.taskId, p.fields);
@@ -402,7 +429,10 @@ export function applyPlan(plan, { now, today, made, madeLike, remember, create, 
       out.updated.push(p.title);
     } else if (p.action === 'reopen') {
       const line = `Back in Stockroom — reopened by the suite on ${dayText(today)}.`;
-      update('task', p.taskId, { ...p.fields, notes: p.notes ? `${p.notes}\n\n${line}` : line });
+      const notes = p.notes ? `${p.notes}\n\n${line}` : line;
+      update('task', p.taskId, { ...p.fields, notes });
+      // Still the suite's notes: marked so they keep following the subject (they froze before — review fix).
+      if (p.ownNotes) markWrote(io, p.taskId, 'notes', notes);
       if (p.fields.title) markWrote(io, p.taskId, 'title', p.fields.title);
       if (p.fields.due_date) markWrote(io, p.taskId, 'due_date', p.fields.due_date);
       out.reopened.push(p.title);
@@ -418,6 +448,20 @@ export function applyPlan(plan, { now, today, made, madeLike, remember, create, 
     out.made.push(p.title);
   }
   return out;
+}
+
+/**
+ * finishTask (taskBook), and — when the notes were still the suite's — the finished notes (with the suite's line)
+ * marked as the suite's too, so a later reopen can tell they are still its own. Kept in this module on purpose, not
+ * in taskBook: changing finishTask would change D3/D5/D6, whose reopens append a line without marking the notes (so
+ * a D3 ship task reopened by the suite keeps its notes as they were then — the same freeze, left as it is there).
+ */
+function finishOwn(io, id, why, now) {
+  const before = io.planner.taskState(id);
+  const own = Boolean(before?.open && suiteWrote(io, id, 'notes', before.notes));
+  if (!finishTask(io, id, why, now)) return false;
+  if (own) markWrote(io, id, 'notes', io.planner.taskState(id).notes);
+  return true;
 }
 
 /** Is there anything in a plan to do today (for `accept`: no run rows for the hourly no-ops)? */
