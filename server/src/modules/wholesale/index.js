@@ -27,7 +27,9 @@ export default {
     } catch (err) {
       ctx.log.error('checking the card fields failed:', err);
     }
-    service.reconcileAll().catch((err) => ctx.log.error('reconcile at start failed (tried again within a minute):', err));
+    service.reconcileAll()
+      .then(() => service.checkFollowUps()) // D5: follow-up tasks as the holding area says (a restore, a failed run)
+      .catch((err) => ctx.log.error('reconcile at start failed (tried again within a minute):', err));
   },
   // Kept across a restore — the one exception to "keepOnRestore is for switches, never data":
   //  - the shared secret (and who made it): an old backup must not bring back a replaced secret;
@@ -39,5 +41,7 @@ export default {
   keepOnRestore: [
     'wholesale_connection', 'wholesale_connection_changes',
     'wholesale_held_customers', 'wholesale_held_orders', 'wholesale_held_money', 'wholesale_events', 'wholesale_status',
+    // D5: the Order Manager's notes (and, on wholesale_held_customers, its follow-up dates) — same reasoning.
+    'wholesale_held_notes',
   ],
 };

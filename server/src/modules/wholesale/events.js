@@ -2,12 +2,17 @@
 // checked before anything is applied. Pure functions — no database. A problem is a `refused` answer
 // with a plain-English reason (the Order Manager parks the event and shows the reason), never a 500.
 import { isId } from '@suite/shared/ids';
+import { NOTE_TYPES } from './entities.js';
 
 export const EVENT_NAMES = Object.freeze([
   'customer.created', 'customer.updated',
   'order.placed', 'order.changed', 'order.packed', 'order.shipped', 'order.cancelled', 'order.deleted', 'order.restored',
   'payment.recorded', 'return.received', 'refund.issued', 'credit_note.issued',
+  // D5 (the Order Manager's A11, sent only while its "Send CRM notes to the suite" switch is on)
+  'note.added', 'note.deleted', 'followup.changed',
 ]);
+/** D5: why a note was deleted there (none = deleted by hand). */
+export const NOTE_DELETE_REASONS = Object.freeze(['customer_deleted', 'gone', 'gone_after_restore']);
 /** Events that carry a whole order snapshot (an upsert of the order). */
 export const ORDER_SNAPSHOT_EVENTS = Object.freeze(['order.placed', 'order.changed', 'order.packed', 'order.shipped', 'order.cancelled', 'order.restored']);
 /** Creation events (A10): a record the suite marked gone is live again after one of these. */
@@ -29,6 +34,22 @@ export function isoTime(value) {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export const isDate = (v) => typeof v === 'string' && DATE_RE.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`));
+
+const optText = (v) => v === null || v === undefined || typeof v === 'string';
+const optInt = (v) => v === null || v === undefined || isInt(v);
+
+/** D5: note.added's note snapshot (A11: { note_uid, number, customer_uid, type, body, at, written_by }). */
+function noteProblem(n) {
+  if (!isObj(n)) return 'data.note is missing';
+  if (!isId(n.note_uid)) return 'data.note.note_uid is not a permanent id (UUIDv7)';
+  if (!isId(n.customer_uid)) return 'data.note.customer_uid is not a permanent id (UUIDv7)';
+  if (!NOTE_TYPES.includes(n.type)) return `data.note.type must be one of ${NOTE_TYPES.join(', ')}`;
+  if (typeof n.body !== 'string') return 'data.note.body must be text';
+  if (!isoTime(n.at)) return 'data.note.at must be an ISO date-time';
+  if (!optInt(n.number)) return 'data.note.number must be a whole number';
+  if (!optText(n.written_by)) return 'data.note.written_by must be text';
+  return null;
+}
 
 /** null when the request body is usable, else why not (answered 400: nothing applied). */
 export function bodyProblem(body) {
@@ -123,6 +144,24 @@ export function eventProblem(e) {
       }
       return null;
     }
+    case 'note.added':
+      return noteProblem(d.note);
+    case 'note.deleted': {
+      const n = d.note;
+      if (!isObj(n) || !isId(n.note_uid)) return 'data.note.note_uid is not a permanent id (UUIDv7)';
+      if (!optUid(n.customer_uid)) return 'data.note.customer_uid is not a permanent id';
+      if (!optInt(n.number)) return 'data.note.number must be a whole number';
+      if (d.reason !== undefined && d.reason !== null && !NOTE_DELETE_REASONS.includes(d.reason)) {
+        return `data.reason must be one of ${NOTE_DELETE_REASONS.join(', ')} (or left out: deleted by hand)`;
+      }
+      return null;
+    }
+    case 'followup.changed':
+      if (!isId(d.customer_uid)) return 'data.customer_uid is not a permanent id (UUIDv7)';
+      if (d.follow_up_date !== null && !isDate(d.follow_up_date)) return 'data.follow_up_date must be YYYY-MM-DD or null';
+      if (typeof d.done !== 'boolean') return 'data.done must be true or false';
+      if (d.done && d.follow_up_date !== null) return 'data.done can only be true when follow_up_date is null (the follow-up was marked done)';
+      return null;
     default: // the order events with a snapshot
       return orderProblem(d.order);
   }

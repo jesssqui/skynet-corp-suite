@@ -30,7 +30,7 @@ import { BUSINESS_IDS } from '@suite/shared/crm';
 import { parseLocalDate, localDate } from '@suite/shared/time';
 import { orderRhythm, isQuiet, daysBetween, owingByOrder, overdueOrders, OVERDUE_AFTER_DAYS } from './figures.js';
 
-const CUSTOMER_KEY = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):/;
+export const CUSTOMER_KEY = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):/;
 
 export const CHECK_IN_ID = 'wholesale-check-in';
 export const BALANCES_ID = 'wholesale-balances';
@@ -47,7 +47,7 @@ export const NOTES_MARK = '──── Your notes below this line are kept when
 const TITLE_MAX = 300;
 const W = BUSINESS_IDS.wholesale;
 
-const plural = (n, one, many = `${one}s`) => `${n.toLocaleString('en-CA')} ${n === 1 ? one : many}`;
+export const plural = (n, one, many = `${one}s`) => `${n.toLocaleString('en-CA')} ${n === 1 ? one : many}`;
 const clip = (s, max) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
 
 /** $1,234.56 */
@@ -76,13 +76,13 @@ function wholesaleRelationship(crm, accountId) {
  * How a task names the customer: the account's name, plus the Order Manager customer's own name
  * when the account has more than one of them linked.
  */
-function nameFor({ reads }, account, c) {
+export function nameFor({ reads }, account, c) {
   const own = c.business_name || (c.number ? `customer #${c.number}` : null);
   return reads.attachedOn(account.id) > 1 && own ? `${account.name} (${own})` : account.name;
 }
 
 /** The fields every wholesale task shares: business, owner, client, account, relationship. */
-function taskBase({ crm, planner }, account) {
+export function taskBase({ crm, planner }, account) {
   return {
     owner: planner.automatedOwnerFor(W),
     business_id: W,
@@ -97,14 +97,14 @@ function taskBase({ crm, planner }, account) {
 
 const hash = (v) => crypto.createHash('sha256').update(String(v ?? '')).digest('hex').slice(0, 20);
 const wroteKey = (id, field, value) => `wrote:${id}:${field}:${hash(value)}`;
-const doneKey = (id, doneAt) => `suite-done:${id}:${doneAt}`;
+export const doneKey = (id, doneAt) => `suite-done:${id}:${doneAt}`;
 
 /** Remember that the suite wrote this value of a task's field (so a later change is known to be a person's). */
-function markWrote(io, id, field, value) {
+export function markWrote(io, id, field, value) {
   io.remember(wroteKey(id, field, value), 'task', id);
 }
 /** Is the task's current value of `field` one the suite wrote? (false = a person changed it: leave it). */
-function suiteWrote(io, id, field, value) {
+export function suiteWrote(io, id, field, value) {
   return io.made(wroteKey(id, field, value)).length > 0;
 }
 /** Was this task finished by the suite (and not reopened and finished again by a person since)? */
@@ -113,7 +113,7 @@ export function suiteFinished(io, id, state = io.planner.taskState(id)) {
 }
 
 /** Finish one of the suite's own tasks (done_at), adding a line to its notes that says why. */
-function finishTask(io, id, why, now) {
+export function finishTask(io, id, why, now) {
   const t = io.planner.taskState(id);
   if (!t?.open) return false;
   const doneAt = now.toISOString();

@@ -471,6 +471,8 @@ export function createAutomationsService(ctx) {
     createAlert,
     /** What an automation made under one key (D3's accept() looks before a run): [{ entity, id, madeAt }]. */
     made: (id, key) => q.made.all(id, String(key)),
+    /** Everything an automation made under keys starting with `prefix` (D5's accept()): [{ key, entity, id, madeAt }]. */
+    madeLike: (id, prefix) => q.madeLike.all(id, String(prefix), `${prefix}\uffff`),
     /**
      * C5's seam: fn(alertRow) is called after each alert an automation raises is saved (committed).
      * Phone notifications (quiet hours, the morning digest) hang off this. Returns unsubscribe.

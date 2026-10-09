@@ -53,8 +53,9 @@ export function reviewNumbers({ crm, planner, services = null }, today) {
   const accounts = [...new Map(rels.map((r) => [r.account_id, { id: r.account_id, client_id: r.client_id }])).values()];
   const clients = [...new Set(rels.map((r) => r.client_id))].map((id) => ({ id }));
   const cutoff = addDays(today, -QUIET_DAYS);
-  // D1: an Order Manager order counts as activity (read through the wholesale service, like the devices do).
-  const lastOrders = services?.wholesale?.lastOrderAtByClient?.() ?? new Map();
+  // D1: an Order Manager order counts as activity (read through the wholesale service, like the devices do);
+  // D5: so does a note logged there (a call, an email…).
+  const lastOrders = services?.wholesale?.lastActivityAtByClient?.() ?? new Map();
   const quiet = crm.activeClientsWithLastActivity().filter((c) => {
     const order = lastOrders.get(c.id) ?? null;
     const latest = c.last_activity_at && (!order || c.last_activity_at > order) ? c.last_activity_at : order;

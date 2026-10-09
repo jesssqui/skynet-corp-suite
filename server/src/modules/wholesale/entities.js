@@ -11,6 +11,8 @@
 export const ENTRY_KINDS = Object.freeze(['payment', 'refund', 'store_credit', 'credit_applied', 'return', 'credit_note']);
 export const ORDER_STATUSES = Object.freeze(['active', 'cancelled', 'deleted']);
 export const ENTRY_STATUSES = Object.freeze(['live', 'removed']);
+/** D5: the Order Manager's CRM note types (A11's note.added). */
+export const NOTE_TYPES = Object.freeze(['note', 'call', 'email', 'meeting', 'follow_up']);
 
 const ACCOUNT = { type: 'id', ref: 'account', parent: true, required: true };
 const CLIENT = { type: 'id', ref: 'client', required: true };
@@ -42,6 +44,8 @@ export const WHOLESALE_ENTITIES = [
       // without the card changing; a new order moves it (the card is projected again).
       usual_gap_days: { type: 'integer' },
       quiet_from: { type: 'date' },
+      // D5: the customer's follow-up date in the Order Manager (null: none, or deleted there).
+      follow_up_date: { type: 'date' },
     },
   },
   {
@@ -88,6 +92,24 @@ export const WHOLESALE_ENTITIES = [
       removed_reason: { type: 'text', max: 60 },
       moved_to: { type: 'text', max: 40 },
       detail: { type: 'text', max: 2000 },
+    },
+  },
+  // D5: one per CRM note of a linked customer (A11's note.added): a call, an email, a meeting, a note
+  // or a follow-up marked done there. Deleted here when the note is deleted there, or its customer is
+  // unlinked or deleted — the holding area keeps it, so linking again brings it back.
+  {
+    entity: 'wholesale_note',
+    table: 'wholesale_notes',
+    fields: {
+      account_id: ACCOUNT,
+      client_id: CLIENT,
+      customer_uid: UID,
+      note_uid: UID,
+      number: { type: 'integer' },
+      type: { type: 'enum', values: NOTE_TYPES, required: true },
+      body: { type: 'text', max: 20_000 },
+      at: { type: 'datetime', required: true },
+      written_by: { type: 'text', max: 100 },
     },
   },
 ];
