@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { formatPhone, parseTags } from '@suite/shared/normalize';
 import { ACTIVITY_TYPES } from '@suite/shared/crm';
 import { Card, Button, Badge, EmptyState, SelectField, Icon } from '../../ui/index.js';
-import { formatDate, formatDateTime, localDate } from '../../ui/format.js';
+import { formatDate, formatDateTime } from '../../ui/format.js';
 import { useAuth } from '../../auth/session.jsx';
 import { store } from '../../sync/index.js';
 import { useClientPageData } from './data.js';
@@ -15,8 +15,9 @@ import { BusinessChip, Badges, RecordSync, StatusBadge, TextButton } from './par
 import { ClientForm, AccountForm, ContactForm, RelationshipForm, ServiceForm, ConsentForm, ActivityForm } from './forms.jsx';
 import { relationshipsWithoutNextStep } from '@suite/shared/planner';
 import { ClientTasksCard, NoNextStepLine } from '../planner/ClientTasksCard.jsx';
+import { useToday } from '../planner/parts.jsx';
 import { wholesaleItems, activityItem, sumCards } from '../wholesale/logic.js';
-import { WholesaleTimelineItem, AccountWholesale, ClientWholesale } from '../wholesale/parts.jsx';
+import { WholesaleTimelineItem, AccountWholesale, ClientWholesale, QuietRegularBadge } from '../wholesale/parts.jsx';
 import './crm.css';
 
 // One client on one screen (/crm/clients/:id): who they are, their businesses (accounts) with
@@ -56,7 +57,7 @@ function LinkLine({ link }) {
 
 // ---- header -------------------------------------------------------------------------------------
 
-function Header({ client, onEdit, onStatus, wholesale }) {
+function Header({ client, onEdit, onStatus, wholesale, wholesaleCards = [], today }) {
   const closed = client.status === 'closed';
   return (
     <Card>
@@ -69,6 +70,7 @@ function Header({ client, onEdit, onStatus, wholesale }) {
             <h1 style={{ fontSize: 'var(--text-xl)', fontWeight: 650, letterSpacing: '-0.01em', overflowWrap: 'anywhere' }} data-testid="client-name">{client.name}</h1>
             <Badges record={client}>
               <StatusBadge status={client.status} />
+              {closed ? null : <QuietRegularBadge cards={wholesaleCards} today={today} />}
               <Tags value={client.tags} />
             </Badges>
           </div>
@@ -133,7 +135,7 @@ function RelationshipItem({ rel, business, services, onEdit, onAddService, onEdi
   );
 }
 
-function AccountItem({ account, rels, servicesByRel, links, businessesById, open, noNextStep, businesses, wholesaleCards }) {
+function AccountItem({ account, rels, servicesByRel, links, businessesById, open, noNextStep, businesses, wholesaleCards, today, clientClosed }) {
   const lines = addressLines(account);
   const href = websiteHref(account.website);
   return (
@@ -156,7 +158,7 @@ function AccountItem({ account, rels, servicesByRel, links, businessesById, open
       ) : null}
       {account.notes ? <p style={{ ...preWrap, ...muted }}>{account.notes}</p> : null}
       {links.map((l) => <LinkLine key={l.id} link={l} />)}
-      <AccountWholesale cards={wholesaleCards} figures={sumCards(wholesaleCards)} />
+      <AccountWholesale cards={wholesaleCards} figures={sumCards(wholesaleCards)} today={today} hideQuiet={clientClosed} />
       <RecordSync record={account} what="account" />
       {rels.length ? (
         <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 'var(--space-2)' }}>
@@ -342,13 +344,13 @@ function Timeline({ items: activities, accounts, businesses, accountsById, busin
 
 function ClientScreen({ clientId }) {
   const { data, loading } = useClientPageData(clientId);
+  const today = useToday(); // consent and (D3) the "Quiet regular" flag: this device's date, kept current
   const { session } = useAuth();
   const me = session?.user?.actor ?? null;
   const navigate = useNavigate();
   const [sheet, setSheet] = useState(null);
   const [filter, setFilter] = useState({ business: 'all', account: 'all', type: 'all' });
   const [statusError, setStatusError] = useState(null);
-  const today = localDate();
 
   // A filter whose account or business is gone (deleted, maybe on the other device) goes back to All:
   // the select can't show it, so it would hide everything with nothing on screen to say why.
@@ -425,7 +427,7 @@ function ClientScreen({ clientId }) {
 
   return (
     <div className="crm-client">
-      <Header client={client} onEdit={() => open({ kind: 'client', record: client })} onStatus={setStatus} wholesale={wholesale} />
+      <Header client={client} onEdit={() => open({ kind: 'client', record: client })} onStatus={setStatus} wholesale={wholesale} wholesaleCards={data.wholesaleCustomers} today={today} />
       {statusError ? <p role="alert" style={{ color: 'var(--danger)', margin: 0 }}>{statusError}</p> : null}
       <div className="crm-client-grid">
         <div className="crm-col">
@@ -448,6 +450,8 @@ function ClientScreen({ clientId }) {
                     noNextStep={noNextStep}
                     businesses={businesses}
                     wholesaleCards={cardsByAccount.get(a.id) ?? []}
+                    today={today}
+                    clientClosed={client.status === 'closed'}
                   />
                 ))}
               </ul>

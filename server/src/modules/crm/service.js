@@ -286,6 +286,13 @@ export function createCrmService({ db, services, log }) {
       WHERE r.account_id = ? AND r.deleted_at IS NULL ORDER BY r.id`),
     clientNames: db.prepare(`SELECT c.id, c.name, c.status FROM crm_clients c
       WHERE c.deleted_at IS NULL AND c.id IN (SELECT value FROM json_each(?))`),
+    // D3: who a drafted email goes to — the account's own contacts first, then the client's
+    // contacts not tied to any account (a contact of the client's other account isn't asked).
+    accountContacts: db.prepare(`SELECT p.* FROM crm_contacts p
+      JOIN crm_accounts a ON a.id = ? AND a.deleted_at IS NULL AND a.client_id = p.client_id
+      JOIN crm_clients c ON c.id = p.client_id AND c.deleted_at IS NULL
+      WHERE p.deleted_at IS NULL AND (p.account_id = a.id OR p.account_id IS NULL)
+      ORDER BY p.account_id IS NULL, p.created_at, p.id`),
   };
 
   /**
@@ -314,6 +321,8 @@ export function createCrmService({ db, services, log }) {
     accountRelationships: (accountId) => (isId(accountId) ? forLinks.accountRelationships.all(accountId).map((r) => view('relationship', r, { withSync: false })) : []),
     /** id -> { id, name, status } for the live clients among `ids`. */
     clientNames: (ids) => new Map(forLinks.clientNames.all(JSON.stringify([...new Set(ids)])).map((r) => [r.id, r])),
+    /** D3: an account's live contacts (its own first, then its client's with no account), oldest first. */
+    accountContacts: (accountId) => (isId(accountId) ? forLinks.accountContacts.all(accountId).map((r) => view('contact', r, { withSync: false })) : []),
     listBusinesses,
     getBusiness: (id) => (isId(id) ? view('business', q.business.get(id)) : null),
     listClients,

@@ -24,15 +24,17 @@
 //    at all. A run that throws changes nothing and is recorded as an error (retried after 15 min).
 //  - writes only through sync (create() = sync.applyLocal as 'system', or ctx.services.sync
 //    directly), so devices pull the results; reads through the modules' services.
-//  - idempotent: look up what an earlier run made with made(key) and create only what is
-//    missing. "Run now" relies on this (it has no run key); scheduled runs also have the run key.
+//  - idempotent: look up what an earlier run made with made(key) (or madeLike(prefix): every key
+//    starting with it) and create only what is missing. "Run now" relies on this (it has no run
+//    key); scheduled runs also have the run key. remember(key, entity, id) files a record made
+//    earlier under one more key (D3: a balance task kept open while its oldest unpaid order changed).
 //  - "they prepare, you approve": tasks, notes and alerts only. Never send anything outside.
 import { newId } from '@suite/shared/ids';
 import { nowIso, localDate } from '@suite/shared/time';
 import { ACTORS } from '@suite/shared/actors';
 import { HttpError } from '../../lib/httpError.js';
 import { addDays } from '@suite/shared/planner';
-import { checkTrigger, triggerText, periodOf, atLocal, clockText } from './schedule.js';
+import { checkTrigger, triggerText, triggerEvents, periodOf, atLocal, clockText } from './schedule.js';
 
 const ID_RE = /^[a-z][a-z0-9-]{0,59}$/;
 /** After a failed scheduled run, try that period again no sooner than this. */
@@ -104,6 +106,8 @@ export function createAutomationsService(ctx) {
       @summary, @created_count, @created, @alert_id, @error)`),
     recentRuns: db.prepare(`SELECT * FROM automations_runs WHERE automation_id = ? ORDER BY started_at DESC, id DESC LIMIT ?`),
     made: db.prepare('SELECT entity, record_id AS id, made_at AS madeAt FROM automations_made WHERE automation_id = ? AND key = ? ORDER BY made_at, record_id'),
+    madeLike: db.prepare(`SELECT key, entity, record_id AS id, made_at AS madeAt FROM automations_made
+      WHERE automation_id = ? AND key >= ? AND key < ? ORDER BY made_at, record_id`),
     remember: db.prepare(`INSERT OR IGNORE INTO automations_made (automation_id, key, entity, record_id, run_id, made_at)
       VALUES (?, ?, ?, ?, ?, ?)`),
     alert: db.prepare('SELECT * FROM automations_alerts WHERE id = ?'),
@@ -226,6 +230,9 @@ export function createAutomationsService(ctx) {
         const created = [];
         const updated = [];
         const made = (key) => q.made.all(def.id, String(key));
+        // Every key starting with `prefix` ('<customer uid>:'): rows with their key.
+        const madeLike = (prefix) => q.madeLike.all(def.id, String(prefix), `${prefix}\uffff`);
+        const remember = (key, entity, id) => q.remember.run(def.id, String(key), entity, id, runId, startedAt);
         // Change a record the automation made before (refresh a summary, numbers): through sync too.
         const update = (entity, id, fields) => {
           const r = sync.applyLocal({ entity, op: 'update', recordId: id, fields });
@@ -241,7 +248,7 @@ export function createAutomationsService(ctx) {
           return r.recordId;
         };
         const out = def.run(ctx, {
-          now: nowDate, nowMs, today: localDate(nowDate), period, trigger, actor, data, made, create, update,
+          now: nowDate, nowMs, today: localDate(nowDate), period, trigger, actor, data, made, madeLike, remember, create, update,
         }) ?? {};
         if (out && typeof out.then === 'function') throw new Error(`${def.id}: run() must be synchronous`);
         for (const c of out.created ?? []) if (!created.some((x) => x.id === c.id)) created.push({ entity: c.entity, id: c.id });
@@ -363,12 +370,22 @@ export function createAutomationsService(ctx) {
   /**
    * An event happened (D packages: 'order.placed', …): every switched-on automation listening for
    * it runs once per event key (trigger.key(data), e.g. the order id; the run key makes a
-   * re-delivered event a no-op). Returns the runs made.
+   * re-delivered event a no-op). An automation whose trigger.accept(data) says no (D3: a backfill
+   * event, an unlinked customer) doesn't run at all — no run row. Returns the runs made.
    */
   function emit(event, data = {}) {
     const runs = [];
     for (const def of registry.values()) {
-      if (def.trigger.type !== 'event' || def.trigger.event !== event || !settingsOf(def).enabled) continue;
+      if (def.trigger.type !== 'event' || !triggerEvents(def.trigger).includes(event) || !settingsOf(def).enabled) continue;
+      if (def.trigger.accept) {
+        let ok = false;
+        try {
+          ok = Boolean(def.trigger.accept(data));
+        } catch (err) {
+          log?.error?.(`${def.id}: accept() failed for ${event} (skipped): ${err.message}`);
+        }
+        if (!ok) continue;
+      }
       const part = def.trigger.key ? def.trigger.key(data) : null;
       const key = part === null || part === undefined ? null : String(part);
       const run = execute(def, {
@@ -397,7 +414,7 @@ export function createAutomationsService(ctx) {
       name: def.name,
       description: def.description,
       module: def.module,
-      trigger: { ...def.trigger, key: undefined },
+      trigger: { ...def.trigger, key: undefined, accept: undefined },
       when: triggerText(def.trigger),
       enabled: settings.enabled,
       alert: settings.alert,
@@ -452,6 +469,8 @@ export function createAutomationsService(ctx) {
     emit,
     startScheduler,
     createAlert,
+    /** What an automation made under one key (D3's accept() looks before a run): [{ entity, id, madeAt }]. */
+    made: (id, key) => q.made.all(id, String(key)),
     /**
      * C5's seam: fn(alertRow) is called after each alert an automation raises is saved (committed).
      * Phone notifications (quiet hours, the morning digest) hang off this. Returns unsubscribe.

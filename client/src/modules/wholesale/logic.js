@@ -141,3 +141,39 @@ export function mergeLastActivity(activityMap, orderMap) {
   }
   return m;
 }
+
+// ---- D3: the "Quiet regular" flag ----------------------------------------------------------------
+// The server works out each linked customer's ordering rhythm (server figures.js orderRhythm — the
+// same rule the check-in automation uses) and puts it on the card: usual_gap_days, and quiet_from,
+// the first day they count as quiet (their last order + more than 1.5 × the usual gap and more than
+// the usual gap + 7 days). A date, so the device decides with its own "today": the flag appears on
+// the right day offline, and goes away when a new order moves quiet_from (the card is re-sent).
+
+/** Is this Order Manager customer card a regular who is past their usual gap on `today` (YYYY-MM-DD)? */
+export function isQuietRegular(card, today) {
+  return Boolean(card && !card.gone && card.quiet_from && today >= card.quiet_from);
+}
+
+/** "Usually orders every 14 days; none for 32" for a quiet regular's card (else null). */
+export function quietRegularText(card, today) {
+  if (!isQuietRegular(card, today)) return null;
+  const since = card.last_order_date ? daysBetween(card.last_order_date, today) : null;
+  return `Usually orders every ${card.usual_gap_days} day${card.usual_gap_days === 1 ? '' : 's'}${since === null ? '' : `; none for ${since}`}`;
+}
+
+/** Per client, the earliest day one of its regulars counts as quiet: Map<client_id, quiet_from> (cards of deleted customers left out). */
+export function quietFromByClient(cards = []) {
+  const m = new Map();
+  for (const c of cards) {
+    if (c.gone || !c.quiet_from) continue;
+    const cur = m.get(c.client_id);
+    if (!cur || c.quiet_from < cur) m.set(c.client_id, c.quiet_from);
+  }
+  return m;
+}
+
+/** Days from `a` to `b` ("YYYY-MM-DD"), on the calendar. */
+export function daysBetween(a, b) {
+  const t = (ymd) => Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)) - 1, Number(ymd.slice(8, 10)));
+  return Math.round((t(b) - t(a)) / 86_400_000);
+}

@@ -6,6 +6,7 @@ import { useClientListData } from './data.js';
 import { buildClientIndex, filterClients, pickableBusinesses } from './logic.js';
 import { BusinessChip } from './parts.jsx';
 import { ClientForm } from './forms.jsx';
+import { useToday } from '../planner/parts.jsx';
 import './crm.css';
 
 // The client list (/crm): search and filters over the device's offline copy. The index (one row
@@ -19,7 +20,7 @@ const STATUS_OPTIONS = [
   { value: 'all', label: 'All' },
 ];
 
-function ClientRow({ row, businessesById }) {
+function ClientRow({ row, businessesById, today }) {
   const { client } = row;
   return (
     <li style={{ borderTop: '1px solid var(--border)' }} data-client-row={client.id}>
@@ -28,6 +29,7 @@ function ClientRow({ row, businessesById }) {
           <span style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
             <strong style={{ overflowWrap: 'anywhere' }}>{client.name}</strong>
             {client.status === 'closed' ? <Badge>Closed</Badge> : null}
+            {row.quietFrom && client.status !== 'closed' && today >= row.quietFrom ? <span data-testid="quiet-regular" title="An Order Manager regular who has gone longer than usual without ordering"><Badge tone="warn">Quiet regular</Badge></span> : null}
             {client._sync?.pending ? <Badge>Waiting to sync</Badge> : null}
             {client._sync?.flagged || client._sync?.clashes?.length ? <Badge tone="warn">Check this</Badge> : null}
           </span>
@@ -57,6 +59,7 @@ function ClientRow({ row, businessesById }) {
 
 export default function ClientListPage() {
   const { data, loading } = useClientListData();
+  const today = useToday();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const q = params.get('q') ?? '';
@@ -126,7 +129,7 @@ export default function ClientListPage() {
             <p style={{ color: 'var(--text-muted)', padding: 'var(--space-4)', margin: 0 }}>Loading…</p>
           ) : rows.length ? (
             <ul style={{ listStyle: 'none', margin: '-1px 0 0', padding: 0 }} data-testid="client-list">
-              {rows.slice(0, shown).map((row) => <ClientRow key={row.client.id} row={row} businessesById={businessesById} />)}
+              {rows.slice(0, shown).map((row) => <ClientRow key={row.client.id} row={row} businessesById={businessesById} today={today} />)}
             </ul>
           ) : index.length ? (
             <EmptyState title="No clients match">

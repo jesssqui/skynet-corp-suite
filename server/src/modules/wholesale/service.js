@@ -25,7 +25,8 @@ import { WHOLESALE_ENTITIES, checkServerOnly } from './entities.js';
 import {
   eventProblem, bodyProblem, isoTime, isDate, orderFigures, itemsSummary, ORDER_SNAPSHOT_EVENTS, ORDER_CREATION_EVENTS,
 } from './events.js';
-import { customerFigures, orderMoney } from './figures.js';
+import { customerFigures, orderMoney, orderRhythm, owingByOrder } from './figures.js';
+import { registerWholesaleAutomations } from './automations.js';
 import { loadKey, encryptSecret, decryptSecret, newSecret, signatureProblem, headerProblem } from './secret.js';
 
 export const RECEIVER_PATH = '/api/wom/events';
@@ -35,6 +36,12 @@ const RECONCILE_EVERY_MS = 60 * 1000;
 const PROJECT_CHUNK = 200;
 const RECONCILE_CHUNK = 50; // customers per transaction in reconcileAll (it yields between them)
 const REFUSAL_THROTTLE_MS = 60 * 1000;
+/**
+ * The shape of the wholesale_customer card. Raised when a package adds card fields (D3: 2 =
+ * usual_gap_days + quiet_from): at start every held customer is marked dirty once, so the
+ * projection writes the new fields to every card through sync and devices pull them (sync rule 7).
+ */
+export const CARD_VERSION = 2;
 const MONEY_KEY = { payment: 'payment_uid', refund: 'refund_uid', return: 'return_uid', credit_note: 'credit_note_uid' };
 const MONEY_EVENT = { 'payment.recorded': ['payment', 'payment'], 'refund.issued': ['refund', 'refund'], 'return.received': ['return', 'return'], 'credit_note.issued': ['credit_note', 'credit_note'] };
 
@@ -100,6 +107,11 @@ export function createWholesaleService(ctx) {
     ordersOf: db.prepare(`SELECT uid, status, deleted, goods_cents, tax_cents, order_date, snapshot IS NOT NULL AS has_snapshot
       FROM wholesale_held_orders WHERE customer_uid = ?`),
     orderDone: db.prepare('UPDATE wholesale_held_orders SET record_id = ?, dirty = 0 WHERE uid = ?'),
+    // D3: an order's rhythm and balance fields (figures.js orderRhythm / owingByOrder).
+    ordersFull: db.prepare(`SELECT uid, number, status, deleted, order_date, placed_at, total_cents, goods_cents, tax_cents,
+        snapshot IS NOT NULL AS has_snapshot FROM wholesale_held_orders WHERE customer_uid = ?`),
+    attached: db.prepare(`SELECT * FROM wholesale_held_customers WHERE account_id IS NOT NULL ORDER BY uid`),
+    attachedOn: db.prepare('SELECT count(*) AS n FROM wholesale_held_customers WHERE account_id = ?'),
 
     money: db.prepare('SELECT * FROM wholesale_held_money WHERE uid = ?'),
     upsertMoney: db.prepare(`INSERT INTO wholesale_held_money (uid, kind, sub_kind, customer_uid, order_uid, amount_cents, subtotal_cents,
@@ -132,6 +144,7 @@ export function createWholesaleService(ctx) {
   const UID_FIELD = { wholesale_order: 'order_uid', wholesale_entry: 'uid', wholesale_customer: 'customer_uid' };
   const liveByUid = Object.fromEntries(WHOLESALE_ENTITIES.map((d) => [d.entity,
     db.prepare(`SELECT * FROM ${d.table} WHERE ${UID_FIELD[d.entity]} = ? AND deleted_at IS NULL ORDER BY id`)]));
+  const markCustomersDirty = db.prepare('UPDATE wholesale_held_customers SET dirty = 1');
   const markAllDirty = [
     db.prepare('UPDATE wholesale_held_customers SET dirty = 1'),
     db.prepare('UPDATE wholesale_held_orders SET dirty = 1'),
@@ -654,6 +667,22 @@ export function createWholesaleService(ctx) {
   }
 
   /**
+   * At start: when the card has new fields since this database last looked (CARD_VERSION), mark
+   * every held customer dirty once, so the projection writes them to every card (through sync,
+   * so devices pull them). → true when it did.
+   */
+  function checkCardVersion() {
+    const seen = Number(status().card_version ?? 1);
+    if (seen >= CARD_VERSION) return false;
+    db.transaction(() => {
+      markCustomersDirty.run();
+      setStatus({ card_version: CARD_VERSION });
+    })();
+    log?.info?.(`customer cards: new fields (version ${CARD_VERSION}); every card is brought up to date`);
+    return true;
+  }
+
+  /**
    * A customer attached to an account for the first time: the account is marked age-restricted
    * (wholesale is nicotine) when it isn't already, and gets an active wholesale relationship when
    * it has no relationship with our wholesale business. Nothing else is ever changed.
@@ -812,7 +841,14 @@ export function createWholesaleService(ctx) {
       contact_name: c.contact_name,
       gone: c.gone === 1,
       ...customerFigures(q.ordersOf.all(c.uid), q.moneyOf.all(c.uid)),
+      ...cardRhythm(c),
     };
+  }
+
+  /** D3: the card's rhythm fields — the same rule as the check-in automation; none for a deleted customer. */
+  function cardRhythm(c) {
+    const r = c.gone === 1 ? null : orderRhythm(q.ordersFull.all(c.uid));
+    return { usual_gap_days: r?.regular ? r.usual_gap_days : null, quiet_from: r?.regular ? r.quiet_from : null };
   }
 
   /** One dirty row → its synced record. A failure is logged and left dirty (tried again next time). */
@@ -1045,8 +1081,32 @@ export function createWholesaleService(ctx) {
     return () => clearInterval(timer);
   }
 
+  // ---- D3: reads for the wholesale automations (automations.js) ------------------------------
+  const reads = {
+    /** Held customers attached to an account (linked), with their attachment. */
+    attachedCustomers: () => q.attached.all(),
+    customer: (uid) => q.customer.get(uid) ?? null,
+    /** A held order as it is now (after the whole request: a batch can bring "packed" and "shipped" together). */
+    order: (uid) => {
+      const o = q.order.get(uid);
+      return o ? { ...o, snap: parse(o.snapshot) } : null;
+    },
+    /** A customer's held orders with what the rhythm and balance rules need. */
+    ordersOf: (uid) => q.ordersFull.all(uid),
+    /** A customer's held payments, refunds, returns and credit notes. */
+    moneyOf: (uid) => q.moneyOf.all(uid),
+    /** How many held customers are attached to an account (two Order Manager customers on one account). */
+    attachedOn: (accountId) => q.attachedOn.get(accountId).n,
+    figuresOf,
+  };
+  if (services.automations && services.planner) {
+    registerWholesaleAutomations({ automations: services.automations, planner: services.planner, crm, reads, log });
+  }
+
   return {
-    receive, precheck, applyEvents, reconcile, reconcileAll, checkRestore, project, describe, status, startReconciler,
+    receive, precheck, applyEvents, reconcile, reconcileAll, checkRestore, checkCardVersion, project, describe, status, startReconciler,
+    /** D3: a customer's money owing as the Order Manager's Balances page works it out (figures.js owingByOrder). */
+    owingOf: (uid) => owingByOrder(q.ordersFull.all(uid), q.moneyOf.all(uid)),
     /** Latest Order Manager order time per client (Map client_id -> at), for "last activity" elsewhere (planner). */
     lastOrderAtByClient: () => new Map(lastOrders.all().map((r) => [r.client_id, r.at])),
     makeSecret, secretState, connectionInfo,

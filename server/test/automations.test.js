@@ -34,7 +34,7 @@ const local = (ms) => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 
-async function setup(t, { config = testConfig(tmpDir(t)), clock = testClock() } = {}) {
+async function setup(t, { config = testConfig(tmpDir(t)), clock = testClock(), wholesale = false } = {}) {
   const env = await startApp(t, config, { modules, now: clock.now });
   const users = await ensureTestUsers(env.ctx);
   const owner = sessionFor(env.ctx, users.owner);
@@ -59,6 +59,9 @@ async function setup(t, { config = testConfig(tmpDir(t)), clock = testClock() } 
   };
   const setNow = (ms) => { clock.offsetMs = ms - Date.now(); };
   const autos = env.ctx.services.automations;
+  // D3's scheduled wholesale automations are on by default; these tests are about C8's framework and
+  // the planner's two, so they are switched off here (server/test/wholesale-automations.test.js has them).
+  if (!wholesale) for (const id of ['wholesale-check-in', 'wholesale-balances']) autos.setSettings(id, { enabled: false }, { actor: 'owner' });
   return { ...env, config, clock, users, owner, sync, make, update, remove, call, setNow, autos };
 }
 
@@ -253,7 +256,8 @@ test('switches: off skips the scheduler but Run now still works; who changed it 
   assert.equal((await env.call('GET', '/api/automations', undefined, { session: null })).status, 401);
   assert.equal((await env.call('POST', '/api/automations/probe-off/run', {}, { session: null })).status, 401);
   const list = await env.call('GET', '/api/automations');
-  assert.deepEqual(list.body.automations.map((a) => a.id), ['friday-review', 'no-next-step', 'probe-off']);
+  assert.deepEqual(list.body.automations.map((a) => a.id),
+    ['friday-review', 'no-next-step', 'wholesale-check-in', 'wholesale-balances', 'wholesale-ready-to-ship', 'probe-off']);
   assert.equal(list.body.timeZone, 'America/Toronto');
 });
 

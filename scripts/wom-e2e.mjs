@@ -7,7 +7,8 @@
 // backfill of a customer from before the connection (waiting for a client), link it, then orders
 // placed / edited / packed / shipped / cancelled / returned / deleted / restored, payments, refunds,
 // store credit, a pause and catch-up, and "Forget everything" + "Send existing" (every record sent
-// again with new keys) — checking the suite's timeline records and spend against the Order Manager's own.
+// again with new keys) — checking the suite's timeline records and spend against the Order Manager's own, and (D3)
+// the money owing (balance and over-30-days aging) against its Balances page.
 // --capture writes every event the suite received, in order (test fixtures).
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -249,6 +250,37 @@ async function main() {
   ok(outbox().refused === undefined, 'nothing refused by the suite');
   const row = ctx.services.connections.get('wom');
   ok(row.lastSuccessAt && row.queueSize === 0, 'Connections row: last success, nothing waiting', row);
+
+  console.log('\n6. Money owing (D3): the suite’s figures = the Order Manager’s balance and its Balances page aging');
+  const daysAgo = (n) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+  const corner = (await wom('POST', '/api/customers', { business_name: 'Northwind Corner Store', contact_name: 'Robin', email: 'robin@northwind.example' })).data;
+  const old1 = await placeOrder(corner.id, [{ product_id: 1, quantity: 10, unit_price: 10 }], { order_date: daysAgo(45) });
+  const old2 = await placeOrder(corner.id, [{ product_id: 2, quantity: 5, unit_price: 10 }], { order_date: daysAgo(40) });
+  const fresh = await placeOrder(corner.id, [{ product_id: 3, quantity: 2, unit_price: 10 }]);
+  ok((await wom('POST', '/api/payments', { customer_id: corner.id, order_id: old2.id, amount: 20, method: 'cash' })).status === 201, 'a part payment on the second order');
+  ok((await wom('POST', '/api/payments', { customer_id: corner.id, order_id: fresh.id, amount: 22.6, method: 'cash' })).status === 201, 'the newest order paid on itself');
+  await settle();
+  const cornerUid = uidOf('customers', corner.id);
+  const cc = local('client', { name: 'Northwind', status: 'active' });
+  const ca = local('account', { client_id: cc, name: 'Northwind Corner Store' });
+  ok((await suite('POST', `/api/wholesale/customers/${cornerUid}/link`, { clientId: cc, accountId: ca })).status === 200, 'linked in the suite');
+  const { overdueOrders } = await import('../server/src/modules/wholesale/figures.js');
+  const localToday = (() => { const d = new Date(); const p2 = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; })();
+  for (const [label, id] of [['Lefty’s', lefty.id], ['Northwind', corner.id]]) {
+    const owing = ctx.services.wholesale.owingOf(uidOf('customers', id));
+    const theirs = Math.round((await wom('GET', `/api/payments/customer/${id}/balance`)).data.balance_owing * 100);
+    ok(owing.balance_cents === theirs, `${label}: balance in the suite = the Order Manager’s (${theirs / 100})`, { suite: owing.balance_cents, wom: theirs });
+    const row = (await wom('GET', '/api/customers/balances')).data.customers?.find((r) => r.id === id);
+    const over30 = row ? Math.round(((row.aging.days_30 ?? 0) + (row.aging.days_60 ?? 0) + (row.aging.days_90 ?? 0)) * 100) : 0;
+    const mine = overdueOrders(owing, localToday).reduce((sum, o) => sum + o.owing_cents, 0);
+    ok(mine === over30, `${label}: owing over 30 days in the suite = the Balances page aging (${over30 / 100})`, { suite: mine, wom: over30, row });
+  }
+  {
+    const run = ctx.services.automations.runNow('wholesale-balances');
+    const task = sdb.prepare("SELECT * FROM planner_tasks WHERE deleted_at IS NULL AND title LIKE 'Balance owing%Northwind%'").get();
+    ok(run.status === 'ok' && task && /\$126\.90 \(2 orders\)$/.test(task.title), 'the balance reminder: $126.90 on the two old orders (the oldest-first rule)', { run: run.summary, title: task?.title });
+    ok(/Total owing: \$126\.90/.test(task?.notes ?? '') && /To: Robin <robin@northwind\.example>/.test(task?.notes ?? ''), 'its drafted email: the total and the Order Manager’s email');
+  }
 
   if (CAPTURE) {
     fs.writeFileSync(CAPTURE, `${JSON.stringify({ capturedAt: new Date().toISOString(), from: 'scripts/wom-e2e.mjs', events: captured }, null, 1)}\n`);

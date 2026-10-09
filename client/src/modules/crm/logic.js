@@ -124,10 +124,13 @@ export function parseQuery(q) {
  * @returns {Array<{ client, accountNames: string[], businessIds: string[], lastActivityAt: string|null,
  *   text: string, phones: string[] }>} sorted by client name
  */
-export function buildClientIndex({ clients = [], accounts = [], contacts = [], relationships = [], activities = [], lastActivity = null }) {
+export function buildClientIndex({ clients = [], accounts = [], contacts = [], relationships = [], activities = [], lastActivity = null, quietFrom = null }) {
   const byClient = new Map();
   for (const c of clients) {
-    byClient.set(c.id, { client: c, accountNames: [], businessIds: new Set(), lastActivityAt: null, parts: [c.name], phones: [] });
+    // quietFrom (D3): the first day one of its Order Manager regulars counts as quiet (the row compares it with
+    // today); never for a closed client (closing one means "no next steps", as the check-ins do).
+    const quiet = c.status === 'closed' ? null : (quietFrom?.get(c.id) ?? null);
+    byClient.set(c.id, { client: c, accountNames: [], businessIds: new Set(), lastActivityAt: null, quietFrom: quiet, parts: [c.name], phones: [] });
   }
   const accountClient = new Map();
   for (const a of [...accounts].sort((x, y) => String(x.name).localeCompare(String(y.name)))) {
