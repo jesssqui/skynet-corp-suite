@@ -145,16 +145,16 @@ export function createPlannerService({ db, services, log }) {
     /** Open tasks that name a relationship (for C4a's "no next step" rule on the server). */
     openRelationshipTasks: () => q.relTasks.all(),
     /**
-     * { live, open, relationshipId, clientId, accountId, title, dueDate, notes, doneAt } for a task id
-     * (live = not deleted; open = live and not done), or null.
-     */
-    /**
      * D2 (undoing a link): live tasks — open or done — that name this client, account or relationship
      * (any of them), with who made them (`created_by`: owner | partner | system).
      */
     tasksNaming: ({ clientId = null, accountId = null, relationshipId = null } = {}) => q.naming.all({
       client: clientId ?? '', account: accountId ?? '', relationship: relationshipId ?? '',
     }),
+    /**
+     * { live, open, relationshipId, clientId, accountId, title, dueDate, notes, doneAt } for a task id
+     * (live = not deleted; open = live and not done), or null.
+     */
     taskState(id) {
       const t = q.task.get(id);
       if (!t) return null;
