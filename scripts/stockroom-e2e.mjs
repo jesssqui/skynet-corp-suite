@@ -9,7 +9,7 @@
 // stored), the tasks made (reorders by supplier, the delivery, the difference, the weekly spot check), unchanged
 // answers (304), then Stockroom's own actions — a purchase order confirmed to a supplier with a reorder task, the
 // first one received in full, the second cancelled, the difference marked investigated, a spot check applied — and
-// the tasks finished at the next pull, nothing made twice, and finally "Disconnect" in Stockroom (401 revoked: no more
+// the tasks finished at the next pull (with how each order ended, from a Stockroom with B10), nothing made twice, and finally "Disconnect" in Stockroom (401 revoked: no more
 // calls). A POST to Stockroom's suite API is refused 405 (it is read-only on its side too); the suite never sends one.
 process.env.TZ ||= 'America/Toronto';
 import { spawn } from 'node:child_process';
@@ -119,10 +119,17 @@ try {
   ok(open("title LIKE 'Receive delivery%'").length === 2, 'and a task to receive it');
   await hubCmd('receive_po', { po_id: ready.firstPo });
   await svc.pullRound({ force: true });
-  ok(sdb.prepare('SELECT done_at, notes FROM planner_tasks WHERE id = ?').get(delivery.id).notes.includes(DELIVERY_GONE), 'the first order received in full: its task finished');
+  // A Stockroom with B10 lists ended orders (`ended`): the tasks say how each ended; an older one: the general reason.
+  const b10 = Array.isArray(svc.snapshot('deliveries').body.ended);
+  console.log(`  (Stockroom ${b10 ? 'with' : 'without'} B10's ended orders)`);
+  if (b10) ok(svc.snapshot('deliveries').body.purchase_orders_truncated === false, 'B10: the open list isn’t cut (purchase_orders_truncated false)');
+  const deliveryNotes = (id) => sdb.prepare('SELECT done_at, notes FROM planner_tasks WHERE id = ?').get(id);
+  ok(deliveryNotes(delivery.id).done_at && deliveryNotes(delivery.id).notes.includes(b10 ? 'Received in full in Stockroom' : DELIVERY_GONE), 'the first order received in full: its task finished, saying so');
+  const second = open("title LIKE 'Receive delivery%'")[0];
   const cancelled = await hubCmd('cancel_po', { po_id: po2.po_id });
   await svc.pullRound({ force: true });
   ok(cancelled.status === 'cancelled' && open("title LIKE 'Receive delivery%'").length === 0, 'the second cancelled: its task finished too');
+  ok(deliveryNotes(second.id).notes.includes(b10 ? 'Cancelled in Stockroom: e2e' : DELIVERY_GONE), b10 ? '…with “Cancelled in Stockroom: e2e”' : '…with the general reason');
   await hubCmd('investigate', { id: ours.id });
   await svc.pullRound({ force: true });
   ok(sdb.prepare('SELECT notes FROM planner_tasks WHERE id = ?').get(diffTask.id).notes.includes(DIFFERENCE_GONE), 'the difference marked investigated: its task finished');
