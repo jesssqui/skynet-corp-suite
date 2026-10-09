@@ -67,15 +67,30 @@ export function addPeriods(date, period, n = 1, anchor = null) {
 export const isAnchorDay = (v) => Number.isInteger(v) && v >= 1 && v <= 31;
 
 /**
+ * The billing day to roll a date by, read defensively: the stored `anchor` counts only when it
+ * agrees with the date — the date falls on it, or the date is its month's last day and that day is
+ * below the anchor (the clamp: Feb 28 with anchor 31). Otherwise the anchor is stale or split from
+ * its date (a date set without it — two devices' offline edits settling field by field, the plain
+ * /sync/data view, a roll racing an edit) and the date's own day wins.
+ */
+export function effectiveAnchor(date, anchor) {
+  const d = dayOfMonth(date);
+  if (!isAnchorDay(anchor) || d === anchor) return d;
+  const [y, m] = String(date).split('-').map(Number);
+  return d === daysInMonth(y, m) && d < anchor ? anchor : d;
+}
+
+/**
  * The next renewal of an auto-renewing cost whose date has passed: the first `next + k periods`
  * that is today or later (k counted from `next` in one go, so a run after weeks of downtime lands
  * on the right date). Unchanged when the date hasn't passed, or for `once`. Each date falls on the
- * billing day `anchor` (the cost's `anchor_day`; default `next`'s own day), clamped to short
- * months — rolled daily or in one jump, the dates are the same (Jan 31 → Feb 28 → Mar 31).
+ * billing day `anchor` (the cost's `anchor_day`, trusted only when it agrees with `next` —
+ * effectiveAnchor; else `next`'s own day), clamped to short months — rolled daily or in one jump,
+ * the dates are the same (Jan 31 → Feb 28 → Mar 31).
  */
 export function rollForward(next, period, today, anchor = null) {
   if (!next || !PERIOD_MONTHS[period] || next >= today) return next;
-  const day = isAnchorDay(anchor) ? anchor : dayOfMonth(next);
+  const day = effectiveAnchor(next, anchor);
   let k = 1;
   let date = addPeriods(next, period, k, day);
   while (date < today) {

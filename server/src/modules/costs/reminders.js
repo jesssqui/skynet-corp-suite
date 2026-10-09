@@ -30,7 +30,7 @@
 import { addDays } from '@suite/shared/planner';
 import {
   SERVICE_REMINDER_DAYS, COST_REMINDER_DAYS, daysFromTo, rollForward, wantsCostReminder, costAmountText, moneyText,
-  PERIOD_SUFFIX, isActiveCost,
+  PERIOD_SUFFIX, isActiveCost, effectiveAnchor,
 } from '@suite/shared/costs';
 import { markWrote, suiteWrote, suiteFinished, finishTask, dayText } from '../automations/taskBook.js';
 
@@ -380,12 +380,13 @@ export function rollCostsForward({ reads, planner }, { now, today, made, madeLik
   const io = { planner, made, madeLike, remember, update };
   const rolled = [];
   for (const c of reads.autoRenewingPassed(today)) {
-    // The billing day of the month: the cost's own, else (null: made before D6's review fix, or by
-    // server code) the current date's day — written along with the new date so it sticks.
-    const anchor = c.anchor_day ?? Number(c.next_renewal.slice(8, 10));
+    // The billing day of the month: the cost's own while it agrees with the date (effectiveAnchor),
+    // else — null, or stale/split from its date — the date's own day, written along with the new
+    // date so the pair is whole again.
+    const anchor = effectiveAnchor(c.next_renewal, c.anchor_day);
     const next = rollForward(c.next_renewal, c.period, today, anchor);
     if (!next || next === c.next_renewal) continue;
-    update('recurring_cost', c.id, { next_renewal: next, ...(c.anchor_day == null ? { anchor_day: anchor } : {}) });
+    update('recurring_cost', c.id, { next_renewal: next, ...(c.anchor_day !== anchor ? { anchor_day: anchor } : {}) });
     const seen = new Set();
     for (const m of madeLike(`${c.id}:`)) {
       if (seen.has(m.id) || !RECORD_KEY.test(m.key)) continue;
