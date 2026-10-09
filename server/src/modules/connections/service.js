@@ -37,8 +37,8 @@ export const PLACEHOLDERS = Object.freeze([
     description: 'Customers, orders, payments, returns and refunds from the Order Manager, through its outbox.',
   },
   {
-    id: 'calendar', name: 'Apple Calendar', comesWith: 'C6',
-    description: 'Meetings for Today and the morning plan, read from iCloud; tasks with a date as a subscribed calendar.',
+    id: 'calendar', name: 'Apple Calendar', comesWith: 'C6b',
+    description: 'Meetings for Today and the morning plan, read from iCloud. (Tasks with a date as a subscribed calendar: the task calendar feed, C6a.)',
   },
   {
     id: 'stockroom', name: 'Stockroom (Inventory Hub)', comesWith: 'D16',

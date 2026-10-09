@@ -8,6 +8,7 @@ import helmet from 'helmet';
 import { runMigrations } from './db/migrate.js';
 import { modules as registeredModules } from './modules/index.js';
 import { HttpError } from './lib/httpError.js';
+import { redactPath } from './lib/redact.js';
 
 /**
  * @param {object} opts
@@ -87,7 +88,7 @@ export async function createApp({ config, db, log, modules = registeredModules, 
     if (mod.createRouter) app.use(`/api/${mod.name}`, auth.requireSession, mod.createRouter(modCtx, ctx.services[mod.name]));
   }
 
-  app.use('/api', auth.requireSession, (req, _res, next) => next(new HttpError(404, `No API route for ${req.method} ${req.originalUrl}`)));
+  app.use('/api', auth.requireSession, (req, _res, next) => next(new HttpError(404, `No API route for ${req.method} ${redactPath(req.originalUrl)}`)));
 
   // The built client (production / Docker). In development Vite serves it on :5173.
   const indexHtml = path.join(config.clientDist, 'index.html');
@@ -104,7 +105,8 @@ export async function createApp({ config, db, log, modules = registeredModules, 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, _next) => {
     const status = err.status || err.statusCode || 500;
-    if (status >= 500) log.error(`${req.method} ${req.originalUrl}:`, err);
+    // Never the calendar feed's token (C6a): paths with a secret in them are redacted.
+    if (status >= 500) log.error(`${req.method} ${redactPath(req.originalUrl)}:`, err);
     const own = err instanceof HttpError;
     if (own && err.headers) res.set(err.headers);
     res.status(status).json({

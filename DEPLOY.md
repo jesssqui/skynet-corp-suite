@@ -316,6 +316,52 @@ customers and orders**: everything that exists there now is sent again (applied 
 Orders and payments **deleted** there since the backup can't be known this way — they stay as they were in the backup
 (check the Order Manager's Bin and the client timelines by hand); the same for notes deleted there since the backup.
 
+## 7. Your tasks in Apple Calendar (C6a)
+
+Each of you can subscribe to a read-only calendar of your dated tasks (your own and the shared list's — never the
+other person's own). No Apple password is involved: Apple Calendar reads a secret link from the suite.
+
+**Optional, once**: put the suite's Tailscale address in `.env` so the link (and each event's "Open in the suite" link)
+always uses it, wherever the page was opened:
+
+```bash
+SUITE_URL=https://<mac-mini-name>.<tailnet-name>.ts.net        # or …ts.net:8443 — exactly what you open on the iPhone
+```
+
+then `docker compose up -d`. Without it the link uses the address the page is open at — so **make the link from the
+ts.net address** (the iPhone, or Safari on the Mac at the ts.net address). A link made at `http://localhost:3100` only
+works on the Mac mini itself; the page warns about that.
+
+1. In the suite: **Account → Calendar → Make my calendar link**. The link is shown **once** — copy it now (only a hash is
+   kept; if it is lost, *Replace link…* and subscribe again).
+2. **iPhone** (Tailscale on): Settings → Apps → Calendar → Calendar Accounts (older iOS: Settings → Calendar → Accounts)
+   → Add Account → Other → **Add Subscribed Calendar** → paste the link as the Server → Next → Save. Then Calendar
+   Accounts → **Fetch New Data** → *Every 15 minutes* (subscribed calendars aren't pushed). Use the https link as shown:
+   the page offers no `webcal://` link, because calendar apps may fetch that over plain http, which Tailscale Serve's
+   HTTPS address doesn't answer.
+3. **Mac**: Calendar → File → **New Calendar Subscription…** → paste the link → Subscribe → Location **On My Mac** (not
+   iCloud: iCloud's servers can't reach your tailnet, so an iCloud subscription stays empty) → Auto-refresh *Every 15
+   minutes* → OK.
+4. Check: a task with a due date appears at the next refresh (all-day, or at its time for its estimate — 30 minutes
+   when none); tick it done in the suite and it disappears at the following refresh. An open task overdue by more than
+   30 days also drops out of the calendar (it is still overdue in the suite). **Account → Calendar** shows when a
+   calendar last read the link, and **System → Connections → Task calendar feed** whose links are on.
+
+Each person does this with their own account. **Replace link…** (if a link may have leaked) stops the old one at once —
+then remove the old subscription on each device and subscribe again; **Turn off…** stops it altogether. The switch on
+the *Task calendar feed* card pauses every feed (calendars keep what they last read). The links survive restores
+exactly as they are now (a replaced link doesn't come back).
+
+**What the calendar shows**: task titles **as written**, the business and a link back to the task. The suite's own
+tasks put account names and amounts in their titles (e.g. *Balance owing over 30 days: Lefty's, $412.50*), so those
+appear in Apple Calendar on the phone and the Mac — on the lock screen and in notifications too. Notes, contacts and
+other details are not sent. Anyone holding the link (and on your tailnet) can read the titles: keep it to yourselves,
+and *Replace* it if it may have leaked. The link never appears in the suite's logs.
+
+Tailscale must be on for the calendar to update; without it the calendar keeps its last copy. 20 wrong links from one
+device within an hour lock that device out of every feed for an hour (an old subscription left after *Replace* never
+gets near that); a server restart lifts it.
+
 ## Troubleshooting
 
 Offline:
@@ -371,3 +417,13 @@ Order Manager connection:
 - **"Can't reach the suite"** → see the `docker exec … /api/health` check in step 6.
 - **A customer is "Linked to more than one account"** (a link undone on one device and made again on another) → open
   the client pages, undo one link (`/wholesale` → Linked → Unlink, then link again): the suite never picks one by itself.
+
+Task calendar:
+- **The subscribed calendar stays empty or says it can't be reached** → on the Mac it must be *On My Mac*, not iCloud;
+  the device must be on Tailscale; the link must be the ts.net address (not `localhost`) — remake it from the ts.net
+  address or set `SUITE_URL`. `curl -sI <link>` on the Mac must answer `200` and `text/calendar`.
+- **404** → the link was replaced or turned off (Account → Calendar shows *Off* or a newer link): subscribe with the
+  new one and remove the old subscription. **503** → the *Task calendar feed* is switched off on System → Connections.
+  **429** → too many wrong links from that device; wait an hour or restart the suite.
+- **Times off by an hour** → `TZ` in `.env` (or `CALENDAR_TIME_ZONE`) must be the zone the tasks' times are meant in
+  (America/Toronto).

@@ -202,8 +202,8 @@ test('our businesses are created once at first start, through sync steps, with t
 test('seeds survive a restore without duplicates; a backup from before the CRM gets them back with the same ids', async (t) => {
   const dir = tmpDir(t);
   const config = testConfig(dir);
-  // A database from before C3a (no crm module — nor the planner, which needs it), backed up.
-  const preModules = modules.filter((m) => !['crm', 'planner', 'wholesale'].includes(m.name));
+  // A database from before C3a (no crm module — nor the planner, which needs it, nor what needs the planner), backed up.
+  const preModules = modules.filter((m) => !['crm', 'planner', 'wholesale', 'calendar'].includes(m.name));
   const pre = await startApp(t, config, preModules);
   const preBackup = await runBackup({ db: pre.db, dir: config.backup.dir, offsiteDir: null, keepDays: 30 });
   await pre.close();

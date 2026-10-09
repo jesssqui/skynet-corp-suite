@@ -36,6 +36,9 @@ services:
       # reaches this suite through Docker Desktop's host.docker.internal; see DEPLOY.md).
       SUITE_PORT: ${SUITE_PORT:-3100}
       WOM_CONNECT_URL: ${WOM_CONNECT_URL:-}
+      # C6a: the suite's ts.net address for calendar links (DEPLOY.md step 7); empty = the address used.
+      SUITE_URL: ${SUITE_URL:-}
+      CALENDAR_TIME_ZONE: ${CALENDAR_TIME_ZONE:-}
     volumes:
       # Live database: a Docker named volume (inside Docker's Linux VM), which is
       # where SQLite's WAL locking is reliable. Not a folder on the Mac.

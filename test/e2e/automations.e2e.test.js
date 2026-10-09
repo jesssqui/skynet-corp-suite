@@ -36,7 +36,7 @@ async function connections(page, server, label) {
   assert.equal(await card('backup').getByRole('switch').count(), 0, 'no switch for backups');
   // D1 made the Order Manager's row real (test/e2e/wholesale.e2e.test.js); the others still wait.
   await page.locator('[data-connection="wom"][data-state="on"]').waitFor(WAIT);
-  for (const [id, pkg] of [['calendar', 'C6'], ['stockroom', 'D16']]) {
+  for (const [id, pkg] of [['calendar', 'C6b'], ['stockroom', 'D16']]) {
     await page.getByTestId(`placeholder-${id}`).filter({ hasText: `Not connected yet · comes with ${pkg}` }).waitFor(WAIT);
     assert.equal(await card(id).getByRole('switch').count(), 0);
   }

@@ -42,6 +42,39 @@ function origins(value) {
   });
 }
 
+/** The suite's own address as people open it (C6a: the calendar feed's links), e.g. https://mac-mini.tail1234.ts.net:8443. */
+function publicUrl(value) {
+  if (!value || !value.trim()) return null;
+  let url;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new Error(`SUITE_URL: "${value}" is not a URL like https://mac-mini.tail1234.ts.net:8443`);
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || url.pathname !== '/' || url.search || url.hash) {
+    throw new Error(`SUITE_URL: "${value}" must be just scheme://host[:port]`);
+  }
+  return url.origin;
+}
+
+/**
+ * The time zone tasks' "HH:MM" times are in (C6a: timed events in the calendar feed): CALENDAR_TIME_ZONE,
+ * else TZ (the container's, America/Toronto), else this machine's. Must be an IANA name Intl knows.
+ */
+function timeZone(env) {
+  const candidates = [env.CALENDAR_TIME_ZONE, env.TZ, Intl.DateTimeFormat().resolvedOptions().timeZone, 'America/Toronto'];
+  for (const [i, zone] of candidates.entries()) {
+    if (!zone || !zone.trim()) continue;
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: zone.trim() });
+      return zone.trim();
+    } catch {
+      if (i === 0) throw new Error(`CALENDAR_TIME_ZONE: "${zone}" is not a time zone like America/Toronto`);
+    }
+  }
+  return 'America/Toronto';
+}
+
 function bool(value, fallback) {
   if (value === undefined || value === '') return fallback;
   return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
@@ -98,6 +131,14 @@ export function loadConfig(env = process.env) {
       // Manager runs in its own container on the same Mac; Docker Desktop's host.docker.internal
       // reaches the suite's port published on the Mac's 127.0.0.1 (DEPLOY.md, "Order Manager connection").
       connectUrl: env.WOM_CONNECT_URL || `http://host.docker.internal:${env.SUITE_PORT || 3100}`,
+    },
+    calendar: {
+      // C6a: the address the task calendar feed's links point back to (the ts.net address from Tailscale
+      // Serve). Empty: the address the calendar app used to fetch the feed (and, on the Account page,
+      // the address the page is open at).
+      publicUrl: publicUrl(env.SUITE_URL),
+      // The zone of tasks' due times; timed events are written in it (with a VTIMEZONE).
+      timeZone: timeZone(env),
     },
     automations: {
       // The minute scheduler (C8): on by default in production only, like the backup schedule.

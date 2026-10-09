@@ -9,6 +9,7 @@ import automations from './automations/index.js';
 import crm from './crm/index.js';
 import planner from './planner/index.js';
 import wholesale from './wholesale/index.js';
+import calendar from './calendar/index.js';
 
 // auth comes first: app.js puts its guard in front of every route.
 // sync comes before every module that registers synced entities with it (crm, planner, …);
@@ -16,5 +17,6 @@ import wholesale from './wholesale/index.js';
 // so every later module can register its connection or automations in createService;
 // planner comes after crm (its tasks point at CRM records);
 // wholesale (D1) comes last: its records belong to CRM accounts, it registers the 'wom' connection
-// and emits the Order Manager's events to automations.
-export const modules = [auth, health, sync, connections, automations, crm, planner, wholesale];
+// and emits the Order Manager's events to automations;
+// calendar (C6a) after the planner, whose tasks its feed reads (through the planner's service).
+export const modules = [auth, health, sync, connections, automations, crm, planner, wholesale, calendar];
