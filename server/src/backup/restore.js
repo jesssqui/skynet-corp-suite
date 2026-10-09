@@ -3,7 +3,8 @@
 //  1. Refuse if the server's heartbeat file is fresh (it is still running).
 //  2. Copy the backup next to the database as <db>.restoring and check it:
 //     integrity_check must pass and it must be a suite database. Mark the copy
-//     as restored so sync starts a new generation (devices resync).
+//     as restored so sync starts a new generation (devices resync). Run this version's
+//     migrations on the copy (D5), so every kept table and column exists in it.
 //     Tables modules list in `keepOnRestore` (C8: the connections' and automations' switches)
 //     are copied from the database being replaced into the copy: a restore must never quietly
 //     switch a paused connection or automation back on.
@@ -18,6 +19,7 @@ import { openDb } from '../db/open.js';
 import { runningServer } from '../lib/serverLock.js';
 import { markRestoredCopy } from '../modules/sync/restoreMarker.js';
 import { modules as registeredModules } from '../modules/index.js';
+import { runMigrations } from '../db/migrate.js';
 
 /** Tables whose current rows survive a restore (each module's `keepOnRestore`). */
 export const KEPT_TABLES = registeredModules.flatMap((m) => m.keepOnRestore ?? []);
@@ -109,6 +111,15 @@ export async function restoreBackup({ from, dbPath, backupDir, force = false, no
       markRestoredCopy(copy, now.toISOString());
       // The current database may be the broken one being replaced: carrying its switches is best
       // effort and must never stop the restore (with or without --force).
+      // D5: bring the copy's tables up to this version first (what the next start would do anyway), so a
+      // backup from before a kept table or column existed (e.g. D5's held notes and follow-up dates)
+      // still gets the current rows instead of silently dropping them. Best effort too: the next start
+      // runs (and reports) any migration that fails here.
+      try {
+        await runMigrations(copy, registeredModules);
+      } catch (err) {
+        log(`warning: couldn't bring the restored copy up to this version (${err.message}) — kept tables it lacks start empty`);
+      }
       try {
         const carried = carryKeptTables(dbPath, copy);
         if (carried.length) log(`kept the current ${carried.join(', ')}`);
