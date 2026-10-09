@@ -202,7 +202,9 @@ docker compose run --rm suite node server/scripts/restore.js --list
 docker compose run --rm suite node server/scripts/restore.js /offsite/<newest suite-….db> --to /tmp/drill.db
 ```
 
-It should print `restored … (N tables, M migrations)` and `Restore complete`. (`/tmp/drill.db` is thrown away with
+It should print `restored … (N tables, M migrations)` and `Restore complete` — counted after the copy is brought up to
+this version (a backup from an older version adds ": the backup had K, L applied now"), so M matches the number of
+migrations System shows after the restore. (`/tmp/drill.db` is thrown away with
 the one-off container.)
 
 **b) Full drill** — restore the live database from the off-machine copy and confirm it is the same data. First, signed
@@ -271,16 +273,19 @@ path) and publishes port 3089 — so check before connecting:
   ["host.docker.internal:host-gateway"]` and still can't reach a port published on loopback — use the tailnet address.)
 - The Order Manager's Settings → Suite connection shows no *last error* and *waiting* goes to 0.
 
-4. **Notes and follow-ups (D5)** — only once this version of the suite is running (an older suite refuses the three
-   new events, and the Order Manager parks them): in the Order Manager (admin), **Settings → Integrations → Suite
+4. **Notes and follow-ups (D5)** — **turn the switch on only after this version of the suite is running** (an older
+   suite refuses the three new events, and the Order Manager parks them as refused): in the Order Manager (admin), **Settings → Integrations → Suite
    connection → Send CRM notes to the suite** → on. It sends every CRM note and follow-up date once (customers the suite
    never heard of first). Linked customers' notes then show on their client's timeline (*from the Order Manager*, with
    who wrote them; type Call / Email / Meeting / Note — a follow-up marked done shows under Notes as *Follow-up done*), and
    each follow-up date is a task **Follow up with …** due that day on the wholesale business's default owner's Today
    (System → Automations → *Order Manager follow-ups*). Mark follow-ups done **in the Order Manager**: the suite then
    finishes its task; finishing the task in the suite doesn't change the Order Manager (one way). Unlinked customers'
-   notes wait with them on the Wholesale page (*N notes waiting*). If any notes were refused before (switched on too
-   early), press **Send again** on them in the Order Manager's refused list.
+   notes wait with them on the Wholesale page (*N notes waiting*).
+   **If it was switched on too early** (note events refused): **don't press Send again on refused note events** yet —
+   for a note added and then deleted, both events were refused, and the current Order Manager re-sends only the add
+   (it marks the refused delete superseded), so the deleted note would stay on the timeline for good. Instead, update
+   the Order Manager to the version that re-sends only the latest refused event per record, then press **Send again**.
 
 **Pausing**: the switch on the Connections card pauses the connection: the suite answers 503 and the Order Manager
 keeps its events queued (nothing is lost), then sends them in order — within its retry wait, at most 5 minutes —

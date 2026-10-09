@@ -45,7 +45,8 @@ function noteProblem(n) {
   if (!isId(n.customer_uid)) return 'data.note.customer_uid is not a permanent id (UUIDv7)';
   if (!NOTE_TYPES.includes(n.type)) return `data.note.type must be one of ${NOTE_TYPES.join(', ')}`;
   if (typeof n.body !== 'string') return 'data.note.body must be text';
-  if (!isoTime(n.at)) return 'data.note.at must be an ISO date-time';
+  // null allowed: the Order Manager sends isoOf(created_at), null for a note whose time a backup import lost.
+  if (n.at !== null && n.at !== undefined && !isoTime(n.at)) return 'data.note.at must be an ISO date-time (or null)';
   if (!optInt(n.number)) return 'data.note.number must be a whole number';
   if (!optText(n.written_by)) return 'data.note.written_by must be text';
   return null;

@@ -8,7 +8,8 @@
 // Decided on the customer as it is NOW in the holding area (as D3's ship task is), whatever the event:
 //   followup.changed         date set → task made (or moved); cleared → finished ("Done in the Order
 //                            Manager" when done: true, else "Cleared in the Order Manager")
-//   customer.created/updated deleted there → finished ("Deleted in the Order Manager"); back → see below
+//   customer.created/updated deleted there → finished ("Deleted in the Order Manager") and its held date cleared
+//                            (the Order Manager forgets it too); back → a NEW task once it sends a date again
 //   wholesale.attachment     linked → made (or reopened); unlinked → finished; moved → client/account follow
 //   wholesale.check          at start (after a restore too) and Run now: every customer with a follow-up
 //                            date or an open follow-up task is checked
@@ -20,7 +21,10 @@
 //   - the same follow-up sent again (a replay, "Send existing", a restore) finds its task: never a second;
 //   - a task a PERSON finished or deleted isn't made again for that date (their call), but a new date
 //     (moved there) or a new follow-up after a done one is a new task;
-//   - a task the SUITE finished (unlinked, customer deleted there) is reopened when the reason goes away.
+//   - a task the SUITE finished because its customer was unlinked is reopened when it is linked again
+//     (same key) — with its due date put back only if the suite set the current one. A customer deleted
+//     there and back is a NEW follow-up: deleting clears the held date, so the date sent again is a new
+//     episode and a new task (the finished one stays finished).
 // While a task is open it is the one kept up to date: a new date moves its due date — only while the due
 // date is still the one the suite set (D3's "what the suite wrote"); a person's own day is kept and a
 // line in the notes says the Order Manager's date changed.
@@ -117,9 +121,13 @@ export function followUpPlan(deps, uid, { made, madeLike }) {
   if (!mine.length) return { action: 'handled', uid };
   const id = mine[mine.length - 1].id;
   const st = mine[mine.length - 1].state;
-  const fields = { ...refs(st), done_at: null, due_date: date };
+  const fields = { ...refs(st), done_at: null };
+  // The due date goes back to the Order Manager's only while it is still the one the suite set: a day the
+  // person gave the task is kept (as in the update branch).
+  const keepDay = st.dueDate !== date && !suiteWrote(io, id, 'due_date', st.dueDate);
+  if (st.dueDate !== date && !keepDay) fields.due_date = date;
   if (st.title !== t.title && suiteWrote(io, id, 'title', st.title)) fields.title = t.title;
-  return { action: 'reopen', uid, customer: c, key, id, fields, date, title: fields.title ?? st.title, notes: st.notes };
+  return { action: 'reopen', uid, customer: c, key, id, fields, date, keepDay, title: fields.title ?? st.title, notes: st.notes };
 }
 
 /** Plans that change something (accept() runs the automation only for these). */
@@ -189,10 +197,12 @@ export function registerFollowUpAutomation({ automations, planner, crm, reads })
           for (const id of p.ids) if (finishTask(io, id, p.why, now)) k += 1;
           if (k) did.finished.push(`${p.title}: ${p.why}`);
         } else if (p.action === 'reopen') {
-          const line = `The follow-up on ${dayText(p.date)} is open in the Order Manager — reopened by the suite on ${dayText(today)}.`;
+          const line = `The follow-up on ${dayText(p.date)} is open in the Order Manager${p.keepDay ? ' (this task keeps the day you gave it)' : ''}`
+            + ` — reopened by the suite on ${dayText(today)}.`;
           update('task', p.id, { ...p.fields, notes: p.notes ? `${p.notes}\n\n${line}` : line });
           if (p.fields.title) markWrote(io, p.id, 'title', p.fields.title);
-          markWrote(io, p.id, 'due_date', p.date);
+          if (p.fields.due_date) markWrote(io, p.id, 'due_date', p.fields.due_date);
+          if (p.keepDay) remember(`told:${p.id}:${p.date}`, 'task', p.id);
           did.reopened.push(`${p.title} (${dayText(p.date)})`);
         }
       }

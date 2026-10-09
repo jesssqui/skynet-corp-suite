@@ -1465,8 +1465,12 @@ Code: the receiver and holding area in `server/src/modules/wholesale/` (`events.
 of `scripts/wom-e2e.mjs`. The sender's spec: the Order Manager's CLAUDE.md, "CRM notes to the suite (A11)" and the A10
 events table. It sends them only while its **"Send CRM notes to the suite"** switch is on (off by default; turn it on
 after deploying D5 — before, this receiver refused the three names and the Order Manager parked them as refused).
+**Refused note events from before**: not "Send again" with the current Order Manager — for a note added then deleted
+it re-sends only the add (the refused delete is marked superseded), leaving a deleted note on the timeline; first update
+it to the version that re-sends only the latest refused event per record (DEPLOY.md step 6.4).
 - **The events** (envelope unchanged; `eventProblem` checks exactly these, a malformed one is refused with a reason):
   `note.added { note: { note_uid, number, customer_uid, type: note|call|email|meeting|follow_up, body, at, written_by } }`
+  (`at` may be null — a backup import there can lose it: the time held before, else the event's `time`, is used)
   (envelope time = when queued, or `at` for a backfill), `note.deleted { note: { note_uid, number|null,
   customer_uid|null }, reason?: customer_deleted|gone|gone_after_restore }` (no reason = by hand),
   `followup.changed { customer_uid, follow_up_date: 'YYYY-MM-DD'|null, done }` (a state; `done: true` only with null).
@@ -1503,7 +1507,7 @@ after deploying D5 — before, this receiver refused the three names and the Ord
   as D3). Its notes say it is one way: "Mark it done in the Order Manager too" — finishing it here changes nothing there.
   - **Decided on the held customer as it is now** (`followUpPlan`), whatever the event — so a catch-up batch where a
     date is set then done makes nothing. Listens to `followup.changed`, `customer.created` / `customer.updated` (deleted
-    there, or back), `wholesale.attachment` (emitted by reconcile after a link, unlink or move is committed — a person's
+    there: finished), `wholesale.attachment` (emitted by reconcile after a link, unlink or move is committed — a person's
     link transaction, the minute reconciler, D2's links) and `wholesale.check` (emitted once at every start after the
     start's reconcile, so a restore or a run that failed is put right; Run now does the same check for every customer).
     `accept` runs it only when the customer's task would change — no run rows for the thousands of other events.
@@ -1514,9 +1518,13 @@ after deploying D5 — before, this receiver refused the three names and the Ord
     relationship follow the link. Null + `done: true` → **finished** "Done in the Order Manager"; null + `done: false` →
     "Cleared in the Order Manager"; unlinked → "Unlinked from the Order Manager customer"; deleted there → "Deleted in
     the Order Manager". Never more than one open task per customer (the newest open one is the one kept up to date).
-  - **Who finished it decides** (D3's rule): a task the suite finished is **reopened** for the same follow-up (linked
-    again, due date put back); one a person finished or deleted isn't made again for that date — but a **new date** there
-    (moved), or a new follow-up after a done one (a new episode, even on the same date), is a new task.
+  - **Who finished it decides** (D3's rule): a task the suite finished because its customer was unlinked is
+    **reopened** when it is linked again (same key; its due date goes back to the Order Manager's only while the
+    current one is still the suite's — a person's own day is kept, review fix); one a person finished or deleted isn't
+    made again for that date — but a **new date** there (moved), or a new follow-up after a done one (a new episode,
+    even on the same date), is a new task. A customer **deleted** there and back is a new follow-up too: deleting clears
+    the held date, so the date the Order Manager sends again starts a new episode — a **new task**; the one finished
+    "Deleted in the Order Manager" stays finished.
   - **Backfill events count** (unlike D3's): a follow-up date is the current state the owner wants to see, so turning
     the switch on there makes the tasks; replays can't duplicate — the same date finds its task by key, and nothing is
     made while one is open.

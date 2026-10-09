@@ -128,6 +128,13 @@ export async function restoreBackup({ from, dbPath, backupDir, force = false, no
       }
       const check = copy.pragma('integrity_check', { simple: true });
       if (check !== 'ok') throw new Error(`the restored copy failed integrity_check after preparing it: ${check}`);
+      // Counted again now that the copy is migrated: what the restored database is (the restore drill compares
+      // these with System); the backup's own count is kept beside it.
+      info = {
+        tables: copy.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type = 'table'").get().n,
+        migrations: copy.prepare('SELECT count(*) AS n FROM schema_migrations').get().n,
+        backupMigrations: info.migrations,
+      };
     } finally {
       copy.close();
     }
@@ -160,6 +167,7 @@ export async function restoreBackup({ from, dbPath, backupDir, force = false, no
 
   for (const suffix of ['-wal', '-shm', '-journal']) fs.rmSync(`${dbPath}${suffix}`, { force: true });
   fs.renameSync(staging, dbPath);
-  log(`restored ${from} -> ${dbPath} (${info.tables} tables, ${info.migrations} migrations)`);
+  const applied = info.migrations - info.backupMigrations;
+  log(`restored ${from} -> ${dbPath} (${info.tables} tables, ${info.migrations} migrations${applied > 0 ? `: the backup had ${info.backupMigrations}, ${applied} applied now` : ''})`);
   return { restoredFrom: from, dbPath, safetyCopy, ...info };
 }

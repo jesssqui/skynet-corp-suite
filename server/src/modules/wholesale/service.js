@@ -347,7 +347,7 @@ export function createWholesaleService(ctx) {
    * backup import), while a live add for a deleted note can only be an old one sent again (a refused
    * event "sent again" after the delete) — its snapshot is kept, the note stays deleted.
    */
-  function holdNote(n, { backfill, at }) {
+  function holdNote(n, { backfill, at, eventTime }) {
     const prev = q.note.get(n.note_uid);
     const stayDeleted = Boolean(prev?.deleted) && !backfill;
     q.upsertNote.run({
@@ -356,7 +356,8 @@ export function createWholesaleService(ctx) {
       number: isInt(n.number) ? n.number : null,
       type: n.type,
       body: n.body,
-      at_note: isoTime(n.at),
+      // No time there (a backup import lost it): the one we had, else the event's.
+      at_note: isoTime(n.at) ?? prev?.at ?? eventTime,
       written_by: clip(n.written_by ?? null, 100),
       snapshot: json(n),
       deleted: stayDeleted ? 1 : 0,
@@ -528,7 +529,7 @@ export function createWholesaleService(ctx) {
       info = holdOrderDeleted(d, { at, eventTime });
       subject = `order:${d.order_uid}`;
     } else if (e.name === 'note.added') {
-      info = holdNote(d.note, { backfill: d.backfill === true, at });
+      info = holdNote(d.note, { backfill: d.backfill === true, at, eventTime });
       subject = `note:${d.note.note_uid}`;
     } else if (e.name === 'note.deleted') {
       info = holdNoteDeleted(d, { at });

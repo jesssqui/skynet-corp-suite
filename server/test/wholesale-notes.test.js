@@ -486,6 +486,10 @@ test('a restore of a backup made before D5 (no notes table, no follow-up columns
   const lines = [];
   await restoreBackup({ from: backup.file, dbPath: config.dbPath, backupDir: config.backup.dir, log: (l) => lines.push(l) });
   assert.ok(lines.some((l) => /wholesale_held_notes/.test(l)), lines.join('\n'));
+  // The counts are the restored database's, after its migrations (the restore drill compares them with System).
+  const done = lines.find((l) => /^restored /.test(l));
+  const live = (() => { const d = new Database(config.dbPath, { readonly: true }); try { return d.prepare('SELECT count(*) AS n FROM schema_migrations').get().n; } finally { d.close(); } })();
+  assert.match(done, new RegExp(`, ${live} migrations: the backup had ${live - 1}, 1 applied now\\)$`), done);
   const again = await setup(t, { config });
   const held = again.db.prepare('SELECT follow_up_date FROM wholesale_held_customers WHERE uid = ?').get(c.customer_uid);
   assert.equal(held.follow_up_date, '2026-10-20');
@@ -537,4 +541,66 @@ test('a catch-up batch where a follow-up is set and then done makes no task at a
   env.apply([om.followUpChanged(c, '2026-10-20'), om.followUpChanged(c, '2026-10-22'), om.followUpChanged(c, null, { done: true })]);
   assert.equal(env.followTasks().length, 0);
   assert.equal(env.runs().length, 0, 'no run rows either');
+});
+
+// ---- review fixes ------------------------------------------------------------------------------------
+
+test('a note with no time there (at: null, a backup import lost it) is accepted: the held time, else the event’s', async (t) => {
+  const env = await setup(t);
+  const om = womKit();
+  const c = om.customer();
+  const { accountId } = env.client();
+  env.apply([om.customerCreated(c)]);
+  env.link(c, { accountId });
+  const n = om.note(c, { at: null, body: 'Imported without a time' });
+  assert.equal(eventProblem(om.noteAdded(n)), null);
+  assert.match(eventProblem(om.noteAdded({ ...n, at: 'whenever' })) ?? '', /at must be an ISO date-time \(or null\)/);
+  const e = om.noteAdded(n);
+  assert.deepEqual(env.apply([e]), ['applied']);
+  assert.equal(env.notes()[0].at, new Date(e.time).toISOString(), 'the event’s time');
+  // A note held with its time, sent again without one (e.g. the backfill after such an import): keeps its time.
+  const timed = om.note(c, { at: '2026-09-01T12:00:00.000Z', body: 'Had a time' });
+  env.apply([om.noteAdded(timed)]);
+  env.apply([om.noteAdded({ ...timed, at: null }, { backfill: true })]);
+  assert.equal(env.held(timed.note_uid).at, '2026-09-01T12:00:00.000Z');
+});
+
+test('reopened after linking again: a day the person gave the task is kept (told once in the notes)', async (t) => {
+  const env = await setup(t);
+  const om = womKit();
+  const c = om.customer();
+  const { accountId } = env.client();
+  env.apply([om.customerCreated(c), om.followUpChanged(c, '2026-10-20')]);
+  const linkId = env.link(c, { accountId });
+  const [task] = env.followTasks();
+  env.local('task', { due_date: '2026-10-23' }, 'update', task.id, 'partner');
+  env.unlink(linkId, c);
+  assert.ok(env.tasks('id = ?', task.id)[0].done_at, 'finished: unlinked');
+  env.link(c, { accountId });
+  const now = env.tasks('id = ?', task.id)[0];
+  assert.deepEqual([now.done_at, now.due_date], [null, '2026-10-23'], 'reopened, on the person’s day');
+  assert.match(now.notes, /is open in the Order Manager \(this task keeps the day you gave it\) — reopened by the suite/);
+  const runs = env.runs().length;
+  env.svc.checkFollowUps();
+  assert.equal(env.runs().length, runs, 'nothing more to do: no second note line');
+});
+
+test('a customer deleted there and back is a new follow-up: a new task, the finished one stays finished', async (t) => {
+  const env = await setup(t);
+  const om = womKit();
+  const c = om.customer();
+  const { accountId } = env.client();
+  env.apply([om.customerCreated(c), om.followUpChanged(c, '2026-10-20')]);
+  env.link(c, { accountId });
+  const [first] = env.followTasks();
+  env.apply([om.customerDeleted(c)]);
+  assert.ok(env.tasks('id = ?', first.id)[0].done_at);
+  // A backup import there brought it back; the Order Manager sends its date again.
+  env.apply([om.customerCreated(c, { backfill: true })]);
+  assert.equal(env.followTasks().filter((x) => !x.done_at).length, 0, 'back without a date: nothing yet');
+  env.apply([om.followUpChanged(c, '2026-10-20', { backfill: true })]);
+  const open = env.followTasks().filter((x) => !x.done_at);
+  assert.equal(open.length, 1);
+  assert.notEqual(open[0].id, first.id, 'a new task');
+  assert.ok(env.tasks('id = ?', first.id)[0].done_at, 'the old one stays finished');
 });
