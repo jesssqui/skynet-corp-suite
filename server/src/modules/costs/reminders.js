@@ -1,7 +1,7 @@
 // Renewal reminders (D6), registered with the automations framework (C8) by the costs module:
 //
 //   service-renewals   every day at 7:50 — a client service (not done or cancelled, under a live
-//                      relationship, account and client) whose renewal_date is 30 days away gets
+//                      relationship (not ended), account and client (not closed)) whose renewal_date is 30 days away gets
 //                      "Renewal in 30 days: <service> for <account> (<business>)", due that day, for
 //                      the business's default owner, with the client, account and relationship
 //   cost-renewals      every day at 7:55 — first rolls auto-renewing costs whose date has passed
@@ -15,9 +15,12 @@
 // server that was off). Like D3/D5 ("who finished it decides", ../automations/taskBook.js):
 //   - a task a PERSON finished or deleted is final for that date; a new date (renewed for another
 //     period) is a new key and a new task when its day comes;
-//   - while a task is open, a changed renewal date MOVES it (re-filed under the new key): its due date
-//     follows only while it is still the one the suite set — a person's own day is kept and a line in
-//     the notes says the date changed; title and notes are refreshed only while still the suite's;
+//   - while a task is open, a renewal date moved LATER past the reminder's window (renewed for another
+//     period: new date − lead > today) FINISHES it ("Renewed: the next renewal is …"); next year's task
+//     is made on its own day. A correction that stays inside the window, or an earlier date, MOVES it
+//     (re-filed under the new key): its due date follows only while it is still the one the suite set —
+//     a person's own day is kept and a line in the notes says the date changed; title and notes are
+//     refreshed only while still the suite's;
 //   - the record cancelled / done, deleted, or its date cleared → the open task is FINISHED with the
 //     reason; a task the suite finished is reopened if the reason goes away (same date, not passed);
 //   - at most NEW_REMINDERS_CAP new tasks a run, soonest renewal first; the rest come the next days.
@@ -127,8 +130,19 @@ export function reminderPlan(adapter, { today, made, madeLike, planner }) {
       // One open task per record: the newest is kept up to date.
       const task = tasks[tasks.length - 1];
       const st = task.state;
+      const was = forDate(task);
+      const moved = was !== rec.date;
+      // Renewed (the date moved later, past the reminder's window): the renewal this task was for is
+      // done — FINISH it, never move it a year out (ticked there, it would stand for next year's
+      // renewal as "handled by a person"). Next year's reminder is made on its own day, under its key.
+      if (moved && rec.date > was && start > today) {
+        plan.push({
+          action: 'finish', id, ids: tasks.map((t) => t.id), title: st.title,
+          why: `Renewed: the next renewal is ${dayText(rec.date)} (its reminder comes on ${dayText(start)})`,
+        });
+        continue;
+      }
       const fields = {};
-      const moved = forDate(task) !== rec.date;
       let told = false;
       if (moved && st.dueDate !== due) {
         if (suiteWrote(io, task.id, 'due_date', st.dueDate)) fields.due_date = due;
@@ -264,9 +278,13 @@ export function serviceAdapter({ crm, planner }) {
   const businessName = (id) => crm.getBusiness(id)?.name ?? null;
   const toRec = (s) => {
     if (!s) return null;
+    // Closed clients and ended relationships get no reminders (closed = no next steps, as D3's
+    // check-ins); a paused relationship still does — its service can still renew.
     const why = s.status === 'cancelled' ? 'The service was cancelled'
       : s.status === 'done' ? 'The service was marked done'
-        : !s.renewal_date ? 'Its renewal date was cleared' : null;
+        : s.client_status === 'closed' ? 'The client was closed'
+          : s.relationship_status === 'ended' ? 'The relationship ended'
+            : !s.renewal_date ? 'Its renewal date was cleared' : null;
     return {
       id: s.id,
       date: s.renewal_date,
@@ -279,7 +297,7 @@ export function serviceAdapter({ crm, planner }) {
           title: serviceTitle({ name: s.name, accountName: s.account_name, businessName: bname, date: s.renewal_date, due }),
           notes: [
             `${s.name} for ${s.account_name}${s.client_name && s.client_name !== s.account_name ? ` (client ${s.client_name})` : ''} renews on ${dayText(s.renewal_date)}${amount ? `: ${amount}` : ''}.`,
-            `Renewed? Set the service’s new renewal date on the client page: a new reminder comes ${SERVICE_REMINDER_DAYS} days before it.`,
+            `Renewed? Set the service’s new renewal date on the client page: the suite finishes this task, and a new reminder comes ${SERVICE_REMINDER_DAYS} days before the new date.`,
             'Not renewing? Set the service to Done or Cancelled: the suite then finishes this task.',
             `Client: /crm/clients/${s.client_id}`,
           ].join('\n'),
@@ -331,7 +349,7 @@ export function costAdapter({ crm, planner, reads }) {
             `${c.name}${c.vendor ? ` from ${c.vendor}` : ''} renews on ${dayText(c.next_renewal)}${paid ? `: ${paid}` : ''}.`,
             c.auto_renews
               ? 'It renews on its own: check the card or account it is charged to, or cancel it before then if it’s no longer needed. The suite moves its next renewal forward once the date has passed.'
-              : 'It doesn’t renew on its own: renew it, then set its next renewal on Costs. Not renewing it? Set it to Cancelled there: the suite then finishes this task.',
+              : `It doesn’t renew on its own: renew it, then set its next renewal on Costs — the suite finishes this task, and a new reminder comes ${COST_REMINDER_DAYS} days before the new date. Not renewing it? Set it to Cancelled there: the suite finishes this task too.`,
             ...(resold ? [`Resold to ${resold.account.name}${resold.account.client_name && resold.account.client_name !== resold.account.name ? ` (client ${resold.account.client_name})` : ''}${c.resold_amount_cents !== null && c.resold_amount_cents !== undefined ? `: they pay ${costAmountText(c, 'resold_amount_cents')}` : ''}.`] : []),
             'Costs: /costs',
           ].join('\n'),
@@ -362,9 +380,12 @@ export function rollCostsForward({ reads, planner }, { now, today, made, madeLik
   const io = { planner, made, madeLike, remember, update };
   const rolled = [];
   for (const c of reads.autoRenewingPassed(today)) {
-    const next = rollForward(c.next_renewal, c.period, today);
+    // The billing day of the month: the cost's own, else (null: made before D6's review fix, or by
+    // server code) the current date's day — written along with the new date so it sticks.
+    const anchor = c.anchor_day ?? Number(c.next_renewal.slice(8, 10));
+    const next = rollForward(c.next_renewal, c.period, today, anchor);
     if (!next || next === c.next_renewal) continue;
-    update('recurring_cost', c.id, { next_renewal: next });
+    update('recurring_cost', c.id, { next_renewal: next, ...(c.anchor_day == null ? { anchor_day: anchor } : {}) });
     const seen = new Set();
     for (const m of madeLike(`${c.id}:`)) {
       if (seen.has(m.id) || !RECORD_KEY.test(m.key)) continue;

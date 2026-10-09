@@ -264,7 +264,7 @@ export function createCrmService({ db, services, log }) {
     // D6: one service with what its renewal reminder needs; null unless it and its relationship,
     // account, client (and our business) are live.
     service: db.prepare(`SELECT s.*, a.name AS account_name, a.client_id AS client_id, c.name AS client_name,
-        c.status AS client_status, r.business_id AS business_id, r.account_id AS account_id
+        c.status AS client_status, r.business_id AS business_id, r.account_id AS account_id, r.status AS relationship_status
       FROM crm_services s JOIN crm_relationships r ON r.id = s.relationship_id AND r.deleted_at IS NULL ${REL_PARENTS}
       JOIN crm_clients c ON c.id = a.client_id AND c.deleted_at IS NULL
       WHERE s.id = ? AND s.deleted_at IS NULL`),
@@ -438,7 +438,7 @@ export function createCrmService({ db, services, log }) {
     renewalsBetween: (from, to) => live.renewals.all(from, to),
     /**
      * D6 (renewal reminders): one service as stored plus account_name, account_id, client_id,
-     * client_name, client_status and business_id — any status — or null when it, its relationship,
+     * client_name, client_status, relationship_status and business_id — any status — or null when it, its relationship,
      * account or client is deleted.
      */
     liveService: (id) => (isId(id) ? live.service.get(id) ?? null : null),
