@@ -282,10 +282,12 @@ path) and publishes port 3089 — so check before connecting:
    (System → Automations → *Order Manager follow-ups*). Mark follow-ups done **in the Order Manager**: the suite then
    finishes its task; finishing the task in the suite doesn't change the Order Manager (one way). Unlinked customers'
    notes wait with them on the Wholesale page (*N notes waiting*).
-   **If it was switched on too early** (note events refused): **don't press Send again on refused note events** yet —
-   for a note added and then deleted, both events were refused, and the current Order Manager re-sends only the add
-   (it marks the refused delete superseded), so the deleted note would stay on the timeline for good. Instead, update
-   the Order Manager to the version that re-sends only the latest refused event per record, then press **Send again**.
+   **If it was switched on too early** (note events refused): **don't press Send again on refused note events with an
+   Order Manager older than A11b** — for a note added and then deleted, both events were refused, and the older Order
+   Manager re-sends only the add (it marks the refused delete superseded), so the deleted note would stay on the
+   timeline for good. Update the Order Manager to A11b first: its **Send again** re-sends every refused event of a
+   record, in order (a note's add, then its delete), and only the latest of a customer's refused follow-up dates (with
+   the date as it is now). Then press **Send again**.
 
 **Pausing**: the switch on the Connections card pauses the connection: the suite answers 503 and the Order Manager
 keeps its events queued (nothing is lost), then sends them in order — within its retry wait, at most 5 minutes —

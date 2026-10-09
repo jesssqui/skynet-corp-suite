@@ -1465,9 +1465,11 @@ Code: the receiver and holding area in `server/src/modules/wholesale/` (`events.
 of `scripts/wom-e2e.mjs`. The sender's spec: the Order Manager's CLAUDE.md, "CRM notes to the suite (A11)" and the A10
 events table. It sends them only while its **"Send CRM notes to the suite"** switch is on (off by default; turn it on
 after deploying D5 — before, this receiver refused the three names and the Order Manager parked them as refused).
-**Refused note events from before**: not "Send again" with the current Order Manager — for a note added then deleted
-it re-sends only the add (the refused delete is marked superseded), leaving a deleted note on the timeline; first update
-it to the version that re-sends only the latest refused event per record (DEPLOY.md step 6.4).
+**Refused note events from before**: not "Send again" with an Order Manager older than A11b — for a note added then
+deleted it re-sends only the add (the refused delete is marked superseded), leaving a deleted note on the timeline.
+A11b's Send again re-sends every refused event of a record, in order (the add, then the delete — the suite applies the
+add, then deletes it), and of a customer's refused follow-up dates only the latest; update the Order Manager first
+(DEPLOY.md step 6.4).
 - **The events** (envelope unchanged; `eventProblem` checks exactly these, a malformed one is refused with a reason):
   `note.added { note: { note_uid, number, customer_uid, type: note|call|email|meeting|follow_up, body, at, written_by } }`
   (`at` may be null — a backup import there can lose it: the time held before, else the event's `time`, is used)
