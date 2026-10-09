@@ -62,7 +62,7 @@ test('the page lists the backup (always on), the placeholders (not connected yet
   const { call } = await setup(t);
   const { status, body } = await call('GET', '/api/connections');
   assert.equal(status, 200);
-  assert.deepEqual(body.connections.map((c) => c.id), ['backup', 'wom', 'calendar', 'stockroom', 'conndemo']);
+  assert.deepEqual(body.connections.map((c) => c.id), ['backup', 'wom', 'calendar', 'stockroom', 'calendar-feed', 'conndemo']);
   const backup = row(body.connections, 'backup');
   assert.equal(backup.state, 'always_on');
   assert.equal(backup.pausable, false);
@@ -74,7 +74,7 @@ test('the page lists the backup (always on), the placeholders (not connected yet
     const c = row(body.connections, p.id);
     assert.deepEqual([c.state, c.comesWith, c.pausable], ['not_connected', p.comesWith, false]);
   }
-  assert.deepEqual(PLACEHOLDERS.map((p) => p.comesWith), ['D1', 'C6', 'D16']);
+  assert.deepEqual(PLACEHOLDERS.map((p) => p.comesWith), ['D1', 'C6b', 'D16']);
   const demo = row(body.connections, 'conndemo');
   assert.deepEqual([demo.state, demo.pausable, demo.queueSize, demo.lastError, demo.changedBy], ['on', true, 0, null, null]);
 });
@@ -137,7 +137,7 @@ test('either person may switch; the backup and placeholders can’t be; bad requ
   assert.deepEqual([backup.status, backup.body.code], [409, 'not_pausable']);
   const calendar = await call('PUT', '/api/connections/calendar', { paused: true });
   assert.deepEqual([calendar.status, calendar.body.code], [409, 'not_connected']);
-  assert.match(calendar.body.error, /comes with C6/);
+  assert.match(calendar.body.error, /comes with C6b/);
   assert.equal((await call('PUT', '/api/connections/nope', { paused: true })).status, 404);
   assert.equal((await call('PUT', '/api/connections/conndemo', { paused: 'yes' })).status, 400);
   assert.equal((await call('PUT', '/api/connections/conndemo', {})).status, 400);
