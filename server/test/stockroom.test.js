@@ -612,6 +612,29 @@ test('the order-soon re-read after deliveries change survives a failure and its 
   assert.deepEqual((await s.svc.pullRound()).got, []);
 });
 
+test('an order confirmed and received between two reads (only in B10’s `ended`) still counts as a deliveries change: order-soon is read again', async (t) => {
+  const s = await setup(t, { connect: false });
+  s.hub.state.deliveries = { ...s.hub.state.deliveries, ended: [], purchase_orders_truncated: false };
+  s.hub.state['order-soon'] = { today: MONDAY, items: [item({ sku: 'ZYN-1' })] };
+  await s.call('PUT', '/api/stockroom/connection', { body: { code: s.hub.code } });
+  await s.svc.pullRound();
+  assert.equal(s.open("title LIKE 'Reorder from Swedish%'").length, 1);
+  // Within the hour: a purchase order to Swedish Match confirmed and received in full — never in `items`.
+  s.hub.state.deliveries = {
+    ...s.hub.state.deliveries,
+    ended: [{ po_id: 9, number: 'PO-0009', supplier: 'Swedish Match', supplier_id: 7, status: 'received', ended_at: new Date(s.clock.now()).toISOString(), reason: null }],
+  };
+  s.hub.state['order-soon'] = { today: MONDAY, items: [] }; // nothing to order any more
+  s.clock.advance(61 * 60_000);
+  const r = await s.svc.pullRound();
+  assert.deepEqual(r.got, ['deliveries', 'differences', 'counts', 'order-soon'], 'order-soon read in the same round, not at 6:30 tomorrow');
+  assert.equal(s.open("title LIKE 'Reorder from Swedish%'").length, 0, 'the reorder task is finished at once');
+  // Only the ended order's details or the calendar moving: not a change.
+  s.hub.state.deliveries = { ...s.hub.state.deliveries, today: '2026-10-13', ended: [{ ...s.hub.state.deliveries.ended[0], reason: 'x' }] };
+  s.clock.advance(61 * 60_000);
+  assert.deepEqual((await s.svc.pullRound()).got, ['deliveries', 'differences', 'counts']);
+});
+
 test('each task once: replays of an event, Run now, a restart and another pull make nothing twice', async (t) => {
   const config = testConfig(tmpDir(t), { STOCKROOM_TIMEOUT_MS: '300' });
   const clock = testClock();

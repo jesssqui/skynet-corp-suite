@@ -240,16 +240,19 @@ export function createStockroomService(ctx) {
 
   /**
    * An answer's contents, for "did it change?": without `as_of` (every answer has a new one) and, for deliveries,
-   * without what moves with the calendar alone (`today`, `counts`, each order's `overdue`, `ended`) — so a new day isn't
-   * a change.
+   * without what moves with the calendar alone (`today`, `counts`, each order's `overdue`) and with `ended` reduced to
+   * its ids — so a new day isn't a change, but an order that ended is.
    */
   function stable(endpoint, body) {
     if (!body || typeof body !== 'object') return JSON.stringify(body);
     const { as_of: _asOf, ...rest } = body;
     if (endpoint !== 'deliveries') return JSON.stringify(rest);
-    // (`ended` and its flag too: an order ending also leaves `items`; one only ageing out of the 30 days isn't news.)
-    const { today: _t, counts: _c, items, ended: _e, ended_truncated: _et, ...more } = rest;
-    return JSON.stringify({ ...more, items: Array.isArray(items) ? items.map(({ overdue: _o, ...i }) => i) : items });
+    // `ended` (B10) as the sorted ids only: an order confirmed and received between two reads never shows in `items`,
+    // but it does appear in `ended` — that must count as a change (review fix). Its other fields and ended_truncated
+    // are left out. (An order only ageing out of the 30 days still counts: rare, and harmless — one extra read.)
+    const { today: _t, counts: _c, items, ended, ended_truncated: _et, ...more } = rest;
+    const endedIds = Array.isArray(ended) ? ended.map((e) => e?.po_id).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)) : null;
+    return JSON.stringify({ ...more, items: Array.isArray(items) ? items.map(({ overdue: _o, ...i }) => i) : items, endedIds });
   }
 
   async function doRound({ force = false } = {}) {

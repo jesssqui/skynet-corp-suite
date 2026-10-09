@@ -1927,7 +1927,9 @@ it, shared by every forced request made meanwhile):
 - `deliveries`, `differences`, `counts` **hourly**; `order-soon` **daily after 6:30 a.m.** (local), again when the
   deliveries answer changed (a purchase order confirmed, received or cancelled changes what is on order), and whenever
   its answer is over a day old. "Changed" ignores what moves with the calendar alone (`as_of`, the deliveries' `today`,
-  `counts`, each order's `overdue`, `ended`). The re-read is a flag on the order-soon row (`wanted`, migration 002) kept
+  `counts`, each order's `overdue`) and compares B10's `ended` by its sorted `po_id`s only — an order confirmed and
+  received between two hourly reads never shows in `items`, but appearing in `ended` still triggers the re-read (review
+  fix). The re-read is a flag on the order-soon row (`wanted`, migration 002) kept
   until that read succeeds: normally the same round, otherwise after its backoff (or a restart) — never lost. **Why**: deliveries, differences and spot checks change during the working day and their
   answers are small (a 304 when unchanged: Stockroom measured 0–12 ms for these); the forecast behind order-soon works on
   whole days (its windows end yesterday), so an hourly read would only churn the reorder tasks' notes, and it is the
