@@ -34,9 +34,11 @@ async function connections(page, server, label) {
   await card('backup').getByText('Always on', { exact: true }).waitFor(WAIT);
   await page.getByTestId('always-on-backup').filter({ hasText: 'can’t pause' }).waitFor(WAIT);
   assert.equal(await card('backup').getByRole('switch').count(), 0, 'no switch for backups');
-  // D1 made the Order Manager's row real (test/e2e/wholesale.e2e.test.js); the others still wait.
+  // D1 made the Order Manager's row real (test/e2e/wholesale.e2e.test.js), D16 Stockroom's
+  // (test/e2e/stockroom.e2e.test.js); the others still wait.
   await page.locator('[data-connection="wom"][data-state="on"]').waitFor(WAIT);
-  for (const [id, pkg] of [['calendar', 'C6b'], ['stockroom', 'D16']]) {
+  await page.locator('[data-connection="stockroom"][data-state="on"]').waitFor(WAIT);
+  for (const [id, pkg] of [['calendar', 'C6b']]) {
     await page.getByTestId(`placeholder-${id}`).filter({ hasText: `Not connected yet · comes with ${pkg}` }).waitFor(WAIT);
     assert.equal(await card(id).getByRole('switch').count(), 0);
   }
