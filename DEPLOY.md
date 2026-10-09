@@ -289,6 +289,16 @@ path) and publishes port 3089 — so check before connecting:
    record, in order (a note's add, then its delete), and only the latest of a customer's refused follow-up dates (with
    the date as it is now). Then press **Send again**.
 
+5. **Matching (D2)** — at its first start this version links, on its own, every waiting Order Manager customer whose
+   clean email or phone is on exactly one active client's contact (Wholesale, GWND or consulting clients, or clients with
+   no business yet), and raises one in-app alert listing them. To review everything by hand instead, switch
+   **System → Automations → Link Order Manager customers automatically** off before the first sync of devices and use
+   **Wholesale → Suggestions**. Every link can be undone (Wholesale → Linked → **Undo link…**, or the account card on the
+   client page): the link goes, the customer waits again, and the age-restricted mark / wholesale relationship / account
+   or client that linking made are put back when untouched. Links made **before** D2 can be undone too, but only the
+   link goes (the suite didn't record what they changed). After deploying, once on each device: Offline data →
+   **Download everything again** is **not** needed (the new link field only matters on links made from now on).
+
 **Pausing**: the switch on the Connections card pauses the connection: the suite answers 503 and the Order Manager
 keeps its events queued (nothing is lost), then sends them in order — within its retry wait, at most 5 minutes —
 once it is switched on. **New secret…** (either of you) replaces the secret at once; paste it into the Order Manager,
