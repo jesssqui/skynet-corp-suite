@@ -62,6 +62,8 @@ async function setup(t, { config = testConfig(tmpDir(t)), clock = testClock(), w
   // D3's scheduled wholesale automations are on by default; these tests are about C8's framework and
   // the planner's two, so they are switched off here (server/test/wholesale-automations.test.js has them).
   if (!wholesale) for (const id of ['wholesale-check-in', 'wholesale-balances']) autos.setSettings(id, { enabled: false }, { actor: 'owner' });
+  // D6's renewal reminders likewise (server/test/costs.test.js has them).
+  for (const id of ['service-renewals', 'cost-renewals']) autos.setSettings(id, { enabled: false }, { actor: 'owner' });
   return { ...env, config, clock, users, owner, sync, make, update, remove, call, setNow, autos };
 }
 
@@ -257,7 +259,8 @@ test('switches: off skips the scheduler but Run now still works; who changed it 
   assert.equal((await env.call('POST', '/api/automations/probe-off/run', {}, { session: null })).status, 401);
   const list = await env.call('GET', '/api/automations');
   assert.deepEqual(list.body.automations.map((a) => a.id),
-    ['friday-review', 'no-next-step', 'wholesale-check-in', 'wholesale-balances', 'wholesale-ready-to-ship', 'wholesale-follow-ups', 'wholesale-auto-link', 'probe-off']);
+    ['friday-review', 'no-next-step', 'wholesale-check-in', 'wholesale-balances', 'wholesale-ready-to-ship', 'wholesale-follow-ups', 'wholesale-auto-link',
+      'service-renewals', 'cost-renewals', 'probe-off']);
   assert.equal(list.body.timeZone, 'America/Toronto');
 });
 

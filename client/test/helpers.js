@@ -16,7 +16,7 @@ export { tmpDir, testConfig };
  * synced alerts) unless `crm: true` (its seeded businesses would shift the engine tests' counts).
  */
 export async function startServer(t, config, { crm = false } = {}) {
-  const base = crm ? modules : modules.filter((m) => !['automations', 'crm', 'planner', 'wholesale', 'calendar'].includes(m.name));
+  const base = crm ? modules : modules.filter((m) => !['automations', 'crm', 'planner', 'wholesale', 'calendar', 'costs'].includes(m.name));
   const env = await startApp(t, config ?? testConfig(tmpDir(t)), { modules: [...base, syncdemo, chk] });
   const users = await ensureTestUsers(env.ctx);
   return { ...env, config: config ?? env.ctx.config, users };

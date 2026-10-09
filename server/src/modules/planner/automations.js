@@ -44,7 +44,7 @@ function momentText(date) {
 /**
  * The Friday review's numbers, read on the server the way the review page (reviewLists in
  * client/src/modules/planner/plan.js) reads them on a device: overdue tasks (both people and the
- * shared list), renewals in the next 30 days, active clients quiet for 60 days (their last
+ * shared list), renewals in the next 30 days (client services and, D6, our recurring costs), active clients quiet for 60 days (their last
  * activity, or when they were made), relationships with no next step (C4a's rule), and this
  * week's goals done.
  */
@@ -66,6 +66,8 @@ export function reviewNumbers({ crm, planner, services = null }, today) {
   return {
     overdue: planner.overdueCount(today),
     renewals: crm.renewalsBetween(today, addDays(today, RENEWAL_DAYS)).length,
+    // D6: our recurring costs renewing in the same 30 days (read through the costs service).
+    costRenewals: services?.costs?.renewingBetween?.(today, addDays(today, RENEWAL_DAYS)).length ?? 0,
     quiet: quiet.length,
     noNextStep: relationshipsWithoutNextStep({ relationships: rels, accounts, clients, tasks: planner.openRelationshipTasks() }).length,
     goals: goals.length,
@@ -76,7 +78,9 @@ export function reviewNumbers({ crm, planner, services = null }, today) {
 export function reviewLines(n) {
   return [
     `• ${plural(n.overdue, 'overdue task')} (both of you and the shared list)`,
-    `• ${plural(n.renewals, 'renewal')} in the next ${RENEWAL_DAYS} days`,
+    n.costRenewals
+      ? `• ${plural(n.renewals + n.costRenewals, 'renewal')} in the next ${RENEWAL_DAYS} days (${plural(n.renewals, 'client service')}, ${n.costRenewals} of our costs)`
+      : `• ${plural(n.renewals, 'renewal')} in the next ${RENEWAL_DAYS} days`,
     `• ${plural(n.quiet, 'active client')} quiet for ${QUIET_DAYS} days`,
     `• ${plural(n.noNextStep, 'active relationship')} with no next step`,
     `• This week’s goals: ${n.goalsDone} of ${n.goals} done`,
@@ -116,7 +120,7 @@ export function registerPlannerAutomations({ automations, crm, planner, services
         '',
         ...lines,
       ].join('\n');
-      const counts = (n) => `${n.overdue} overdue, ${n.renewals} renewals, ${n.quiet} quiet, ${n.noNextStep} with no next step`;
+      const counts = (n) => `${n.overdue} overdue, ${n.renewals + (n.costRenewals ?? 0)} renewals, ${n.quiet} quiet, ${n.noNextStep} with no next step`;
       const existing = made(period.key).map((m) => ({ ...m, state: planner.taskState(m.id) })).filter((m) => m.state?.live);
       if (existing.length) {
         // Made earlier in the week (Run now): Friday's scheduled run refreshes its numbers, so the

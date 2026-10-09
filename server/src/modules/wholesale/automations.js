@@ -25,10 +25,10 @@
 // wholesale business, with the client, account and (when there is one) the account's wholesale
 // relationship. Only customers linked to an account (attached) are looked at. See CLAUDE.md,
 // "Wholesale automations (D3)".
-import crypto from 'node:crypto';
 import { BUSINESS_IDS } from '@suite/shared/crm';
-import { parseLocalDate, localDate } from '@suite/shared/time';
+import { localDate } from '@suite/shared/time';
 import { orderRhythm, isQuiet, daysBetween, owingByOrder, overdueOrders, OVERDUE_AFTER_DAYS } from './figures.js';
+import { markWrote, suiteWrote, suiteFinished, finishTask, doneKey, dayText } from '../automations/taskBook.js';
 
 export const CUSTOMER_KEY = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):/;
 
@@ -57,7 +57,7 @@ export function money(cents) {
 }
 
 /** "Aug 1, 2026" for a calendar day. */
-export const dayText = (ymd) => (ymd ? parseLocalDate(ymd).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' }) : 'an unknown day');
+export { dayText };
 
 /** The first few lines, then "and N more". */
 function listBody(titles, extra = 0) {
@@ -93,35 +93,8 @@ export function taskBase({ crm, planner }, account) {
 }
 
 // ---- bookkeeping: what the suite did to its own tasks ------------------------------------------
-// `io` = the run's { planner, made, madeLike, remember, update }.
-
-const hash = (v) => crypto.createHash('sha256').update(String(v ?? '')).digest('hex').slice(0, 20);
-const wroteKey = (id, field, value) => `wrote:${id}:${field}:${hash(value)}`;
-export const doneKey = (id, doneAt) => `suite-done:${id}:${doneAt}`;
-
-/** Remember that the suite wrote this value of a task's field (so a later change is known to be a person's). */
-export function markWrote(io, id, field, value) {
-  io.remember(wroteKey(id, field, value), 'task', id);
-}
-/** Is the task's current value of `field` one the suite wrote? (false = a person changed it: leave it). */
-export function suiteWrote(io, id, field, value) {
-  return io.made(wroteKey(id, field, value)).length > 0;
-}
-/** Was this task finished by the suite (and not reopened and finished again by a person since)? */
-export function suiteFinished(io, id, state = io.planner.taskState(id)) {
-  return Boolean(state?.live && state.doneAt && io.made(doneKey(id, state.doneAt)).length);
-}
-
-/** Finish one of the suite's own tasks (done_at), adding a line to its notes that says why. */
-export function finishTask(io, id, why, now) {
-  const t = io.planner.taskState(id);
-  if (!t?.open) return false;
-  const doneAt = now.toISOString();
-  const line = `${why} — finished by the suite on ${dayText(localDate(now))}.`;
-  io.update('task', id, { done_at: doneAt, notes: t.notes ? `${t.notes}\n\n${line}` : line });
-  io.remember(doneKey(id, doneAt), 'task', id);
-  return true;
-}
+// The helpers live in ../automations/taskBook.js (D6 reuses them); re-exported for D5 and the tests.
+export { markWrote, suiteWrote, suiteFinished, finishTask, doneKey };
 
 /**
  * Reopen a task the suite finished, because its reason is back: due today again, with a line saying
