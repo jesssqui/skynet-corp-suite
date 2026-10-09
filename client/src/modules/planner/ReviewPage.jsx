@@ -1,8 +1,9 @@
 // The Friday review (/plan/review): a checklist for the two people to go through together, built
 // from what the suite already has — overdue tasks (both people), services renewing in the next 30
 // days, active clients quiet for 60 days, this week's goals (marked done in one tap), tasks to
-// hand to the other person (one tap), and relationships with no next step. "Duplicate matches"
-// (D2) and "this week's order entry" (the wholesale connection) aren't connected yet and say so.
+// hand to the other person (one tap), and relationships with no next step. "Duplicate matches" (D2)
+// counts the review list's suggestions on the server (needs a connection; says so offline) and links
+// to it; "this week's order entry" (the wholesale connection) isn't connected yet and says so.
 // Each step can be ticked as reviewed (kept on this device, per week).
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -20,6 +21,8 @@ import { useFinishedThisSession, getReviewChecks, setReviewCheck } from './prefs
 import { TaskSheet, newTaskInitial } from './forms.jsx';
 import { GoalTick } from './goals.jsx';
 import { PlanTabs } from './planParts.jsx';
+import { useServerData } from '../../api/useServerData.js';
+import { matchesSummary } from '../wholesale/logic.js';
 
 const STEPS = ['overdue', 'renewals', 'quiet', 'goals', 'handoff', 'next-step', 'duplicates', 'orders'];
 
@@ -64,6 +67,7 @@ export default function ReviewPage() {
   const [who, setWho] = useState(me);
   const [sheet, setSheet] = useState(null);
   const { busy, error, run } = useAction();
+  const matches = useServerData('/api/wholesale/matches/counts', { everyMs: 0 }); // D2: the review list's count
 
   const lists = useMemo(() => (data ? reviewLists({
     tasks: data.tasks, today, goals: data.goals, services: data.services, clients: data.clients, accounts: data.accounts,
@@ -243,8 +247,18 @@ export default function ReviewPage() {
               />
             </Step>
 
-            <Step id="duplicates" title="Duplicate matches" count={null} checked={checks.has('duplicates')} onCheck={check}>
-              <p style={{ ...muted, margin: 0 }} data-testid="review-not-connected">Not connected yet: matching Order Manager customers to clients comes later.</p>
+            <Step id="duplicates" title="Duplicate matches" count={matches.data ? matches.data.total : null} checked={checks.has('duplicates')} onCheck={check}>
+              {matches.data ? (
+                <p style={{ ...muted, margin: 0 }} data-testid="review-matches">
+                  {matchesSummary(matches.data)}
+                  {matches.data.total ? <>{' · '}<Link to="/wholesale?tab=suggestions">Review them</Link></> : null}
+                  {matches.offline ? ' (from the last check: can’t reach the suite server now)' : ''}
+                </p>
+              ) : (
+                <p style={{ ...muted, margin: 0 }} data-testid="review-matches">
+                  {matches.offline || matches.error ? 'Can’t check while offline: possible matches are worked out on the suite server.' : 'Checking…'}
+                </p>
+              )}
             </Step>
             <Step id="orders" title="This week’s order entry" count={null} checked={checks.has('orders')} onCheck={check}>
               <p style={{ ...muted, margin: 0 }} data-testid="review-not-connected">Not connected yet: the Wholesale Order Manager’s orders arrive with its connection.</p>

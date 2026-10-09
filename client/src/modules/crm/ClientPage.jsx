@@ -16,8 +16,9 @@ import { ClientForm, AccountForm, ContactForm, RelationshipForm, ServiceForm, Co
 import { relationshipsWithoutNextStep } from '@suite/shared/planner';
 import { ClientTasksCard, NoNextStepLine } from '../planner/ClientTasksCard.jsx';
 import { useToday } from '../planner/parts.jsx';
-import { wholesaleItems, activityItem, sumCards } from '../wholesale/logic.js';
+import { wholesaleItems, activityItem, sumCards, linkHowText } from '../wholesale/logic.js';
 import { WholesaleTimelineItem, AccountWholesale, ClientWholesale, QuietRegularBadge } from '../wholesale/parts.jsx';
+import UndoLinkSheet from '../wholesale/UndoLinkSheet.jsx';
 import './crm.css';
 
 // One client on one screen (/crm/clients/:id): who they are, their businesses (accounts) with
@@ -42,15 +43,18 @@ function Tags({ value }) {
   ) : null;
 }
 
-function LinkLine({ link }) {
+function LinkLine({ link, me, onUndo }) {
   // An Order Manager customer is named (and its figures shown) by the account's wholesale box (D1):
-  // its permanent id is only in the tooltip.
+  // its permanent id is only in the tooltip. D2: how it was linked, and Undo (needs the server).
   const app = link.app === 'wom' ? 'an Order Manager customer' : `${link.app} record ${link.external_id}`;
   return (
-    <div style={{ ...muted, display: 'flex', gap: 'var(--space-1)', alignItems: 'center' }} data-testid="link-line" title={link.external_id}>
+    <div style={{ ...muted, display: 'flex', gap: 'var(--space-1)', alignItems: 'center', flexWrap: 'wrap' }} data-testid="link-line" title={link.external_id}>
       <Icon name="link" size={14} />
-      <span>Linked to {app} · {link.matched_by === 'auto' ? 'matched automatically' : 'approved'}</span>
+      <span>{linkHowText(link, me)} to {app}</span>
       <Badges record={link} />
+      {onUndo && link.app === 'wom' && link.account_id ? (
+        <TextButton onClick={() => onUndo(link)} aria-label="Undo this link">Undo…</TextButton>
+      ) : null}
     </div>
   );
 }
@@ -135,7 +139,7 @@ function RelationshipItem({ rel, business, services, onEdit, onAddService, onEdi
   );
 }
 
-function AccountItem({ account, rels, servicesByRel, links, businessesById, open, noNextStep, businesses, wholesaleCards, today, clientClosed }) {
+function AccountItem({ account, rels, servicesByRel, links, businessesById, open, noNextStep, businesses, wholesaleCards, today, clientClosed, me }) {
   const lines = addressLines(account);
   const href = websiteHref(account.website);
   return (
@@ -157,7 +161,7 @@ function AccountItem({ account, rels, servicesByRel, links, businessesById, open
         </div>
       ) : null}
       {account.notes ? <p style={{ ...preWrap, ...muted }}>{account.notes}</p> : null}
-      {links.map((l) => <LinkLine key={l.id} link={l} />)}
+      {links.map((l) => <LinkLine key={l.id} link={l} me={me} onUndo={(link) => open({ kind: 'undo-link', link, account, cards: wholesaleCards })} />)}
       <AccountWholesale cards={wholesaleCards} figures={sumCards(wholesaleCards)} today={today} hideQuiet={clientClosed} />
       <RecordSync record={account} what="account" />
       {rels.length ? (
@@ -214,7 +218,7 @@ function ConsentRows({ contact, consents, businessIds, businessesById, today, on
   );
 }
 
-function ContactItem({ contact, account, consents, consentBusinessIds, links, businessesById, today, open }) {
+function ContactItem({ contact, account, consents, consentBusinessIds, links, businessesById, today, open, me }) {
   const facts = [contact.role, account ? `at ${account.name}` : null].filter(Boolean).join(' ');
   return (
     <li className="crm-contact" data-contact-id={contact.id}>
@@ -232,7 +236,7 @@ function ContactItem({ contact, account, consents, consentBusinessIds, links, bu
       ) : null}
       {contact.preferred_channel ? <div style={muted}>Prefers: {CHANNEL_LABELS[contact.preferred_channel]}</div> : null}
       {contact.notes ? <p style={{ ...preWrap, ...muted }}>{contact.notes}</p> : null}
-      {links.map((l) => <LinkLine key={l.id} link={l} />)}
+      {links.map((l) => <LinkLine key={l.id} link={l} me={me} />)}
       <RecordSync record={contact} what="contact" />
       <ConsentRows
         contact={contact}
@@ -352,6 +356,7 @@ function ClientScreen({ clientId }) {
   const [sheet, setSheet] = useState(null);
   const [filter, setFilter] = useState({ business: 'all', account: 'all', type: 'all' });
   const [statusError, setStatusError] = useState(null);
+  const [undone, setUndone] = useState(null); // D2: what undoing an Order Manager link did
 
   // A filter whose account or business is gone (deleted, maybe on the other device) goes back to All:
   // the select can't show it, so it would hide everything with nothing on screen to say why.
@@ -430,6 +435,11 @@ function ClientScreen({ clientId }) {
     <div className="crm-client">
       <Header client={client} onEdit={() => open({ kind: 'client', record: client })} onStatus={setStatus} wholesale={wholesale} wholesaleCards={data.wholesaleCustomers} today={today} />
       {statusError ? <p role="alert" style={{ color: 'var(--danger)', margin: 0 }}>{statusError}</p> : null}
+      {undone ? (
+        <p role="status" style={{ ...muted, margin: 0, whiteSpace: 'pre-line' }} data-testid="link-undone">
+          {['The link was undone: the Order Manager customer waits for a client again.', ...undone.restore, ...undone.keep].join('\n')}
+        </p>
+      ) : null}
       <div className="crm-client-grid">
         <div className="crm-col">
           <Card>
@@ -453,6 +463,7 @@ function ClientScreen({ clientId }) {
                     wholesaleCards={cardsByAccount.get(a.id) ?? []}
                     today={today}
                     clientClosed={client.status === 'closed'}
+                    me={me}
                   />
                 ))}
               </ul>
@@ -478,6 +489,7 @@ function ClientScreen({ clientId }) {
                       businessesById={businessesById}
                       today={today}
                       open={open}
+                      me={me}
                     />
                   );
                 })}
@@ -514,6 +526,16 @@ function ClientScreen({ clientId }) {
         <Button style={{ flex: 1 }} onClick={() => capture('call')}><Icon name="call" size={18} />Log call</Button>
       </div>
 
+      {sheet?.kind === 'undo-link' ? (
+        <UndoLinkSheet
+          uid={sheet.link.external_id}
+          customerName={sheet.cards.find((c) => c.customer_uid === sheet.link.external_id)?.name ?? sheet.account.name}
+          clientName={client.name}
+          how={linkHowText(sheet.link, me)}
+          onClose={close}
+          onDone={(undone) => { close(); setStatusError(null); setUndone(undone); }}
+        />
+      ) : null}
       {sheet?.kind === 'client' ? (
         <ClientForm record={sheet.record} onClose={close} onDone={close} onDeleted={() => navigate('/crm', { replace: true })} />
       ) : null}
