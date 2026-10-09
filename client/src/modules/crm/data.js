@@ -32,6 +32,7 @@ const BELONGS_TO = {
   wholesale_customer: ['account', 'client'],
   wholesale_order: ['account', 'client'],
   wholesale_entry: ['account', 'client'],
+  wholesale_note: ['account', 'client'], // D5
 };
 
 const caches = new WeakMap(); // engine -> { entries: Map<entity, Promise<Entry>>, off }
@@ -123,9 +124,10 @@ export async function cachedList(engine, entity) {
 // D1: the Order Manager's orders count as activity on the list ("last activity"); the client page
 // shows its orders, payments, returns and refunds on the timeline and each account's figures.
 // D3: the customer cards give the list its "Quiet regular" chip.
-const LIST_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'activity', 'wholesale_order', 'wholesale_customer'];
+// D5: the Order Manager's notes are timeline items too, and count as activity on the list.
+const LIST_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'activity', 'wholesale_order', 'wholesale_customer', 'wholesale_note'];
 const PAGE_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'service', 'consent', 'activity', 'link', 'task',
-  'wholesale_customer', 'wholesale_order', 'wholesale_entry'];
+  'wholesale_customer', 'wholesale_order', 'wholesale_entry', 'wholesale_note'];
 
 /** Last activity per client: Map<client_id, at>. */
 export function lastActivityByClient(activities) {
@@ -140,7 +142,7 @@ export function lastActivityByClient(activities) {
 /** Everything the client list needs (every client; the page builds its index once per change). */
 export function useClientListData() {
   const { data, loading, error } = useSyncData(async (e) => {
-    const [businesses, clients, accounts, contacts, relationships, activities, wholesaleOrders, wholesaleCards] = await cachedLists(e, LIST_ENTITIES);
+    const [businesses, clients, accounts, contacts, relationships, activities, wholesaleOrders, wholesaleCards, wholesaleNotes] = await cachedLists(e, LIST_ENTITIES);
     // Read what a client page needs too, in the background, so opening one from the list is quick.
     setTimeout(() => !e.isStopped() && cachedLists(e, PAGE_ENTITIES).catch(() => {}), 250);
     return {
@@ -150,7 +152,10 @@ export function useClientListData() {
       contacts: contacts.records,
       relationships: relationships.records,
       // Activities and (D1) Order Manager orders, whichever is later.
-      lastActivity: mergeLastActivity(lastActivityOf(activities), wholesaleOrders.derive('lastOrderByClient', lastOrderByClient)),
+      lastActivity: mergeLastActivity(
+        mergeLastActivity(lastActivityOf(activities), wholesaleOrders.derive('lastOrderByClient', lastOrderByClient)),
+        wholesaleNotes.derive('lastOrderByClient', lastOrderByClient), // D5: its notes too (same shape: client_id, at)
+      ),
       // D3: per client, the first day one of its Order Manager regulars counts as quiet (compared with today on the row).
       quietFrom: wholesaleCards.derive('quietFromByClient', quietFromByClient),
     };
@@ -172,7 +177,7 @@ const byName = (a, b) => String(a.name).localeCompare(String(b.name)) || (a.id <
 export function useClientPageData(clientId) {
   const { data, loading, error } = useSyncData(async (e) => {
     const [businesses, clients, accounts, contacts, relationships, services, consents, activities, links, tasks,
-      wholesaleCustomers, wholesaleOrders, wholesaleEntries] = await cachedLists(e, PAGE_ENTITIES);
+      wholesaleCustomers, wholesaleOrders, wholesaleEntries, wholesaleNotes] = await cachedLists(e, PAGE_ENTITIES);
     const client = clients.byId().get(clientId) ?? null;
     if (!client) return { client: null };
     const myAccounts = [...accounts.where('client_id', clientId)].sort(byName);
@@ -198,6 +203,7 @@ export function useClientPageData(clientId) {
       wholesaleCustomers: myAccounts.flatMap((a) => wholesaleCustomers.where('account_id', a.id)),
       wholesaleOrders: myAccounts.flatMap((a) => wholesaleOrders.where('account_id', a.id)),
       wholesaleEntries: myAccounts.flatMap((a) => wholesaleEntries.where('account_id', a.id)),
+      wholesaleNotes: myAccounts.flatMap((a) => wholesaleNotes.where('account_id', a.id)), // D5
     };
   }, [clientId], { entities: PAGE_ENTITIES });
   return { data: data ?? null, loading, error };

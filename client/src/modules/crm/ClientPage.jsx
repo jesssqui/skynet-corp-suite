@@ -274,7 +274,8 @@ function ActivityItem({ activity, account, business, me }) {
 
 // The timeline's items are the client's activities and (D1) its Order Manager orders, payments,
 // returns and refunds, in one list (`items`, from activityItem / wholesaleItems): the Order Manager's
-// are type 'order' ("Orders") and business wholesale, so the filters work the same on both.
+// are type 'order' ("Orders") and business wholesale, so the filters work the same on both. (D5) Its
+// notes are business wholesale too, under their own type (a follow-up marked done under Notes).
 function Timeline({ items: activities, accounts, businesses, accountsById, businessesById, filter, setFilter, onCapture, me }) {
   const [shown, setShown] = useState(PAGE);
   useEffect(() => setShown(PAGE), [filter]);
@@ -390,7 +391,7 @@ function ClientScreen({ clientId }) {
       relationships: data.relationships, accounts: data.accounts, clients: [data.client], tasks: data.relationshipTasks,
     }).map((r) => r.id));
     // D1: the Order Manager's records on the timeline beside the activities, and its figures.
-    const items = [...data.activities.map(activityItem), ...wholesaleItems(data.wholesaleOrders, data.wholesaleEntries)];
+    const items = [...data.activities.map(activityItem), ...wholesaleItems(data.wholesaleOrders, data.wholesaleEntries, data.wholesaleNotes)];
     const cardsByAccount = new Map();
     for (const c of data.wholesaleCustomers) cardsByAccount.set(c.account_id, [...(cardsByAccount.get(c.account_id) ?? []), c]);
     const wholesale = sumCards(data.wholesaleCustomers);

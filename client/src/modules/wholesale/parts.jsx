@@ -5,15 +5,40 @@ import { Link } from 'react-router-dom';
 import { Badge, Icon } from '../../ui/index.js';
 import { formatDate, formatDateTime } from '../../ui/format.js';
 import { formatMoney } from '../crm/logic.js';
-import { isQuietRegular, quietRegularText } from './logic.js';
+import { isQuietRegular, quietRegularText, nextFollowUp } from './logic.js';
 import { BusinessChip } from '../crm/parts.jsx';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
 const ENTRY_ICONS = { payment: 'check', refund: 'back', store_credit: 'star', credit_applied: 'star', return: 'back', credit_note: 'note' };
+const NOTE_ICONS = { note: 'note', call: 'call', email: 'mail', meeting: 'meeting', follow_up: 'check' };
 const money = (c) => formatMoney(c) || '$0';
+
+/** D5: one Order Manager note on the timeline: its type, when and who wrote it there, the text. */
+function WholesaleNoteItem({ item, account, business }) {
+  const r = item.record;
+  return (
+    <li className="crm-activity" data-wholesale={item.source} data-record-id={item.id} data-type={r.type}>
+      <span className="crm-activity-icon" aria-hidden="true"><Icon name={NOTE_ICONS[r.type] ?? 'note'} size={16} /></span>
+      <div style={{ display: 'grid', gap: 4, minWidth: 0 }}>
+        <div style={{ ...muted, display: 'flex', gap: '0 var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
+          <strong style={{ color: 'var(--text)' }}>{item.title}</strong>
+          <time dateTime={item.at}>{formatDateTime(item.at)}</time>
+          {item.by ? <span>by {item.by}</span> : null}
+        </div>
+        {item.body ? <p style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{item.body}</p> : null}
+        <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
+          {business ? <BusinessChip business={business} /> : null}
+          {account ? <span style={muted}>{account.name}</span> : null}
+          <span style={{ ...muted, fontSize: 'var(--text-xs)' }}>from the Order Manager</span>
+        </div>
+      </div>
+    </li>
+  );
+}
 
 /** One Order Manager record on the timeline (an item from wholesaleItems()). */
 export function WholesaleTimelineItem({ item, account, business }) {
+  if (item.source === 'wholesale_note') return <WholesaleNoteItem item={item} account={account} business={business} />;
   const r = item.record;
   const icon = item.source === 'wholesale_order' ? 'order' : ENTRY_ICONS[r.kind] ?? 'order';
   return (
@@ -76,6 +101,11 @@ export function AccountWholesale({ cards, figures, today, hideQuiet = false }) {
         {quiet.length ? <QuietRegularBadge cards={quiet} today={today} /> : null}
       </span>
       <span style={{ ...muted, fontVariantNumeric: 'tabular-nums' }} data-testid="account-wholesale-figures">{figuresText(figures)}</span>
+      {nextFollowUp(cards) ? (
+        <span style={muted} data-testid="account-wholesale-follow-up">
+          Next follow-up in the Order Manager: {formatDate(nextFollowUp(cards))}
+        </span>
+      ) : null}
       {quiet.map((c) => (
         <span key={c.id} style={{ ...muted, fontSize: 'var(--text-xs)' }} data-testid="quiet-regular-text">
           {cards.length > 1 ? `${c.name}: ` : ''}{quietRegularText(c, today)}
