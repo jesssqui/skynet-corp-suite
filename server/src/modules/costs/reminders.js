@@ -335,11 +335,12 @@ export function costAdapter({ crm, planner, reads }) {
             ...(resold ? [`Resold to ${resold.account.name}${resold.account.client_name && resold.account.client_name !== resold.account.name ? ` (client ${resold.account.client_name})` : ''}${c.resold_amount_cents !== null && c.resold_amount_cents !== undefined ? `: they pay ${costAmountText(c, 'resold_amount_cents')}` : ''}.`] : []),
             'Costs: /costs',
           ].join('\n'),
+          // A resold cost's task names its client and account (and follows them); an unresold one's
+          // client fields are left to the person.
           base: {
             owner: planner.automatedOwnerFor(c.business_id),
             business_id: c.business_id,
-            client_id: resold?.account.client_id ?? null,
-            account_id: resold?.account.id ?? null,
+            ...(resold ? { client_id: resold.account.client_id, account_id: resold.account.id } : {}),
           },
         };
       },
