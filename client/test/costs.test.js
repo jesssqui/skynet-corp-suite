@@ -48,6 +48,7 @@ test('filters, grouping by business (our order), soonest first with cancelled la
   assert.equal(totalsText(groups[1].totals), '$100/mo · $1,200/yr');
   assert.equal(totalsText(overall), '$145/mo · $1,740/yr · US$5/mo · US$60/yr');
   assert.equal(resoldTotalsText(overall), '$50/mo · $600/yr');
+  assert.equal(resoldTotalsText(groupCosts(costs, businesses, { resoldLive: () => false }).overall), '', 'a resold cost whose client is gone: no resold side');
   assert.equal(totalsText(new Map()), '');
   assert.ok(compareCosts(cost('a', { next_renewal: '2026-01-01', status: 'cancelled' }), cost('b', { next_renewal: '2027-01-01' })) > 0);
 });
@@ -98,6 +99,7 @@ test('the form: dollars to cents, CAD by default, problems stop the save, an edi
   assert.deepEqual(r.fields, {
     name: 'Domain', business_id: AGENCY, vendor: null, amount_cents: 1999, currency: 'CAD', period: 'yearly', next_renewal: '2026-11-30',
     payment_method: null, auto_renews: false, status: 'active', notes: null, relationship_id: null, resold_amount_cents: null,
+    anchor_day: 30,
   });
   const bad = costForm.toFields({ ...fresh, amount: 'lots' });
   assert.deepEqual(Object.keys(bad.problems).sort(), ['amount', 'business_id', 'name', 'next_renewal']);
@@ -113,6 +115,14 @@ test('the form: dollars to cents, CAD by default, problems stop the save, an edi
   assert.deepEqual(editChanges(costForm, start, { ...start, amount: '35.00' }).fields, {});
   assert.deepEqual(editChanges(costForm, start, { ...start, next_renewal: '2026-11-01', status: 'cancelled' }).fields, { next_renewal: '2026-11-01', status: 'cancelled' });
   assert.deepEqual(editChanges(costForm, start, { ...start, relationship_id: '' }).fields, { relationship_id: null, resold_amount_cents: null }, 'not resold any more');
+
+  // The billing day goes with the date: kept while the date isn't changed, else the new date's day.
+  const monthEnd = cost('Seat', { period: 'monthly', next_renewal: '2027-02-28', anchor_day: 31, auto_renews: true });
+  const s2 = valuesFrom(costForm, monthEnd);
+  assert.deepEqual(editChanges(costForm, s2, { ...s2, amount: '200' }).fields, { amount_cents: 20000 }, 'billing day 31 kept with an unchanged Feb 28');
+  assert.deepEqual(editChanges(costForm, s2, { ...s2, next_renewal: '2027-03-28' }).fields, { next_renewal: '2027-03-28', anchor_day: 28 }, 'a person picked the 28th');
+  assert.deepEqual(editChanges(costForm, s2, { ...s2, next_renewal: '2027-03-31' }).fields, { next_renewal: '2027-03-31' }, 'still the 31st');
+  assert.equal(costForm.toFields({ ...fresh, name: 'X', business_id: AGENCY, next_renewal: '2027-01-31' }).fields.anchor_day, 31);
 });
 
 test('two devices: a cost added offline syncs; an open edit sheet keeps the other person’s change; cancelling and deleting', async (t) => {
@@ -140,15 +150,29 @@ test('two devices: a cost added offline syncs; an open edit sheet keeps the othe
   await phone.engine.syncNow();
   await mac.engine.syncNow();
   const edit = editChanges(costForm, start, { ...start, next_renewal: '2027-03-15' });
-  assert.deepEqual(edit.fields, { next_renewal: '2027-03-15' });
+  assert.deepEqual(edit.fields, { next_renewal: '2027-03-15', anchor_day: 15 }, 'the billing day goes with the date');
   await mac.engine.update('recurring_cost', id, edit.fields);
   await mac.engine.syncNow();
   const after = row(server.db, 'costs_recurring', id);
   assert.deepEqual([after.amount_cents, after.next_renewal], [145000, '2027-03-15'], 'both changes survive');
   assert.equal(server.db.prepare('SELECT count(*) AS n FROM sync_clashes').get().n, 0);
 
-  // Cancel (the normal way), then delete (a mistake).
-  await mac.engine.update('recurring_cost', id, { status: 'cancelled' });
+  // Cancel from the sheet on the phone, offline (the normal way): only the status is sent; shown at
+  // once, out of the active list and its totals; saved once back online. Then delete (a mistake).
+  await phone.engine.syncNow();
+  const sheet = valuesFrom(costForm, await phone.engine.get('recurring_cost', id));
+  phone.online = false;
+  const cancel = editChanges(costForm, sheet, { ...sheet, status: 'cancelled' });
+  assert.deepEqual(cancel.fields, { status: 'cancelled' });
+  await phone.engine.update('recurring_cost', id, cancel.fields);
+  const offlineList = await phone.engine.list('recurring_cost');
+  assert.deepEqual(filterCosts(offlineList).map((c) => c.id), [], 'out of the Active list at once');
+  assert.equal(totalsText(groupCosts(filterCosts(offlineList, { status: 'active' }), businesses).overall), '', 'out of the totals');
+  assert.equal(row(server.db, 'costs_recurring', id).status, 'active', 'not on the server yet');
+  phone.online = true;
+  await phone.engine.syncNow();
+  assert.equal(row(server.db, 'costs_recurring', id).status, 'cancelled');
+  await mac.engine.syncNow();
   await mac.engine.remove('recurring_cost', id);
   await mac.engine.syncNow();
   await phone.engine.syncNow();

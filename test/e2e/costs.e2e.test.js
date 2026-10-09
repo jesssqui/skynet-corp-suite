@@ -1,6 +1,7 @@
 // Renewals and recurring costs (D6) in the browser, on an iPhone and on a Mac: the Costs page by
 // business with its monthly and yearly totals, an overdue cost that doesn't renew on its own, a
-// cost added during an outage (shown at once, saved once back online), an edit, a resold cost on the
+// cost added during an outage (shown at once) and cancelled from its sheet still offline (saved once back
+// online), an edit, a resold cost on the
 // client page, and the Friday review listing costs renewing in 30 days. Invented names only.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -74,11 +75,25 @@ async function walkThrough(page, context, server, { today, ids }, label) {
   await personal.getByTestId('costs-business-total').getByText('$165/mo · $1,980/yr').waitFor(WAIT);
   await barSays(page, 'Offline ·');
   assert.equal(costRow(server.db, 'name = ?', 'Phone plan'), undefined, 'not on the server yet');
+  // Still offline: cancelled from its sheet — it leaves the Active list and the totals at once.
+  await personal.getByRole('button', { name: 'Edit Phone plan' }).click();
+  await sheet.locator('#cost-status').selectOption({ label: 'Cancelled' });
+  await sheet.getByRole('button', { name: 'Save', exact: true }).click();
+  await sheet.waitFor({ state: 'detached', ...WAIT });
+  await personal.getByText('Phone plan').waitFor({ state: 'detached', ...WAIT });
+  await personal.getByTestId('costs-business-total').getByText('$100/mo · $1,200/yr').waitFor(WAIT);
+  await page.getByTestId('costs-total').getByText('$137/mo · $1,644/yr').waitFor(WAIT);
+  await page.getByRole('radio', { name: 'Cancelled' }).click();
+  await page.getByText('Phone plan').waitFor(WAIT);
+  await page.getByRole('radio', { name: 'Active' }).click();
   await airplane(context, server, false);
   await barSays(page, 'All changes saved');
-  const phonePlan = await until(() => costRow(server.db, 'name = ?', 'Phone plan'), 'the new cost on the server');
-  assert.deepEqual([phonePlan.business_id, phonePlan.amount_cents, phonePlan.period, phonePlan.auto_renews, phonePlan.currency, phonePlan.created_by],
-    [PERSONAL, 6500, 'monthly', 1, 'CAD', 'owner']);
+  const phonePlan = await until(() => {
+    const r = costRow(server.db, 'name = ?', 'Phone plan');
+    return r?.status === 'cancelled' ? r : null;
+  }, 'the new cost, cancelled, on the server');
+  assert.deepEqual([phonePlan.business_id, phonePlan.amount_cents, phonePlan.period, phonePlan.auto_renews, phonePlan.currency, phonePlan.anchor_day, phonePlan.created_by],
+    [PERSONAL, 6500, 'monthly', 1, 'CAD', Number(addDays(today, 5).slice(8)), 'owner']);
 
   // Renewed: the domain's next date is set; it is no longer overdue.
   await domain.getByRole('button', { name: 'Edit Domain leftyslounge.ca' }).click();
@@ -96,13 +111,13 @@ async function walkThrough(page, context, server, { today, ids }, label) {
   await page.goto(`${server.base}/plan/review`);
   const costs = page.getByTestId('review-cost-renewals');
   await costs.getByText('Home insurance').waitFor(WAIT);
-  await costs.getByText('Phone plan').waitFor(WAIT);
   await costs.getByText('Hosting').waitFor(WAIT);
   assert.equal(await costs.getByText('Domain leftyslounge.ca').count(), 0, 'renews next year');
-  await page.getByTestId('review-renewals-count').filter({ hasText: '3' }).waitFor(WAIT);
+  assert.equal(await costs.getByText('Phone plan').count(), 0, 'cancelled');
+  await page.getByTestId('review-renewals-count').filter({ hasText: '2' }).waitFor(WAIT);
 }
 
-test('iPhone: the Costs page, a cost added during an outage, an edit, the resold line and the Friday review', async (t) => {
+test('iPhone: the Costs page, a cost added and cancelled during an outage, an edit, the resold line and the Friday review', async (t) => {
   const server = await startServer(t);
   const data = seed(server.ctx);
   const browser = await launch(t);
@@ -116,7 +131,7 @@ test('iPhone: the Costs page, a cost added during an outage, an edit, the resold
   assert.deepEqual(await page.evaluate(() => window.__cspViolations), []);
 });
 
-test('Mac: the Costs page, a cost added during an outage, an edit, the resold line and the Friday review', async (t) => {
+test('Mac: the Costs page, a cost added and cancelled during an outage, an edit, the resold line and the Friday review', async (t) => {
   const server = await startServer(t);
   const data = seed(server.ctx);
   const browser = await launch(t);
