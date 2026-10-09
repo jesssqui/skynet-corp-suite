@@ -533,7 +533,7 @@ test('unlinked → held and listed as waiting → linked → everything attached
   assert.equal(waiting.status, 200);
   assert.deepEqual(waiting.body.customers.map((c) => [c.uid, c.businessName, c.orders, c.lastOrderDate, c.spendCents, c.email]),
     [[customer.customer_uid, 'Lefty’s Vape Shop', 4, '2026-10-05', 12458, 'lefty@leftys.ca']]);
-  assert.deepEqual(waiting.body.counts, { customers: 1, orders: 5, money: 8, linked: 0, problems: 0 });
+  assert.deepEqual(waiting.body.counts, { customers: 1, orders: 5, money: 8, notes: 0, linked: 0, problems: 0 });
   const row = ctx.services.connections.get('wom');
   assert.deepEqual([row.queueSize, row.queueLabel], [13, '13 records from 1 customer waiting for a client']);
   assert.equal((await call('GET', '/api/wholesale/waiting?q=lefty')).body.total, 1);

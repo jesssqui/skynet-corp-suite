@@ -42,7 +42,7 @@ export async function postEvents(base, secret, events, { ts = Math.floor(Date.no
 
 /** A pretend Order Manager: numbers its records, builds snapshots and events (A10 shapes). */
 export function womKit({ by = 'admin' } = {}) {
-  let n = { customer: 0, order: 0, payment: 0, refund: 0, return: 0, credit_note: 0 };
+  let n = { customer: 0, order: 0, payment: 0, refund: 0, return: 0, credit_note: 0, note: 0 };
   const next = (k) => (n[k] += 1);
   const iso = (d = new Date()) => d.toISOString();
   const env = (name, data, time = iso()) => ({ name, version: 1, key: newId(), source: 'wom', time, data });
@@ -116,6 +116,10 @@ export function womKit({ by = 'admin' } = {}) {
         return_uid, subtotal_cents, tax_cents, shipping_cents,
       };
     },
+    /** D5 (A11): a CRM note (crm_activities row) as noteSnapshot builds it. type: note | call | email | meeting | follow_up. */
+    note(customer, { type = 'note', body = 'Called about the next order', at = iso(), written_by = by, ...over } = {}) {
+      return { note_uid: newId(), number: next('note'), customer_uid: customer.customer_uid, type, body, at, written_by, ...over };
+    },
 
     // ---- events (data beyond `by` / `backfill`, as the A10 table) ----
     customerCreated: (customer, extra = {}) => env('customer.created', { by, ...extra, customer }),
@@ -136,6 +140,14 @@ export function womKit({ by = 'admin' } = {}) {
     refundGone: (refund) => env('refund.issued', { by, backfill: true, change: 'removed', removed: true, reason: 'gone', refund: { refund_uid: refund.refund_uid, number: refund.number, order_uid: refund.order_uid, customer_uid: refund.customer_uid } }),
     returnReceived: (ret) => env('return.received', { by, return: ret }),
     creditNoteIssued: (note) => env('credit_note.issued', { by, credit_note: note }),
+    // D5 (A11): envelope time = when queued (live) or the note's `at` (backfill).
+    noteAdded: (note, extra = {}) => env('note.added', { by, ...extra, note }, extra.backfill ? note.at : iso()),
+    noteDeleted: (note, { reason, ...extra } = {}) => env('note.deleted', {
+      by, ...extra, note: { note_uid: note.note_uid, number: note.number ?? null, customer_uid: note.customer_uid ?? null }, ...(reason ? { reason } : {}),
+    }),
+    followUpChanged: (customer, follow_up_date, { done = false, ...extra } = {}) => env('followup.changed', {
+      by, ...extra, customer_uid: customer.customer_uid, follow_up_date, done,
+    }),
   };
   return kit;
 }
