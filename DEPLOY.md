@@ -367,17 +367,21 @@ gets near that); a server restart lifts it.
 Nothing to set up. After this version starts:
 
 - **Client service renewals**: every morning at 7:50 the suite makes a task **30 days before** a client service's
-  *Renews* date (services that aren't Done or Cancelled), due that day on the business's default owner's Today. **At the
+  *Renews* date (services that aren't Done or Cancelled, of clients that aren't closed, on relationships that haven't
+  ended), due that day on the business's default owner's Today. **At the
   first start** (the first look is about 15 seconds after it, and it runs then if it is past 7:50), every service that
   renews within the next 30 days gets its reminder at once, due today — at most 20 a day, the soonest first; the rest come
-  on the next mornings. Check the *Renews* dates on your services (client page → the service → Edit) if a reminder looks
-  wrong: fix the date and the open task moves with it; set a service to Done or Cancelled and the suite finishes its task.
+  on the next mornings. **Renewed it?** Set the service's new *Renews* date (client page → the service → Edit): the suite
+  finishes the reminder and makes the next one 30 days before the new date. A small correction to the date (within the
+  30 days) moves the open task instead. Set a service to Done or Cancelled, close the client or end the relationship, and
+  the suite finishes its task.
 - **Our costs**: open **Costs** (a new tab, on the phone too) and add what the businesses and the home pay for — hosting,
   domains, software, insurance, subscriptions — with *Paid by* (Personal for the home), the amount, how often and the
   next renewal. Tick *Renews on its own* for automatic renewals. Every morning at 7:55 the suite makes a task **14 days
   before** each renewal (none for monthly costs that renew on their own), and moves an automatic one's date forward by
-  its period once it has passed. One that doesn't renew on its own shows **Overdue — renewed?** after its date until you
-  set the next one. A cost billed to a client: pick the relationship under *Resold to a client* and what they pay; it
+  its period once it has passed (on the same day of the month as its date: a cost billed on the 31st renews on the 31st,
+  or the month's last day). One that doesn't renew on its own shows **Overdue — renewed?** after its date until you set
+  the next one; setting it finishes the reminder, and the next one comes 14 days before the new date. A cost billed to a client: pick the relationship under *Resold to a client* and what they pay; it
   shows under that relationship on the client page.
 - Both are silent (the task on Today is the reminder). To get an in-app alert as well, or to switch either off: **System →
   Automations → Client service renewals / Recurring cost renewals**. Finishing or deleting a reminder is final for that

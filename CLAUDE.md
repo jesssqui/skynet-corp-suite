@@ -115,7 +115,7 @@ server/src/
   modules/costs/           D6: entities.js (the synced recurring_cost), service.js (registration + checkCost, reads:
                            cost/renewingBetween/autoRenewingPassed/liveCosts, monthlyTotals for D15), reminders.js
                            (the reminder engine reminderPlan/applyReminderPlan, rollCostsForward, the service-renewals
-                           and cost-renewals automations), migrations/001_create_costs.sql (costs_recurring); no routes
+                           and cost-renewals automations), migrations/001_create_costs.sql (costs_recurring), 002_anchor_day.sql; no routes
   backup/                  backup.js, restore.js (D5: runs this version's migrations on the restored copy, then
                            carryKeptTables: modules' keepOnRestore), schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file)
@@ -1746,6 +1746,7 @@ the Friday review); tests `shared/test/costs.test.js`, `server/test/costs.test.j
 `test/e2e/costs.e2e.test.js`. Registered last (after crm and planner: its costs belong to our businesses, its reminders
 are tasks; it throws at start without them). It reads and writes only `costs_recurring`; CRM records through
 `ctx.services.crm`, tasks through the automations framework (`create`/`update` = `sync.applyLocal` as `system`).
+Migrations: `001_create_costs.sql`, `002_anchor_day.sql`.
 **Module decision**: one module `costs` for both reminders — client services' renewals live in the CRM, but the CRM
 registers no automations (the planner hosts the CRM-reading ones, D3/D5 the wholesale module): keeping "everything that
 renews" and its single reminder engine together beat splitting it, and `ctx.services.costs` is what D15 reads.
@@ -1756,14 +1757,20 @@ of ours; **Personal for the home**), vendor, amount_cents (integer, ≥ 0, per p
 null = **CAD**; the form offers CAD/USD/EUR/GBP), period* (`monthly|quarterly|yearly|once`), next_renewal* (date; for
 `once` the day it is paid), payment_method (text: "Visa ••4242" — never a card number), auto_renews (boolean), status
 (`active|cancelled`, null = active), notes, and **resold**: relationship_id→ (plain ref: deleting a client never hides
-what we pay) + resold_amount_cents (what the client pays us, **per the same period**). `checkCost` (the sync `check`, the
-step's own values only): currency shape, amounts ≥ 0 — so a device may queue a negative amount and see it refused in
-Needs attention. New fields: nullable, never renamed.
+what we pay) + resold_amount_cents (what the client pays us, **per the same period**), and (review fix, migration 002)
+**anchor_day** (integer 1–31, null = the next renewal's own day): the **billing day of the month**. Devices send it with
+the date whenever a person sets the date (the sheet: kept as stored while the date isn't changed, else the new date's
+day); the suite writes it on roll-forward when it is null (derived from the current date, through applyLocal — no
+backfill otherwise). `checkCost` (the sync `check`, the step's own values only): currency shape, amounts ≥ 0, anchor
+1–31 — so a device may queue a negative amount and see it refused in Needs attention. New fields: nullable, never renamed.
 
 **Totals** (`costTotals`, shared — the page and `costs.monthlyTotals()` use the same rule): ACTIVE costs only; yearly =
 monthly × 12, quarterly × 4, yearly × 1; **monthly equivalent = yearly ÷ 12** (so quarterly ÷ 3), rounded to the cent;
 `once` and costs with no amount add nothing; **per currency, never added across currencies** (no exchange rates).
-Resold totals (what clients pay us) beside them.
+Resold totals (what clients pay us) beside them — counting a resold cost's resold side **only while its relationship,
+account and client are live** (review fix: as the page shows its "Resold to …" line; `costTotals(costs, { resoldLive })`;
+on the server `crm.liveRecord('relationship')` + `crm.liveAccount`, on devices the cached lists, which leave out records
+under a deleted parent). What we pay for it still counts.
 
 **Where a cost stands** (`costState(cost, today)`): cancelled · past (a `once` cost whose day has gone by) · **rolling**
 (auto-renews and its date has passed: the suite moves it at its next daily run) · **overdue** (doesn't renew on its own
@@ -1773,7 +1780,7 @@ and its date has passed: the page says "Overdue — renewed?" until a person set
 **Reminders** (`reminders.js`, one engine for both: `reminderPlan` (pure over reads + what it made) → `applyReminderPlan`):
 | automation | when | what | default |
 |---|---|---|---|
-| `service-renewals` | daily 07:50 | a client service (status not done/cancelled — paused counts; its relationship, account and client live, any status) whose `renewal_date` is **30 days** away: "Renewal in 30 days: <service> for <account> (<business>)", owner = the relationship's business's default owner, with client, account **and relationship** | on, silent |
+| `service-renewals` | daily 07:50 | a client service (status not done/cancelled — paused counts; its relationship, account and client live; **not a closed client and not an ended relationship** — a paused relationship still counts) whose `renewal_date` is **30 days** away: "Renewal in 30 days: <service> for <account> (<business>)", owner = the relationship's business's default owner, with client, account **and relationship** | on, silent |
 | `cost-renewals` | daily 07:55 | first **rolls forward** auto-renewing costs whose date has passed; then an active cost (not monthly + auto-renewing) whose `next_renewal` is **14 days** away: "Renews in 14 days: <name> ($X/yr)", owner = the cost's business's default owner (Personal → the shared list); a resold one also names the client and account (no relationship: it isn't a next step with them) | on, silent |
 - **Key** `<record id>:<renewal date>` (automations_made): **once per record and renewal date** — the scheduler again, Run
   now, the next day and restarts never make a second. Made **on the day it is due** (renewal − 30 / − 14), or — when
@@ -1783,14 +1790,21 @@ and its date has passed: the page says "Overdue — renewed?" until a person set
   daily; notes hold no run dates (they change only with the record), the date and amount, what to do, and a path.
 - **Who finished it decides** (D3's rule, `taskBook.js`): a task a **person** finished or deleted is final for that date
   ("N renewals already handled by a person"); a **new date** (renewed for another period) is a new key → a new task when
-  its day comes. The record **cancelled / done / deleted / its date cleared** (or a cost switched to monthly + automatic)
-  → the open task is **finished** with that reason; a task the **suite** finished is **reopened** (same date, not passed)
-  when the reason goes away.
-- **A date moved while the task is open moves it** (re-filed under the new key; never a second task): its due date
-  becomes max(new date − lead, today) **only while it is still the one the suite set** — a person's own day is kept and
-  one line says "The renewal date is now … (this task keeps the day you gave it)". The title and notes are refreshed only
-  while still the suite's (a person's rename is never put back). Which date an open task is for is remembered per move
-  (`for:<task>:<time>:<date>` keys), so a date moved and moved back is followed too.
+  its day comes. The record **cancelled / done / deleted / its date cleared** (or a cost switched to monthly + automatic;
+  for services also **the client closed or the relationship ended** — closed = no next steps, as D3's check-ins) → the
+  open task is **finished** with that reason; a task the **suite** finished is **reopened** (same date, not passed)
+  when the reason goes away (the client reopened…).
+- **Renewed while the task is open** (review fix): a date moved **later** with its reminder day still ahead (new date −
+  lead > today) means the renewal the task stood for is done — the open task is **finished** ("Renewed: the next renewal
+  is …; its reminder comes on …"), never moved a year out (ticked there, it would have counted as next year's reminder
+  "handled by a person"). Next year's task is made on its own day under its own key, whether the run or the person's
+  tick came first, and on a person's own day too.
+- **A correction while the task is open moves it** — a later date whose reminder day has already come, or an earlier
+  date (re-filed under the new key; never a second task): its due date becomes max(new date − lead, today) **only while
+  it is still the one the suite set** — a person's own day is kept and one line says "The renewal date is now … (this
+  task keeps the day you gave it)". The title and notes are refreshed only while still the suite's (a person's rename is
+  never put back). Which date an open task is for is remembered per move (`for:<task>:<time>:<date>` keys), so a date
+  moved and moved back is followed too.
 - **Cap**: at most **20 new tasks a run** per automation (`NEW_REMINDERS_CAP`), soonest renewal first; the rest are made
   on the next days (they are still within their window, due that day). Moving, finishing and reopening aren't capped.
 - **Silent by default** (decision): the task lands on the default owner's Today 30 / 14 days ahead, which is the
@@ -1804,8 +1818,10 @@ and its date has passed: the page says "Overdue — renewed?" until a person set
   passed) gets `next_renewal` = the first `date + k periods` ≥ today (`rollForward`, counted from the old date in one
   jump: a week of downtime doesn't leave it behind), written through `applyLocal` (as `system`, so devices pull it and a
   device's concurrent edit is a normal clash), and its open reminder is **finished** ("Renewed on its own on …; the next
-  renewal is …"). Not auto-renewing → it stays (Overdue — renewed?) and its reminder stays open. Days 29–31 clamp to a
-  short month's last day and the next roll starts from there (Jan 31 → Feb 28 → Mar 28): edit the date when it matters.
+  renewal is …"). Not auto-renewing → it stays (Overdue — renewed?) and its reminder stays open. Each date falls on the
+  cost's **billing day** (`anchor_day`, else the current date's day — then written with the new date), clamped to a
+  short month's last day: Jan 31 → Feb 28 → Mar 31, the same rolled daily or in one jump (review fix: before, a roll
+  started from the clamped day and stuck on the 28th).
   With the automation switched off nothing rolls (the page then shows "Renewed on its own … moves to the next date").
 - **Reads** (`ctx.services.costs`): `cost(id)`, `renewingBetween(from, to)` (active, soonest first — the Friday review's
   server numbers), `autoRenewingPassed(today)`, `liveCosts()`, and **for D15** `monthlyTotals()` →
@@ -1813,7 +1829,8 @@ and its date has passed: the page says "Overdue — renewed?" until a person set
   resold_yearly_cents }], overall: [{ currency, … }] }` (businesses in their order, CAD first; active costs only).
 
 **Screens** (offline: `useCostsData` reads cached lists; writes `store.create/update/remove`):
-- **`/costs`** (nav "Costs", phone tab bar too — eight tabs): an overall card (monthly · yearly, resold, how the monthly
+- **`/costs`** (nav "Costs", phone tab bar too — eight tabs; at 320 px wide (iPhone SE 1st gen) a tab is 39–45 px wide,
+  under the 44 px target — accepted by the review: 390 px phones get ~48 px): an overall card (monthly · yearly, resold, how the monthly
   equivalent is counted), filters in the URL (status Active / Cancelled / All, "Paid by" business, search over name,
   vendor and payment method), one card per business in our order (two columns ≥ 1100 px) with its totals (active costs
   of that business, whatever the other filters) and rows soonest first (cancelled last): name, vendor, "Renews on its
@@ -1888,9 +1905,11 @@ and its date has passed: the page says "Overdue — renewed?" until a person set
 - **D6 (renewals and recurring costs)**: done — see "Renewals and recurring costs". One module `costs` for the synced
   `recurring_cost` and both reminder automations (client services 30 days ahead, our costs 14 days), sharing one engine
   keyed by record + renewal date; reminders are made on their day (or today when late), capped at 20 new a run, silent by
-  default; a person's finish is final for that date, a moved date moves the open task (a person's day kept), the suite
-  finishes and reopens only its own; monthly auto-renewing costs get no reminders; auto-renewing costs are rolled forward
-  by the daily run (applyLocal); totals per currency, monthly = yearly ÷ 12, once left out; `costs.monthlyTotals()` is
+  default; a person's finish is final for that date; a renewal (a later date beyond the window) finishes the open task,
+  a correction inside the window moves it (a person's day kept); the suite finishes and reopens only its own; closed
+  clients and ended relationships get no service reminders; monthly auto-renewing costs get no reminders;
+  auto-renewing costs are rolled forward by the daily run (applyLocal) on their billing day (`anchor_day`); totals per
+  currency, monthly = yearly ÷ 12, once left out, the resold side only for live relationships; `costs.monthlyTotals()` is
   D15's read. D3's task book moved to `automations/taskBook.js`. Next: D15 (the overview) reads `monthlyTotals()`; D9
   (projects) owns stages/checklists; exchange rates and per-weekday reminders are not modelled.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
