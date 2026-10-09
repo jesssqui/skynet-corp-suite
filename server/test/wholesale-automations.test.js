@@ -505,7 +505,7 @@ test('switched off, the ready-to-ship automation makes nothing; Run now explains
   assert.match(r.summary, /Runs when the Order Manager packs an order/);
   const view = env.autos.get(SHIP_ID);
   assert.equal(view.when, 'When the Order Manager packs an order (finished when it ships, is cancelled, deleted or changed)');
-  assert.deepEqual(view.trigger.events, ['order.packed', 'order.shipped', 'order.cancelled', 'order.deleted', 'order.restored', 'order.changed']);
+  assert.deepEqual(view.trigger.events, ['order.packed', 'order.shipped', 'order.cancelled', 'order.deleted', 'order.restored', 'order.changed', 'wholesale.attachment']);
 });
 
 // ---- review fixes ------------------------------------------------------------------------------

@@ -257,7 +257,7 @@ test('switches: off skips the scheduler but Run now still works; who changed it 
   assert.equal((await env.call('POST', '/api/automations/probe-off/run', {}, { session: null })).status, 401);
   const list = await env.call('GET', '/api/automations');
   assert.deepEqual(list.body.automations.map((a) => a.id),
-    ['friday-review', 'no-next-step', 'wholesale-check-in', 'wholesale-balances', 'wholesale-ready-to-ship', 'wholesale-follow-ups', 'probe-off']);
+    ['friday-review', 'no-next-step', 'wholesale-check-in', 'wholesale-balances', 'wholesale-ready-to-ship', 'wholesale-follow-ups', 'wholesale-auto-link', 'probe-off']);
   assert.equal(list.body.timeZone, 'America/Toronto');
 });
 
