@@ -54,6 +54,14 @@ if (config.automations.scheduled) {
 // Wholesale (D1): once a minute, pick up Order Manager links made elsewhere (D2, a device).
 const stopWholesale = ctx.services.wholesale.startReconciler();
 
+// Stockroom (D16): the read-only pulls (one look a minute; calls only when an answer is due).
+let stopStockroom = () => {};
+if (config.stockroom.scheduled) {
+  stopStockroom = ctx.services.stockroom.startPuller();
+} else {
+  log.info('Stockroom pulls are off (STOCKROOM_PULL_ENABLED); Pull now on the Connections card still works');
+}
+
 let shuttingDown = false;
 function shutdown(signal) {
   if (shuttingDown) return;
@@ -62,6 +70,7 @@ function shutdown(signal) {
   stopBackups();
   stopAutomations();
   stopWholesale();
+  stopStockroom();
   server.close(() => {
     db.close(); // checkpoints the WAL into the main file
     stopHeartbeat();

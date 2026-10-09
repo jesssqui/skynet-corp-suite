@@ -140,6 +140,16 @@ export function loadConfig(env = process.env) {
       // The zone of tasks' due times; timed events are written in it (with a VTIMEZONE).
       timeZone: timeZone(env),
     },
+    stockroom: {
+      // D16: the key that encrypts Stockroom's read key (its secret) in the database — a file in the
+      // data folder, like D1's (never in the database or the backups). Made on first use.
+      keyFile: path.resolve(env.STOCKROOM_KEY_FILE || path.join(dataDir, 'stockroom-secret.key')),
+      // Each call to Stockroom (on Fly) gives up after this long.
+      timeoutMs: int(env.STOCKROOM_TIMEOUT_MS, 15_000, 'STOCKROOM_TIMEOUT_MS'),
+      // The pull loop (one look a minute, calls only when an answer is due): on by default in production,
+      // like the automation scheduler; "Pull now" on the Connections card works either way.
+      scheduled: bool(env.STOCKROOM_PULL_ENABLED, production),
+    },
     automations: {
       // The minute scheduler (C8): on by default in production only, like the backup schedule.
       // "Run now" on the Automations page works either way.
