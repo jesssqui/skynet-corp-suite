@@ -1769,7 +1769,11 @@ date only, the other date + day: the later date wins its field, the day applies,
 system's roll racing a device edit. So `anchor_day` counts only when the date falls on it, or the date is its month's
 last day and that day is below it (the clamp: Feb 28 with 31); otherwise the date's own day is used, and the roll writes
 that corrected `anchor_day` with the new date (applyLocal), making the pair whole again. Anchor 31, Jan 31 → Feb 28 →
-date set to Mar 15 alone → the next roll is Apr 15, not Apr 30. `checkCost` (the sync `check`, the step's own values only): currency shape, amounts ≥ 0, anchor
+date set to Mar 15 alone → the next roll is Apr 15, not Apr 30. The roll **always writes the pair** (`anchor_day` too,
+even unchanged), so a device edit made before it clashes on both fields together and the roll's pair stays (02-28/31,
+never 02-28/30 → 03-30; tested). **Known limit**: a month-end date set without its anchor (the plain `/sync/data`
+view) while a higher stale anchor is stored — e.g. Apr 30 with 31 left from before — is read as the clamp (31), so the
+next roll goes to the 31st; set the date through the Costs sheet, which sends both. `checkCost` (the sync `check`, the step's own values only): currency shape, amounts ≥ 0, anchor
 1–31 — so a device may queue a negative amount and see it refused in Needs attention. New fields: nullable, never renamed.
 
 **Totals** (`costTotals`, shared — the page and `costs.monthlyTotals()` use the same rule): ACTIVE costs only; yearly =

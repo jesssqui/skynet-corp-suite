@@ -14,6 +14,8 @@ import { atLocal } from '../src/modules/automations/schedule.js';
 import { SERVICE_RENEWALS_ID, COST_RENEWALS_ID, NEW_REMINDERS_CAP, whenText } from '../src/modules/costs/reminders.js';
 import { checkCost } from '../src/modules/costs/service.js';
 import { reviewNumbers, reviewLines } from '../src/modules/planner/automations.js';
+import { newId } from '@suite/shared/ids';
+import { encodeHlc } from '@suite/shared/hlc';
 import { tmpDir, testConfig, startApp, ensureTestUsers, testClock, sessionFor } from './helpers.js';
 
 const AGENCY = BUSINESS_IDS.agency;
@@ -497,6 +499,45 @@ test('month-end: a monthly cost billed on the 31st rolls Jan 31 → Feb 28 → M
   env.autos.runNow(COST_RENEWALS_ID);
   assert.equal(env.cost(jump).next_renewal, '2027-04-30', 'one jump: the same date');
   assert.equal(env.cost(jump).anchor_day, 31);
+});
+
+test('a clamp roll racing an offline sheet edit: the pair clashes together, the roll’s 02-28/31 stays, and the next roll is 03-31', async (t) => {
+  const env = await setup(t);
+  const id = env.local('recurring_cost', { name: 'Seat', business_id: AGENCY, amount_cents: 1000, period: 'monthly', next_renewal: '2027-01-31', auto_renews: true, anchor_day: 31 });
+  // The phone has seen the cost (its cursor), then edits it offline — an earlier stamp than the roll's.
+  const { cookie, deviceId } = sessionFor(env.ctx, env.users.partner);
+  const headers = { 'content-type': 'application/json', cookie, origin: env.base };
+  let seen = null;
+  for (;;) {
+    const res = await fetch(`${env.base}/api/sync/pull?${seen ? `since=${encodeURIComponent(seen)}&` : ''}limit=1000`, { headers });
+    const body = await res.json();
+    seen = body.cursor;
+    if (!body.hasMore) break;
+  }
+  const step = {
+    key: newId(), entity: 'recurring_cost', recordId: id, op: 'update', seen,
+    fields: { next_renewal: '2027-04-30', anchor_day: 30 },
+    hlc: encodeHlc({ ms: Date.now() - 60_000, counter: 0, node: deviceId }),
+  };
+  // The roll (the clamp): Jan 31 → Feb 28, writing the pair.
+  env.setNow(at('2027-02-01 08:00'));
+  env.autos.tick();
+  assert.deepEqual([env.cost(id).next_renewal, env.cost(id).anchor_day], ['2027-02-28', 31]);
+  // Then the phone's edit arrives (signed in again as the same device: weeks passed): both fields clash,
+  // the later stamps (the roll's) win both.
+  const again = sessionFor(env.ctx, env.users.partner, { deviceHint: deviceId });
+  assert.equal(again.deviceId, deviceId);
+  const res = await fetch(`${env.base}/api/sync/push`, { method: 'POST', headers: { ...headers, cookie: again.cookie }, body: JSON.stringify({ steps: [step] }) });
+  const pushed = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(pushed));
+  const [result] = pushed.results;
+  assert.equal(result.status, 'clash', JSON.stringify(result));
+  const clashes = env.db.prepare('SELECT field FROM sync_clashes WHERE record_id = ? ORDER BY field').all(id).map((r) => r.field);
+  assert.deepEqual(clashes, ['anchor_day', 'next_renewal'], 'the pair clashes together (kept for review)');
+  assert.deepEqual([env.cost(id).next_renewal, env.cost(id).anchor_day], ['2027-02-28', 31], 'never split into 02-28/30');
+  env.setNow(at('2027-03-01 08:00'));
+  env.autos.tick();
+  assert.equal(env.cost(id).next_renewal, '2027-03-31', 'not 03-30');
 });
 
 test('monthly totals for the overview (D15), costs renewing soon, and the Friday review counting them', async (t) => {

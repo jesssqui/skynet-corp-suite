@@ -381,12 +381,13 @@ export function rollCostsForward({ reads, planner }, { now, today, made, madeLik
   const rolled = [];
   for (const c of reads.autoRenewingPassed(today)) {
     // The billing day of the month: the cost's own while it agrees with the date (effectiveAnchor),
-    // else — null, or stale/split from its date — the date's own day, written along with the new
-    // date so the pair is whole again.
+    // else — null, or stale/split from its date — the date's own day, written with the new date.
     const anchor = effectiveAnchor(c.next_renewal, c.anchor_day);
     const next = rollForward(c.next_renewal, c.period, today, anchor);
     if (!next || next === c.next_renewal) continue;
-    update('recurring_cost', c.id, { next_renewal: next, ...(c.anchor_day !== anchor ? { anchor_day: anchor } : {}) });
+    // Always the pair (the same anchor too): a device edit made before this roll then clashes on both
+    // fields together, so the pair can't be split into the roll's date + the device's day.
+    update('recurring_cost', c.id, { next_renewal: next, anchor_day: anchor });
     const seen = new Set();
     for (const m of madeLike(`${c.id}:`)) {
       if (seen.has(m.id) || !RECORD_KEY.test(m.key)) continue;
