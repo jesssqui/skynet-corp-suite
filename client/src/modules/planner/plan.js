@@ -11,6 +11,7 @@ import {
   isStaleGoal, WORKDAY_IDS, MONTH_PRIORITY_LIMIT, SHARED,
 } from '@suite/shared/planner';
 import { parseLocalDate } from '../../ui/format.js';
+import { costsRenewingBetween } from '@suite/shared/costs';
 import { buildToday, compareDue, dueTimeOf, isMineOrShared, isTop, moveChange, otherActor, relationshipsWithoutNextStep } from './logic.js';
 
 export { MONTH_PRIORITY_LIMIT, planMonth, isStaleGoal };
@@ -473,16 +474,18 @@ export function handoffTasks(tasks, { who, today }) {
 
 /**
  * Everything the Friday review lists, from the device's copy:
- * overdue (both people), renewals (30 days), quiet clients (60 days), this week's goals (both
+ * overdue (both people), renewals (30 days: client services and, D6, our recurring costs), quiet clients (60 days), this week's goals (both
  * people, by business then order), the relationships with no next step (C4a's rule).
  */
-export function reviewLists({ tasks, today, goals, services, clients, accounts, relationships, lastActivity, businesses = [] }) {
+export function reviewLists({ tasks, today, goals, services, clients, accounts, relationships, lastActivity, businesses = [], costs = [] }) {
   const pos = new Map(businesses.map((b) => [b.id, b.position ?? 1e9]));
   const weekGoals = goalsOf(goals, 'week', weekStart(today))
     .sort((a, b) => (pos.get(a.business_id) ?? 1e9) - (pos.get(b.business_id) ?? 1e9) || compareGoals(a, b));
   return {
     overdue: overdueTasks(tasks, today),
     renewals: renewalsDue(services, today),
+    // D6: our recurring costs renewing in the same 30 days (active ones, soonest first).
+    costRenewals: costsRenewingBetween(costs, today, addDays(today, RENEWAL_DAYS)),
     quiet: quietClients(clients, lastActivity, today),
     weekGoals,
     noNextStep: relationshipsWithoutNextStep({ relationships, accounts, clients, tasks }),

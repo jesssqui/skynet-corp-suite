@@ -31,7 +31,7 @@ const none = (label = '—') => [{ value: '', label }];
  * created with every field (+ `parent`, e.g. its client_id); an edit sends only the fields changed
  * since the sheet opened (formFields.js), so the other person's changes that arrive meanwhile stay.
  */
-function useForm(form, record, { entity, parent = {}, onDone, initial = null }) {
+export function useForm(form, record, { entity, parent = {}, onDone, initial = null }) {
   const [start] = useState(() => ({ ...valuesFrom(form, record), ...initial }));
   const [v, setV] = useState(start);
   const [problems, setProblems] = useState({});
@@ -60,7 +60,7 @@ function useForm(form, record, { entity, parent = {}, onDone, initial = null }) 
   return { v, setV, set, save, problems, dirty: isDirty(start, v), ...action };
 }
 
-function deleter(run, entity, record, onDeleted) {
+export function deleter(run, entity, record, onDeleted) {
   if (!record) return null;
   return async () => {
     if (await run(() => store.remove(entity, record.id))) onDeleted();
