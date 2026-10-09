@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { parseCsv, readTable, detectDelimiter, CsvError } from '../csv.js';
 import {
   nameKey, similarNames, cleanRow, buildMatchIndex, findMatch, flagRows, planRow, actionsFor, fingerprintText, rowKey,
-  detectMapping, checkMapping, rowFromCells, MAPPING_KEYS,
+  detectMapping, checkMapping, rowFromCells, MAPPING_KEYS, similarEntries, streetKey, addressKey,
 } from '../intake.js';
 import { BUSINESS_IDS } from '../crm.js';
 import { newId } from '../ids.js';
@@ -293,4 +293,42 @@ test('contact notes with no contact are kept on the client, never dropped; an im
   assert.equal(r.client.notes, 'From the market\nwants a quote before spring');
   assert.deepEqual(actionsFor('imported'), ['skip', 'add', 'create']);
   assert.deepEqual(actionsFor('imported', { canAdd: false }), ['skip', 'create']);
+});
+
+// ---------------------------------------------------------------- D2: addresses, similar names at scale
+
+test('streetKey / addressKey: one spelling for a street, units left out, both parts needed', () => {
+  for (const typed of ['12 Main St', '12 Main Street, Unit 4', 'Unit 4, 12 Main Street', '4-12 main st.', '#4 12 Main St', '12 MAIN ST.']) {
+    assert.equal(streetKey(typed), '12 main st', typed);
+  }
+  assert.equal(streetKey('88 Queen Street North'), '88 queen st n');
+  assert.equal(streetKey('88 Queen St. N'), '88 queen st n');
+  assert.equal(streetKey('12 Rue Sainte-Catherine Ouest'), '12 rue sainte-catherine ouest');
+  assert.equal(streetKey('12 Rue Ste Catherine'), '12 rue ste catherine', 'Ste (Sainte) is not a suite');
+  assert.equal(streetKey('PO Box 12'), null, 'no civic number: never an address match');
+  assert.equal(streetKey(''), null);
+  assert.equal(streetKey(null), null);
+  assert.equal(addressKey('12 Main St', 'n3y4k3'), 'N3Y4K3|12 main st');
+  assert.equal(addressKey('12 Main Street', 'N3Y 4K3'), addressKey('12 main st.', 'n3y 4k3'));
+  assert.equal(addressKey('12 Main St', null), null);
+  assert.equal(addressKey('12 Main St', 'not a code!'), null);
+  assert.equal(addressKey(null, 'N3Y 4K3'), null);
+});
+
+test('similar names: account entries carry their account; a common word never makes it scan every name', () => {
+  const clients = [{ id: 'c1', name: 'Lefty’s' }, { id: 'c2', name: 'Harbour Holdings' }];
+  const accounts = [{ id: 'a1', client_id: 'c1', name: 'Lefty’s' }, { id: 'a2', client_id: 'c2', name: 'Harbour Smoke Store' }];
+  for (let i = 0; i < 2000; i += 1) {
+    clients.push({ id: `x${i}`, name: `Client ${i}` });
+    accounts.push({ id: `y${i}`, client_id: `x${i}`, name: `Client ${i} Store` });
+  }
+  const index = buildMatchIndex({ clients, accounts });
+  const found = (name) => similarEntries(index, name).map((f) => `${f.entry.clientId}/${f.entry.accountId}`).sort();
+  assert.deepEqual(found('Leftys Cannabis Dispensary'), ['c1/a1', 'c1/null']);
+  assert.deepEqual(found('The Harbour Smoke Store Inc'), ['c2/a2']);
+  assert.deepEqual(found('Harbour Smoke'), ['c2/a2'], 'a shorter name inside a longer one');
+  assert.deepEqual(found('Client 1500 Store Ltd'), ['x1500/null', 'x1500/y1500']);
+  const t0 = performance.now();
+  for (let i = 0; i < 1000; i += 1) similarEntries(index, `Waiting ${i} Store`);
+  assert.ok(performance.now() - t0 < 500, 'names sharing only “Store” are never compared one by one');
 });

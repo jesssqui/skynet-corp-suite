@@ -212,11 +212,11 @@ export function cleanRow(input = {}) {
 
 // ---- matching against what is already here ---------------------------------------------------
 
-function nameEntry(name, clientId) {
+function nameEntry(name, clientId, accountId = null) {
   const key = nameKey(name);
   if (!key) return null;
   const tokens = key.split(' ');
-  return { key, flat: key.replace(/ /g, ''), tokens, clientId, name };
+  return { key, flat: key.replace(/ /g, ''), tokens, clientId, accountId, name };
 }
 
 function pushTo(map, key, value) {
@@ -228,7 +228,8 @@ function pushTo(map, key, value) {
 /**
  * What new rows are compared with: live clients, their accounts' names and their contacts'
  * clean emails and phones (records under a deleted client left out by the caller or here).
- * @param {{ clients: Array<{id, name}>, accounts?: Array<{client_id, name}>, contacts?: Array<{client_id, email, phone}> }} records
+ * Name entries carry `accountId` (null for a client's own name; D2 suggests the account).
+ * @param {{ clients: Array<{id, name}>, accounts?: Array<{id?, client_id, name}>, contacts?: Array<{client_id, email, phone}> }} records
  */
 export function buildMatchIndex({ clients = [], accounts = [], contacts = [] }) {
   const clientsById = new Map(clients.map((c) => [c.id, c]));
@@ -236,24 +237,49 @@ export function buildMatchIndex({ clients = [], accounts = [], contacts = [] }) 
   const byPhone = new Map();
   const byToken = new Map(); // every word of a name -> entries
   const byFlat = new Map(); // the name without spaces -> entries
-  const add = (name, clientId) => {
-    const e = nameEntry(name, clientId);
+  const byRare = new Map(); // each name under its rarest word only (see similarEntries)
+  const entries = [];
+  const add = (name, clientId, accountId = null) => {
+    const e = nameEntry(name, clientId, accountId);
     if (!e) return;
     for (const t of new Set(e.tokens)) pushTo(byToken, t, e);
     pushTo(byFlat, e.flat, e);
+    entries.push(e);
   };
   for (const c of clients) add(c.name, c.id);
-  for (const a of accounts) if (clientsById.has(a.client_id)) add(a.name, a.client_id);
+  for (const a of accounts) if (clientsById.has(a.client_id)) add(a.name, a.client_id, a.id ?? null);
   for (const p of contacts) {
     if (!clientsById.has(p.client_id)) continue;
     if (p.email) pushTo(byEmail, p.email, p.client_id);
     if (p.phone) pushTo(byPhone, p.phone, p.client_id);
   }
-  return { clientsById, byEmail, byPhone, byToken, byFlat };
+  for (const e of entries) pushTo(byRare, rarest(byToken, e.tokens).token, e);
+  return { clientsById, byEmail, byPhone, byToken, byFlat, byRare };
 }
 
-/** Index entries whose name is similar to `name` (only those sharing a word or its letters are compared). */
-function similarEntries(index, name) {
+/** The word of `tokens` listed under the fewest names (first on a tie), with that count. */
+function rarest(byToken, tokens) {
+  let token = null;
+  let count = Infinity;
+  for (const t of tokens) {
+    const n = byToken.get(t)?.length ?? 0;
+    if (n < count) {
+      count = n;
+      token = t;
+    }
+  }
+  return { token, count };
+}
+
+/**
+ * Index entries (buildMatchIndex) whose name is similar to `name` → [{ entry, exact }] (entry:
+ * { key, clientId, accountId, name }; exact = the same name key). Two names are similar when one's
+ * words all appear in the other (or they are the same letters), so only two lists are read — never
+ * every name sharing a common word like "Store" (D2: thousands of clients):
+ *  - names containing every word of this one: all listed under its rarest word;
+ *  - names made only of this one's words: each listed (byRare) under its own rarest word, one of these.
+ */
+export function similarEntries(index, name) {
   const e = nameEntry(name, null);
   if (!e) return [];
   const seen = new Set();
@@ -265,7 +291,9 @@ function similarEntries(index, name) {
       if (similarNames(e, x)) out.push({ entry: x, exact: x.key === e.key });
     }
   };
-  for (const t of e.tokens) consider(index.byToken.get(t));
+  const { token, count } = rarest(index.byToken, e.tokens);
+  if (count > 0) consider(index.byToken.get(token));
+  for (const t of new Set(e.tokens)) consider(index.byRare.get(t));
   consider(index.byFlat.get(e.flat));
   return out;
 }
@@ -443,6 +471,59 @@ export function fingerprintText(row) {
 /** Which customer a row is about (to tell "changed since last import" from "new"): its client name. */
 export function rowKey(row) {
   return nameKey(row.client.name);
+}
+
+// ---- addresses (D2: "same street and postal code") ---------------------------------------------
+
+// Street words as one spelling: "Street" = "St." = "st", "North" = "N".
+const STREET_WORDS = Object.freeze({
+  street: 'st', avenue: 'ave', av: 'ave', road: 'rd', drive: 'dr', boulevard: 'blvd', lane: 'ln', court: 'ct',
+  crescent: 'cres', cr: 'cres', place: 'pl', highway: 'hwy', parkway: 'pkwy', square: 'sq', terrace: 'terr',
+  trail: 'trl', circle: 'cir', concession: 'conc', line: 'line', north: 'n', south: 's', east: 'e', west: 'w',
+});
+// A unit, suite or apartment: not part of the street ("Unit 4", "Suite 200", "Apt 3B", "#12").
+const UNIT_RE = /(?:^|\s)(?:unit|suite|apt|apartment)\s*[a-z0-9-]+|#\s*[a-z0-9-]+/g;
+
+function streetPart(text) {
+  let s = squash(text)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/['’.]/g, '')
+    .replace(UNIT_RE, ' ')
+    .replace(/[^a-z0-9#-]+/g, ' ')
+    .trim();
+  // "4-12 Main St" (unit 4 at number 12): the civic number is the one after the dash.
+  s = s.replace(/^[0-9a-z]+\s*-\s*(\d+[a-z]?)\s/, '$1 ').replace(/\s+/g, ' ');
+  if (!/^\d+[a-z]?\s+\S/.test(s)) return null; // a street has a civic number and a name
+  return s.split(' ').map((w) => STREET_WORDS[w] ?? w).join(' ');
+}
+
+/**
+ * A street address for comparing (D2's "same address"): the first comma-separated part that starts
+ * with a civic number ("Unit 4, 12 Main Street" -> "12 main st"), accents and punctuation dropped,
+ * units/suites/apartments left out, common words abbreviated (Street -> st, Avenue -> ave,
+ * North -> n…). null when there is no civic number (a PO box, a rural route, nothing).
+ */
+export function streetKey(street) {
+  if (street === null || street === undefined) return null;
+  for (const part of String(street).split(/[,\n]/)) {
+    const key = streetPart(part);
+    if (key) return key;
+  }
+  return null;
+}
+
+/**
+ * "Same street and postal code": the postal code in its stored form (spaces dropped) and the street
+ * key, or null when either is missing or not one (an address without both never matches).
+ */
+export function addressKey(street, postalCode) {
+  const postal = normalizePostalCode(squash(postalCode) || null);
+  if (!postal || !isPostalCode(postal)) return null;
+  const key = streetKey(street);
+  return key ? `${postal.replace(/ /g, '')}|${key}` : null;
 }
 
 // ---- accounting customer lists (CSV) ------------------------------------------------------------
