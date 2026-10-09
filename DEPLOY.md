@@ -336,20 +336,27 @@ works on the Mac mini itself; the page warns about that.
    kept; if it is lost, *Replace link…* and subscribe again).
 2. **iPhone** (Tailscale on): Settings → Apps → Calendar → Calendar Accounts (older iOS: Settings → Calendar → Accounts)
    → Add Account → Other → **Add Subscribed Calendar** → paste the link as the Server → Next → Save. Then Calendar
-   Accounts → **Fetch New Data** → *Every 15 minutes* (subscribed calendars aren't pushed). Or tap *Open in Calendar* on
-   the iPhone itself.
+   Accounts → **Fetch New Data** → *Every 15 minutes* (subscribed calendars aren't pushed). Use the https link as shown:
+   the page offers no `webcal://` link, because calendar apps may fetch that over plain http, which Tailscale Serve's
+   HTTPS address doesn't answer.
 3. **Mac**: Calendar → File → **New Calendar Subscription…** → paste the link → Subscribe → Location **On My Mac** (not
    iCloud: iCloud's servers can't reach your tailnet, so an iCloud subscription stays empty) → Auto-refresh *Every 15
    minutes* → OK.
 4. Check: a task with a due date appears at the next refresh (all-day, or at its time for its estimate — 30 minutes
-   when none); tick it done in the suite and it disappears at the following refresh. **Account → Calendar** shows when a
+   when none); tick it done in the suite and it disappears at the following refresh. An open task overdue by more than
+   30 days also drops out of the calendar (it is still overdue in the suite). **Account → Calendar** shows when a
    calendar last read the link, and **System → Connections → Task calendar feed** whose links are on.
 
 Each person does this with their own account. **Replace link…** (if a link may have leaked) stops the old one at once —
 then remove the old subscription on each device and subscribe again; **Turn off…** stops it altogether. The switch on
 the *Task calendar feed* card pauses every feed (calendars keep what they last read). The links survive restores
-exactly as they are now (a replaced link doesn't come back). Only titles and the business are in the feed — no notes,
-clients or contacts — but anyone holding the link (and on your tailnet) can read those titles.
+exactly as they are now (a replaced link doesn't come back).
+
+**What the calendar shows**: task titles **as written**, the business and a link back to the task. The suite's own
+tasks put account names and amounts in their titles (e.g. *Balance owing over 30 days: Lefty's, $412.50*), so those
+appear in Apple Calendar on the phone and the Mac — on the lock screen and in notifications too. Notes, contacts and
+other details are not sent. Anyone holding the link (and on your tailnet) can read the titles: keep it to yourselves,
+and *Replace* it if it may have leaked. The link never appears in the suite's logs.
 
 Tailscale must be on for the calendar to update; without it the calendar keeps its last copy. 20 wrong links from one
 device within an hour lock that device out of every feed for an hour (an old subscription left after *Replace* never

@@ -142,7 +142,7 @@ client/src/
                            AlertsBell.jsx (sidebar "Alerts" + count, the phone strip, useUnreadAlerts), alerts.js +
                            logic.js (no React; client/test/automations.test.js)
   modules/calendar/        C6a: CalendarPage (/account/calendar, a tab of Account: make / replace / turn off the link,
-                           shown once, how to subscribe), links.js (no React: https + webcal links, "only works on
+                           shown once, how to subscribe), links.js (no React: the https link, "only works on
                            this Mac"; client/test/calendar.test.js)
   modules/sync/            /sync (Offline data), /sync/attention (Needs attention), /sync/data/:entity (plain records view)
   modules/wholesale/       D1: WholesalePage (/wholesale: waiting for a client / linked; lazy), ConnectionPanel.jsx (the
@@ -240,8 +240,15 @@ One folder per module on each side, same name on both (`server/src/modules/healt
 - **The calendar feed is the one session-less read of personal data** (C6a, deliberate): Apple Calendar fetches
   subscribed calendars by URL with no way to sign in, so the URL carries a 256-bit random token (only its SHA-256
   stored, compared in constant time, replaceable and switch-off-able per person, failed lookups rate-limited per
-  address). It stays tailnet-only like everything else (the ts.net address; on the Mac itself, localhost), carries only
-  task titles and business names, and is a `createPublicRouter` route, never a way into anything else.
+  address). It stays tailnet-only like everything else (the ts.net address; on the Mac itself, localhost) and is a
+  `createPublicRouter` route, never a way into anything else. **What it sends**: each dated task's title **as written**
+  (decision: the titles are what make the calendar useful), the business name and a link back — and the suite's own
+  automated tasks put account names and amounts in their titles (e.g. "Balance owing over 30 days: Lefty’s, $412.50",
+  "Check in with …"), so those appear in Apple Calendar on the phone and the Mac, including the lock screen and
+  notifications. Notes, contacts, clients' details and everything else are not sent. **The token never reaches a log**:
+  the feed handler catches its own errors (503, logged without the path), and app.js's error handler and its 404
+  message pass paths through `redactPath` (`server/src/lib/redact.js`: `/api/calendar/feed/[link]`); add any future
+  request logging through it too.
 - **No HSTS** (helmet's is off): browsers apply it to the whole ts.net hostname on every port, which would force the
   Order Manager's plain-http port on the same Mac to https. Tailscale Serve already makes the suite HTTPS-only.
 
@@ -1665,8 +1672,13 @@ business names through `crm.getBusiness`, display names through `auth.accounts`)
   is "last revised" — and the body only changes when a task does); `SEQUENCE` = seconds since 2026-01-01 of
   `updated_at` (grows with every edit); `CREATED`. `SUMMARY` = the title, **"[Shared] "** first for the shared list.
   `DESCRIPTION` = the business name (+ " · Shared list") and "Open in the suite: <base>/tasks?open=<id>", `URL` the
-  same link; base = `SUITE_URL` (config `calendar.publicUrl`), else the address the calendar used. **No notes, client,
-  account or contact details** — the link can leak, so the feed carries as little as possible.
+  same link; base = `SUITE_URL` (config `calendar.publicUrl`), else the address the calendar used. **Titles go as
+  written** (coordinator's decision): the suite's own automated tasks carry account names and amounts in their titles
+  ("Balance owing over 30 days: Lefty’s, $412.50", "Ship order #1042 for …", "Check in with …"), so those show in Apple
+  Calendar on the phone and the Mac — lock screen and notifications included. **Notes, contacts and other details are
+  not sent** (a task's notes, client/account fields, contact info). The Calendar page says so in one line.
+  **An open task overdue by more than 30 days drops out of the calendar** although it isn't finished (it is still on
+  Today and the Tasks page as overdue).
   Date-only → all day (`DTSTART;VALUE=DATE`, `DTEND` the next day, `TRANSP:TRANSPARENT`). With a valid "HH:MM" →
   `DTSTART/DTEND;TZID=<zone>` for `estimate_minutes` (30 when none), never past midnight. **Time zone decision**: TZID +
   a VTIMEZONE (not floating times, not UTC): the tasks' zone is `CALENDAR_TIME_ZONE`, else `TZ` (America/Toronto in
@@ -1679,7 +1691,8 @@ business names through `crm.getBusiness`, display names through `auth.accounts`)
   a UTF-8 character); TEXT escapes `\ ; ,` and newlines, other control characters are dropped.
 - **HTTP**: `Cache-Control: private, no-cache`, a strong `ETag` (SHA-256 of the body) and **304** on a matching
   `If-None-Match` (own comparison: Express's `req.fresh` refuses whenever the request says `Cache-Control: no-cache`,
-  which fetch clients add to conditional requests). HEAD works. Unknown, replaced or turned-off token, or a path that
+  which fetch clients add to conditional requests). HEAD works. An error while answering (SQLITE_BUSY, a bug) → **503**
+  + `Retry-After: 300`, logged without the path (the handler's own try/catch; app.js redacts feed paths as well). Unknown, replaced or turned-off token, or a path that
   isn't `<43 base64url chars>.ics` → **404 `Not found`** (plain text, no detail). Paused on Connections → **503** +
   `Retry-After: 900` before any lookup (calendars keep what they have). Anything else under `/api/calendar` needs a
   session (`/feed/<token>.ics/x`, `/feed`, POST/DELETE on the feed path → 401).
@@ -1702,7 +1715,10 @@ business names through `crm.getBusiness`, display names through `auth.accounts`)
 - **Reach**: the feed URL is the suite's address — the ts.net HTTPS address from Tailscale Serve (devices on the
   tailnet; Apple Calendar must fetch it **from the device**: on the Mac pick *On My Mac*, not iCloud, whose servers
   can't reach the tailnet). Without Serve the Mac reaches it at `http://localhost:3100` only; the page says so when it
-  is open on localhost or plain http (`linkReachProblem`), unless `SUITE_URL` is set. iPhone subscribed calendars are
+  is open on localhost or plain http (`linkReachProblem`), unless `SUITE_URL` is set. **Only the https link is offered**
+  (copy, then paste into Add Subscribed Calendar / New Calendar Subscription) — **no `webcal://` link** (review
+  decision): calendar apps may fetch webcal over plain http, keeping the port (`webcal://….ts.net:8443/…`), and Tailscale
+  Serve's HTTPS-only address won't answer that. iPhone subscribed calendars are
   fetched on the "Fetch New Data" schedule (15 minutes at best), not pushed.
 - **For C6b**: meetings come in through the `calendar` connection (CalDAV pull) in this module; their minutes go into
   C4b's `dayLoad`. The feed could later show them too, but they already are in Apple Calendar.
@@ -1760,8 +1776,9 @@ business names through `crm.getBusiness`, display names through `auth.accounts`)
   the Order Manager. The restore now migrates the copy before carrying kept tables.
 - **C6a (task calendar feed)**: done — see "Task calendar feed". A session-less GET with a per-person secret token
   (hash only, replaceable, throttled), not a CalDAV server or an iCloud write: read-only, no Apple password, works with
-  any calendar app on the tailnet. TZID + generated VTIMEZONE for timed tasks; overdue tasks on their due date; the
-  feed carries titles and business names only; the links survive restores (`keepOnRestore`); its own Connections row
+  any calendar app on the tailnet. TZID + generated VTIMEZONE for timed tasks; overdue tasks on their due date (dropping
+  out after 30 days); titles go as written (automated ones include account names and amounts), nothing else of the
+  task's; the https link only (no webcal); the token is never logged; the links survive restores (`keepOnRestore`); its own Connections row
   (pausable). Next: C6b (meetings over CalDAV into Today and the day load).
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
