@@ -10,7 +10,8 @@
 // again with new keys) — checking the suite's timeline records and spend against the Order Manager's own, and (D3)
 // the money owing (balance and over-30-days aging) against its Balances page, and (D5) its CRM notes and follow-up
 // dates once "Send CRM notes to the suite" is switched on there: notes on the timeline, follow-up tasks moved and
-// finished, deletes, notes waiting with an unlinked customer, and everything sent again with nothing doubled.
+// finished, deletes, notes waiting with an unlinked customer, and everything sent again with nothing doubled; and (D2)
+// a new Order Manager customer whose email is an existing client's contact's: linked automatically, then undone.
 // --capture writes every event the suite received, in order (test fixtures).
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -339,6 +340,45 @@ async function main() {
   ok(JSON.stringify(beforeNotes) === JSON.stringify(afterNotes), 'sent again: each note once, no second follow-up task', { beforeNotes, afterNotes });
   ok(followUps('Follow up with Northwind Corner Store').filter((x) => !x.done_at).length === 1, 'Northwind’s follow-up: still one open task');
   ok(outbox().refused === undefined, 'nothing refused');
+
+  console.log('\n8. Matching (D2): a new customer with an existing client’s contact email is linked automatically');
+  {
+    const { BUSINESS_IDS } = await import('@suite/shared/crm');
+    const harbourClient = local('client', { name: 'Harbour Smoke', status: 'active' });
+    const harbourAccount = local('account', { client_id: harbourClient, name: 'Harbour Smoke Shop', age_restricted: false });
+    local('relationship', { account_id: harbourAccount, business_id: BUSINESS_IDS.agency, kind: 'website', status: 'active' });
+    local('contact', { client_id: harbourClient, account_id: harbourAccount, name: 'Dana Reyes', email: 'dana@harbour.example' });
+    // Typed with capitals and spaces in the Order Manager: it stores (and sends) the clean form.
+    const harbour = (await wom('POST', '/api/customers', { business_name: 'Harbour Smoke & Vape', contact_name: 'Dana', email: ' Dana@Harbour.example ' })).data;
+    await placeOrder(harbour.id, [{ product_id: 1, quantity: 6, unit_price: 6.5 }]);
+    await settle();
+    const uid = uidOf('customers', harbour.id);
+    const [link] = ctx.services.crm.liveLinks('wom', uid);
+    ok(link?.matched_by === 'auto' && link.match_reason === 'same email' && link.account_id === harbourAccount, 'linked automatically to the client’s account (same email)', link);
+    ok(live('wholesale_orders', 'client_id = ?', harbourClient).length === 1, 'its order is on the client’s timeline');
+    ok(ctx.services.crm.liveAccount(harbourAccount).age_restricted === true, 'the account is age-restricted');
+    const alert = sdb.prepare("SELECT title FROM automations_alerts WHERE source = 'wholesale-auto-link' ORDER BY at DESC").get();
+    ok(alert?.title === 'Linked 1 Order Manager customer automatically', 'one in-app alert for the pass', alert);
+    const linkedRow = (await suite('GET', '/api/wholesale/linked')).data.customers.find((c) => c.uid === uid);
+    ok(linkedRow?.link?.matchedBy === 'auto' && linkedRow.link.reason === 'same email', 'the Linked tab says how');
+    // A similar name, no email in common: only suggested.
+    const lookalike = (await wom('POST', '/api/customers', { business_name: 'Harbour Smoke Shop Ltd', contact_name: 'Kai' })).data;
+    await settle();
+    const lookUid = uidOf('customers', lookalike.id);
+    ok(!ctx.services.crm.liveLinks('wom', lookUid).length, 'a similar name is not linked');
+    const sugg = (await suite('GET', '/api/wholesale/matches/suggestions')).data.suggestions.filter((x) => x.customer.uid === lookUid);
+    ok(sugg.length === 1 && sugg[0].client.id === harbourClient && sugg[0].reasons.some((r) => r.kind === 'name'), 'it is suggested for review', sugg);
+    // Undo: both sides as they were.
+    const undone = await suite('POST', `/api/wholesale/customers/${uid}/unlink`, {});
+    ok(undone.status === 200 && undone.data.undone.restore.length === 2, 'undone: the age mark and the wholesale relationship put back', undone.data);
+    ok(!ctx.services.crm.liveLinks('wom', uid).length && !live('wholesale_orders', 'client_id = ?', harbourClient).length, 'the link and the order left the client');
+    ok(ctx.services.crm.liveAccount(harbourAccount).age_restricted === false, 'the age mark as before');
+    ok(!ctx.services.crm.accountRelationships(harbourAccount).some((r) => r.kind === 'wholesale'), 'no wholesale relationship left');
+    // A change there (sent again) doesn't link it automatically again.
+    await wom('PUT', `/api/customers/${harbour.id}`, { business_name: 'Harbour Smoke & Vape', contact_name: 'Dana R.', email: 'dana@harbour.example' });
+    await settle();
+    ok(!ctx.services.crm.liveLinks('wom', uid).length, 'edited there: not linked again (the undo is remembered)');
+  }
 
   if (CAPTURE) {
     fs.writeFileSync(CAPTURE, `${JSON.stringify({ capturedAt: new Date().toISOString(), from: 'scripts/wom-e2e.mjs', events: captured }, null, 1)}\n`);

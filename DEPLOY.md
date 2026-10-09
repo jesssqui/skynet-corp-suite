@@ -289,6 +289,19 @@ path) and publishes port 3089 — so check before connecting:
    record, in order (a note's add, then its delete), and only the latest of a customer's refused follow-up dates (with
    the date as it is now). Then press **Send again**.
 
+5. **Matching (D2)** — **the first pass runs at the first start of this version and can't be switched off beforehand**
+   (the automation only exists once D2 is running). It links, on its own, every waiting Order Manager customer whose
+   clean email or phone is on exactly one active client's contact, where that client has a Wholesale, GWND or
+   consulting relationship and no other waiting customer matches it (clients with no business yet, and several customers
+   matching one client, are only suggested). One in-app alert lists them. **Review the result on Wholesale → Linked**
+   (each says "Linked automatically (same email)") and use **Undo link…** on any that are wrong. To have later ones
+   wait for review instead, switch **System → Automations → Link Order Manager customers automatically** off; strong
+   matches then appear under **Wholesale → Suggestions**. Newly linked customers with a follow-up date in the Order
+   Manager get their follow-up task at once (D5); check-ins and balance reminders come at most 10 new a day (D3). Every link can be undone (Wholesale → Linked → **Undo link…**, or the account card on the
+   client page): the link goes, the customer waits again, and the age-restricted mark / wholesale relationship / account
+   or client that linking made are put back when untouched. Links made **before** D2 can be undone too, but only the
+   link goes (the suite didn't record what they changed). No "Download everything again" is needed on devices.
+
 **Pausing**: the switch on the Connections card pauses the connection: the suite answers 503 and the Order Manager
 keeps its events queued (nothing is lost), then sends them in order — within its retry wait, at most 5 minutes —
 once it is switched on. **New secret…** (either of you) replaces the secret at once; paste it into the Order Manager,

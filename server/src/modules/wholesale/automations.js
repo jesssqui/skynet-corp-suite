@@ -525,6 +525,41 @@ export function registerWholesaleAutomations({ automations, planner, crm, reads 
     },
   });
 
+  /** D2: the open ship tasks this automation made for a customer's orders: [{ id, orderUid }]. */
+  function openShipTasksOf(customerUid) {
+    if (!customerUid) return [];
+    const out = [];
+    for (const o of reads.ordersOf(customerUid)) {
+      for (const m of automations.made(SHIP_ID, o.uid)) if (planner.taskState(m.id)?.open) out.push({ id: m.id, orderUid: o.uid });
+    }
+    return out;
+  }
+
+  /** D2: a customer linked elsewhere or unlinked: its open ship tasks follow the account, or are finished. */
+  function shipTasksFollowLink(io, customerUid, now) {
+    const open = openShipTasksOf(customerUid);
+    const customer = reads.customer(customerUid);
+    const account = customer?.account_id ? crm.liveAccount(customer.account_id) : null;
+    let n = 0;
+    for (const t of open) {
+      if (!account) {
+        if (finishTask(io, t.id, 'Its customer in the Order Manager isn’t linked here any more', now)) n += 1;
+        continue;
+      }
+      const base = taskBase(deps, account);
+      const st = planner.taskState(t.id);
+      const fields = {};
+      if (st.clientId !== base.client_id) fields.client_id = base.client_id;
+      if (st.accountId !== base.account_id) fields.account_id = base.account_id;
+      if (st.relationshipId !== base.relationship_id) fields.relationship_id = base.relationship_id;
+      if (!Object.keys(fields).length) continue;
+      io.update('task', t.id, fields);
+      n += 1;
+    }
+    if (!n) return { summary: 'Nothing to change' };
+    return { summary: account ? `Moved ${n} ship task${n === 1 ? '' : 's'} to ${account.name}` : `Finished ${n} ship task${n === 1 ? '' : 's'}: the customer was unlinked` };
+  }
+
   automations.register({
     id: SHIP_ID,
     name: 'Ready to ship',
@@ -535,12 +570,15 @@ export function registerWholesaleAutomations({ automations, planner, crm, reads 
       + '(linking one later replays nothing) or for the Order Manager’s “Send existing” catch-up.',
     trigger: {
       type: 'event',
-      events: ['order.packed', 'order.shipped', 'order.cancelled', 'order.deleted', 'order.restored', 'order.changed'],
+      // D2: and 'wholesale.attachment' (a customer linked, unlinked — an undo — or moved): its open ship
+      // tasks are finished (unlinked) or follow the new account at once, not at the order's next change.
+      events: ['order.packed', 'order.shipped', 'order.cancelled', 'order.deleted', 'order.restored', 'order.changed', 'wholesale.attachment'],
       label: 'When the Order Manager packs an order (finished when it ships, is cancelled, deleted or changed)',
       key: (data) => data.key, // each event once: a re-delivered one is a no-op
       // Runs only when there is something to do: an order of a linked customer that is ready to ship now,
       // or an order whose ship task the suite made (to finish or refresh it). Never for backfill events.
       accept: (data) => {
+        if (data.name === 'wholesale.attachment') return openShipTasksOf(data.customerUid).length > 0;
         if (data.backfill || !data.orderUid) return false;
         const cur = currentOrder(reads, data);
         if (cur.ready && reads.customer(cur.customerUid)?.account_id) return true;
@@ -552,6 +590,7 @@ export function registerWholesaleAutomations({ automations, planner, crm, reads 
     run(_ctx, { now, today, data, made, madeLike, remember, create, update }) {
       if (!data) return { summary: 'Runs when the Order Manager packs an order: nothing to do now' };
       const io = { planner, made, madeLike, remember, update };
+      if (data.name === 'wholesale.attachment') return shipTasksFollowLink(io, data.customerUid, now);
       const cur = currentOrder(reads, data);
       const label = `order #${cur.order?.number ?? data.data?.number ?? '?'}`;
       const open = made(data.orderUid).filter((m) => planner.taskState(m.id)?.open);

@@ -2,11 +2,14 @@
 //   Waiting for a client: customers with no link yet — everything they send is kept on the server
 //     and attached the moment they are linked. Link one to an existing client (one of its accounts,
 //     or a new account under it), or make a client from it.
-//   Linked: customers attached to an account, with Unlink (its records leave the timeline; the
-//     server keeps them, so linking again brings them all back).
+//   Linked: customers attached to an account — how (D2: "Linked automatically (same email)", or by
+//     whom) — with Undo link (its records leave the timeline; the server keeps them, so linking again
+//     brings them all back; what linking changed is put back).
+//   Suggestions (D2): customers that may be a client already, side by side, with Link… / Not the same,
+//     and possible duplicate clients (MatchesTab.jsx).
 // The lists come from the server (the holding area isn't synced), so this page needs a connection;
 // picking a client uses this device's own copy of the CRM.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { formatPhone } from '@suite/shared/normalize';
 import { PageHeader, Card, Button, Badge, Notice, EmptyState, Segmented, SelectField, Sheet, TextField, Icon } from '../../ui/index.js';
@@ -16,10 +19,14 @@ import { useServerData } from '../../api/useServerData.js';
 import { store } from '../../sync/index.js';
 import { useClientListData } from '../crm/data.js';
 import { buildClientIndex, filterClients, formatMoney } from '../crm/logic.js';
+import { useAuth } from '../../auth/session.jsx';
+import { linkHowText } from './logic.js';
+import MatchesTab from './MatchesTab.jsx';
+import UndoLinkSheet from './UndoLinkSheet.jsx';
 import '../crm/crm.css';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
-const TABS = [{ value: 'waiting', label: 'Waiting for a client' }, { value: 'linked', label: 'Linked' }];
+const TAB_VALUES = ['waiting', 'linked', 'suggestions'];
 const NEW_ACCOUNT = '__new__';
 
 const syncSoon = () => { try { store.syncNow(); } catch { /* signed out meanwhile */ } };
@@ -54,18 +61,25 @@ function Who({ c }) {
   );
 }
 
-/** Pick a client from this device's copy, then one of its accounts (or a new one). */
-function LinkSheet({ customer, onClose, onDone }) {
+/**
+ * Pick a client from this device's copy, then one of its accounts (or a new one). From a suggestion
+ * (D2) `initial` = { clientId, accountId, reason }: that client and account picked, the reason kept on the link.
+ */
+function LinkSheet({ customer, initial = null, onClose, onDone }) {
   const { data } = useClientListData();
   const [q, setQ] = useState(customer.businessName ?? '');
-  const [clientId, setClientId] = useState(null);
-  const [accountId, setAccountId] = useState(NEW_ACCOUNT);
+  const [clientId, setClientId] = useState(initial?.clientId ?? null);
+  const [accountId, setAccountId] = useState(initial?.accountId ?? NEW_ACCOUNT);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const index = useMemo(() => (data ? buildClientIndex(data) : []), [data]);
   const matches = useMemo(() => filterClients(index, { q, status: 'all' }).slice(0, 8), [index, q]);
   const accounts = useMemo(() => (data && clientId ? data.accounts.filter((a) => a.client_id === clientId) : []), [data, clientId]);
   const chosen = index.find((r) => r.client.id === clientId)?.client ?? null;
+  // A suggestion with no account of its own: pick one the usual way once this device's copy is read.
+  useEffect(() => {
+    if (data && initial?.clientId && !initial.accountId) pick(initial.clientId);
+  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function pick(id) {
     setClientId(id);
@@ -80,7 +94,9 @@ function LinkSheet({ customer, onClose, onDone }) {
     setBusy(true);
     setError(null);
     try {
-      await api.post(`/api/wholesale/customers/${customer.uid}/link`, { clientId, accountId: accountId === NEW_ACCOUNT ? null : accountId });
+      await api.post(`/api/wholesale/customers/${customer.uid}/link`, {
+        clientId, accountId: accountId === NEW_ACCOUNT ? null : accountId, reason: clientId === initial?.clientId ? initial.reason ?? null : null,
+      });
       syncSoon();
       onDone(chosen);
     } catch (err) {
@@ -106,7 +122,7 @@ function LinkSheet({ customer, onClose, onDone }) {
       <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
         <p style={{ ...muted, margin: 0 }}>
           Its orders, payments, returns, refunds and notes go on the client’s timeline (a follow-up date becomes a task),
-          and the account is marked age-restricted with a wholesale relationship if it has none.
+          and the account is marked age-restricted with a wholesale relationship if it has none. Undo link puts it all back.
         </p>
         <TextField label="Find the client" value={q} onChange={(e) => { setQ(e.target.value); setClientId(null); }} autoComplete="off" />
         {!clientId ? (
@@ -167,10 +183,21 @@ function ConfirmSheet({ title, children, action, onClose, onConfirm, busy, error
 
 export default function WholesalePage() {
   const [params, setParams] = useSearchParams();
-  const tab = params.get('tab') === 'linked' ? 'linked' : 'waiting';
+  const tab = TAB_VALUES.includes(params.get('tab')) ? params.get('tab') : 'waiting';
   const [q, setQ] = useState('');
-  const url = `/api/wholesale/${tab}?limit=200${q.trim() ? `&q=${encodeURIComponent(q.trim())}` : ''}`;
+  const { session } = useAuth();
+  const me = session?.user?.actor ?? null;
+  const listTab = tab === 'suggestions' ? 'waiting' : tab;
+  const url = `/api/wholesale/${listTab}?limit=200${q.trim() && tab !== 'suggestions' ? `&q=${encodeURIComponent(q.trim())}` : ''}`;
   const { data, error, loading, offline, reload } = useServerData(url);
+  const matchCounts = useServerData('/api/wholesale/matches/counts');
+  const suggestionCount = matchCounts.data ? matchCounts.data.pairs + matchCounts.data.duplicates : null;
+  const tabs = [
+    { value: 'waiting', label: 'Waiting for a client' },
+    { value: 'linked', label: 'Linked' },
+    { value: 'suggestions', label: suggestionCount ? `Suggestions (${suggestionCount})` : 'Suggestions' },
+  ];
+  const [matchesKey, setMatchesKey] = useState(0);
   const [sheet, setSheet] = useState(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState(null);
@@ -184,7 +211,7 @@ export default function WholesalePage() {
       syncSoon();
       setSheet(null);
       setDone(message);
-      await reload();
+      await Promise.all([reload(), matchCounts.reload()]);
     } catch (err) {
       setProblem(err.status === 0 ? 'Can’t reach the suite server: nothing changed.' : err.message);
     } finally {
@@ -199,19 +226,27 @@ export default function WholesalePage() {
       <PageHeader
         title="Wholesale"
         subtitle="Order Manager customers: link each to a client, and its orders show on their timeline"
-        actions={<Button onClick={reload} disabled={loading}>Check again</Button>}
+        actions={<Button onClick={() => { reload(); matchCounts.reload(); setMatchesKey((k) => k + 1); }} disabled={loading}>Check again</Button>}
       />
       <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
         <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <Segmented label="Which customers" value={tab} onChange={(v) => { setDone(null); setParams(v === 'waiting' ? {} : { tab: v }, { replace: true }); }} options={TABS} />
-          <TextField label="Search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, email or phone" style={{ flex: '1 1 220px' }} />
+          <Segmented label="Which customers" value={tab} onChange={(v) => { setDone(null); setParams(v === 'waiting' ? {} : { tab: v }, { replace: true }); }} options={tabs} />
+          {tab !== 'suggestions' ? <TextField label="Search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, email or phone" style={{ flex: '1 1 220px' }} /> : null}
         </div>
         {offline ? (
           <Notice tone="warn">Can’t reach the suite server. These lists live on the server{data ? '; what you see is from the last check' : ''}, and linking waits until it’s back.</Notice>
         ) : null}
         {error && !offline ? <Notice tone="danger">{error.message}</Notice> : null}
         {problem ? <Notice tone="danger">{problem}</Notice> : null}
-        {done ? <Notice tone="ok">{done}</Notice> : null}
+        {done ? <Notice tone="ok"><span style={{ whiteSpace: 'pre-line' }} data-testid="wholesale-done">{done}</span></Notice> : null}
+        {tab === 'suggestions' ? (
+          <MatchesTab
+            key={matchesKey}
+            offline={offline}
+            onLink={(s) => setSheet({ kind: 'link', customer: s.customer, initial: { clientId: s.clientId, accountId: s.accountId, reason: s.reason } })}
+            onChanged={() => matchCounts.reload()}
+          />
+        ) : null}
         {tab === 'waiting' && counts ? (
           <p style={{ ...muted, margin: 0 }} data-testid="waiting-counts">
             {counts.customers
@@ -220,6 +255,7 @@ export default function WholesalePage() {
             {' '}· {counts.linked} linked
           </p>
         ) : null}
+        {tab !== 'suggestions' ? (<>
         <Card padded={false}>
           {!data && loading ? <EmptyState title="Loading…" /> : null}
           {data && !list.length ? (
@@ -237,6 +273,7 @@ export default function WholesalePage() {
                       <span style={{ fontSize: 'var(--text-sm)' }}>
                         <Icon name="link" size={14} /> <Link to={`/crm/clients/${c.clientId}`}>{c.clientName}</Link>
                         {c.accountName && c.accountName !== c.clientName ? <span style={muted}> · {c.accountName}</span> : null}
+                        {c.link ? <span style={muted} data-testid="link-how"> · {linkHowText(c.link, me)}</span> : null}
                       </span>
                     ) : null}
                   </div>
@@ -246,7 +283,7 @@ export default function WholesalePage() {
                       <Button onClick={() => setSheet({ kind: 'create', customer: c })} disabled={offline}>Create a client</Button>
                     </div>
                   ) : (
-                    <Button variant="ghost" onClick={() => setSheet({ kind: 'unlink', customer: c })} disabled={offline}>Unlink</Button>
+                    <Button variant="ghost" onClick={() => setSheet({ kind: 'unlink', customer: c })} disabled={offline}>Undo link…</Button>
                   )}
                 </li>
               ))}
@@ -254,16 +291,25 @@ export default function WholesalePage() {
           ) : null}
         </Card>
         {data && data.total > list.length ? <p style={{ ...muted, margin: 0 }}>Showing {list.length} of {data.total}: search to find the others.</p> : null}
+        </>) : null}
         <p style={{ ...muted, margin: 0 }}>
           The connection itself (its address, the shared secret, the off switch): <Link to="/system/connections">System → Connections</Link>.
+          {' '}Linking automatically: <Link to="/system/automations">System → Automations</Link>.
         </p>
       </div>
 
       {sheet?.kind === 'link' ? (
         <LinkSheet
           customer={sheet.customer}
+          initial={sheet.initial ?? null}
           onClose={() => setSheet(null)}
-          onDone={(client) => { setSheet(null); setDone(`Linked to ${client?.name ?? 'the client'}: its orders are on their timeline.`); reload(); }}
+          onDone={(client) => {
+            setSheet(null);
+            setDone(`Linked to ${client?.name ?? 'the client'}: its orders are on their timeline.`);
+            reload();
+            matchCounts.reload();
+            setMatchesKey((k) => k + 1);
+          }}
         />
       ) : null}
       {sheet?.kind === 'create' ? (
@@ -284,19 +330,19 @@ export default function WholesalePage() {
         </ConfirmSheet>
       ) : null}
       {sheet?.kind === 'unlink' ? (
-        <ConfirmSheet
-          title={`Unlink ${sheet.customer.businessName ?? 'this customer'}`}
-          action="Unlink"
-          busy={busy}
-          error={problem}
+        <UndoLinkSheet
+          uid={sheet.customer.uid}
+          customerName={sheet.customer.businessName}
+          clientName={sheet.customer.clientName}
+          how={linkHowText(sheet.customer.link, me)}
           onClose={() => setSheet(null)}
-          onConfirm={() => act(`/api/wholesale/customers/${sheet.customer.uid}/unlink`, `${sheet.customer.businessName ?? 'The customer'} is waiting for a client again.`)}
-        >
-          <p style={{ margin: 0 }}>
-            Its orders, payments, returns and refunds leave {sheet.customer.clientName ?? 'the client'}’s timeline. The suite keeps them:
-            linking again brings them all back. The account keeps its age-restricted mark and wholesale relationship.
-          </p>
-        </ConfirmSheet>
+          onDone={(undone) => {
+            setSheet(null);
+            setDone([`${sheet.customer.businessName ?? 'The customer'} is waiting for a client again.`, ...undone.restore, ...undone.keep].join('\n'));
+            reload();
+            matchCounts.reload();
+          }}
+        />
       ) : null}
     </>
   );

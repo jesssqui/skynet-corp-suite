@@ -273,7 +273,7 @@ export function createCrmService({ db, services, log }) {
 
   // ---- reads for the wholesale connection (D1) -------------------------------------------
   const forLinks = {
-    accountLinks: db.prepare(`SELECT l.id, l.external_id, l.account_id, a.client_id, l.matched_by, l.created_at, l.created_by
+    accountLinks: db.prepare(`SELECT l.id, l.external_id, l.account_id, a.client_id, l.matched_by, l.match_reason, l.created_at, l.created_by
       FROM crm_links l
       JOIN crm_accounts a ON a.id = l.account_id AND a.deleted_at IS NULL
       JOIN crm_clients c ON c.id = a.client_id AND c.deleted_at IS NULL
@@ -295,9 +295,93 @@ export function createCrmService({ db, services, log }) {
       ORDER BY p.account_id IS NULL, p.created_at, p.id`),
   };
 
+  // ---- reads for matching and undoing links (D2) -----------------------------------------
+  const forMatching = {
+    clients: db.prepare('SELECT id, name, status FROM crm_clients WHERE deleted_at IS NULL'),
+    accounts: db.prepare(`SELECT a.id, a.client_id, a.name, a.street, a.city, a.region, a.postal_code, a.country
+      FROM crm_accounts a JOIN crm_clients c ON c.id = a.client_id AND c.deleted_at IS NULL WHERE a.deleted_at IS NULL`),
+    contacts: db.prepare(`SELECT p.id, p.client_id, p.account_id, p.name, p.role, p.email, p.phone
+      FROM crm_contacts p JOIN crm_clients c ON c.id = p.client_id AND c.deleted_at IS NULL WHERE p.deleted_at IS NULL`),
+    relationships: db.prepare(`SELECT r.id, r.account_id, a.client_id, r.business_id, r.kind, r.status
+      FROM crm_relationships r ${REL_PARENTS}
+      JOIN crm_clients c ON c.id = a.client_id AND c.deleted_at IS NULL WHERE r.deleted_at IS NULL`),
+  };
+  const RECORD_TABLE = Object.fromEntries(CRM_ENTITIES.map((d) => [d.entity, d.table]));
+  const liveRow = Object.fromEntries(Object.entries(RECORD_TABLE).map(([entity, table]) => [entity,
+    db.prepare(`SELECT * FROM ${table} WHERE id = ? AND deleted_at IS NULL`)]));
+  const usage = {
+    client: {
+      accounts: db.prepare('SELECT id FROM crm_accounts WHERE client_id = ? AND deleted_at IS NULL'),
+      contacts: db.prepare('SELECT id FROM crm_contacts WHERE client_id = ? AND deleted_at IS NULL'),
+      activities: db.prepare('SELECT id FROM crm_activities WHERE client_id = ? AND deleted_at IS NULL'),
+      relationships: db.prepare(`SELECT r.id FROM crm_relationships r JOIN crm_accounts a ON a.id = r.account_id AND a.deleted_at IS NULL
+        WHERE a.client_id = ? AND r.deleted_at IS NULL`),
+      services: db.prepare(`SELECT s.id FROM crm_services s JOIN crm_relationships r ON r.id = s.relationship_id AND r.deleted_at IS NULL
+        JOIN crm_accounts a ON a.id = r.account_id AND a.deleted_at IS NULL WHERE a.client_id = ? AND s.deleted_at IS NULL`),
+      consents: db.prepare(`SELECT k.id FROM crm_consents k JOIN crm_contacts p ON p.id = k.contact_id AND p.deleted_at IS NULL
+        WHERE p.client_id = ? AND k.deleted_at IS NULL`),
+      links: db.prepare(`SELECT l.id FROM crm_links l JOIN crm_accounts a ON a.id = l.account_id AND a.deleted_at IS NULL
+          WHERE a.client_id = @id AND l.deleted_at IS NULL
+        UNION ALL SELECT l.id FROM crm_links l JOIN crm_contacts p ON p.id = l.contact_id AND p.deleted_at IS NULL
+          WHERE p.client_id = @id AND l.deleted_at IS NULL`),
+    },
+    account: {
+      contacts: db.prepare('SELECT id FROM crm_contacts WHERE account_id = ? AND deleted_at IS NULL'),
+      activities: db.prepare('SELECT id FROM crm_activities WHERE account_id = ? AND deleted_at IS NULL'),
+      relationships: db.prepare('SELECT id FROM crm_relationships WHERE account_id = ? AND deleted_at IS NULL'),
+      services: db.prepare(`SELECT s.id FROM crm_services s JOIN crm_relationships r ON r.id = s.relationship_id AND r.deleted_at IS NULL
+        WHERE r.account_id = ? AND s.deleted_at IS NULL`),
+      links: db.prepare('SELECT id FROM crm_links WHERE account_id = ? AND deleted_at IS NULL'),
+    },
+    relationship: {
+      services: db.prepare('SELECT id FROM crm_services WHERE relationship_id = ? AND deleted_at IS NULL'),
+    },
+    contact: {
+      consents: db.prepare('SELECT id FROM crm_consents WHERE contact_id = ? AND deleted_at IS NULL'),
+      links: db.prepare('SELECT id FROM crm_links WHERE contact_id = ? AND deleted_at IS NULL'),
+    },
+  };
+
+  /**
+   * Everything matching compares (D2), in four plain queries (no per-client subqueries): live
+   * clients, their live accounts and contacts, and the live relationships (account, client and one
+   * of our live businesses) — rows as stored.
+   */
+  function matchingRecords() {
+    return {
+      clients: forMatching.clients.all(),
+      accounts: forMatching.accounts.all(),
+      contacts: forMatching.contacts.all(),
+      relationships: forMatching.relationships.all(),
+    };
+  }
+
+  /**
+   * What hangs off one record (D2's undo: "remove it only if nothing else was added"): for each kind
+   * of record that can point at it, the ids of the live ones. client: accounts, contacts, activities,
+   * relationships (of its accounts), services, consents, links; account: contacts (naming it),
+   * activities (naming it), relationships, services, links; relationship: services; contact:
+   * consents, links. → null for another entity or a bad id.
+   */
+  function usageOf(entity, id) {
+    const qs = usage[entity];
+    if (!qs || !isId(id)) return null;
+    const out = {};
+    for (const [kind, stmt] of Object.entries(qs)) {
+      out[kind] = (entity === 'client' && kind === 'links' ? stmt.all({ id }) : stmt.all(id)).map((r) => r.id);
+    }
+    return out;
+  }
+
+  /** One live record's synced fields (booleans as true/false) with who/when, or null (D2: "still as it was made?"). */
+  function liveRecord(entity, id) {
+    if (!liveRow[entity] || !isId(id)) return null;
+    return view(entity, liveRow[entity].get(id), { withSync: false });
+  }
+
   /**
    * Every live account link of one app (its account and that account's client live), with the
-   * account's client: [{ id, external_id, account_id, client_id, matched_by, created_at, created_by }].
+   * account's client: [{ id, external_id, account_id, client_id, matched_by, match_reason, created_at, created_by }].
    * Contact links aren't listed: D1 attaches an outside customer's records to an account.
    */
   const liveAccountLinks = (app) => forLinks.accountLinks.all(app);
@@ -314,6 +398,10 @@ export function createCrmService({ db, services, log }) {
     // C7: the accounting CSV import (preview, commit in chunks, batches). See import.js.
     imports: createImportService({ db, sync, log }),
     liveLinks,
+    // D2 (matching, undoing links): everything matching compares, what hangs off a record, one live record.
+    matchingRecords,
+    usageOf,
+    liveRecord,
     // D1 (the wholesale connection): live account links of an app, one live account, its relationships.
     liveAccountLinks,
     liveAccount,

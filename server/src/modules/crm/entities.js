@@ -147,6 +147,8 @@ export const CRM_ENTITIES = [
       app: { type: 'enum', values: LINK_APPS, required: true },
       external_id: { type: 'text', max: 200, required: true },
       matched_by: { type: 'enum', values: LINK_MATCHED_BY, required: true },
+      // D2: why it was made, in a few words ("same email", "same phone", "similar name") — shown beside it.
+      match_reason: { type: 'text', max: 200 },
     },
   },
 ];

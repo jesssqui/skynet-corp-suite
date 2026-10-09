@@ -29,6 +29,7 @@ export default {
     }
     service.reconcileAll()
       .then(() => service.checkFollowUps()) // D5: follow-up tasks as the holding area says (a restore, a failed run)
+      .then(() => service.matching.pass()) // D2: link what matches now (customers or clients that came while it was down)
       .catch((err) => ctx.log.error('reconcile at start failed (tried again within a minute):', err));
   },
   // Kept across a restore — the one exception to "keepOnRestore is for switches, never data":
@@ -43,5 +44,9 @@ export default {
     'wholesale_held_customers', 'wholesale_held_orders', 'wholesale_held_money', 'wholesale_events', 'wholesale_status',
     // D5: the Order Manager's notes (and, on wholesale_held_customers, its follow-up dates) — same reasoning.
     'wholesale_held_notes',
+    // D2: people's "Not the same" (and undone links) about Order Manager customers: a decision about the
+    // mirrored records, not a switch — but rolled back, the pairs would be suggested (or linked) again.
+    // wholesale_link_changes is NOT kept: it describes synced records (links, accounts), which roll back with it.
+    'wholesale_match_decisions',
   ],
 };

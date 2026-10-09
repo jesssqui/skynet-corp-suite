@@ -198,7 +198,9 @@ async function fridayReview(page, server, { ids }, goalId, label) {
   await review.getByTestId('review-renewals').getByRole('link', { name: /Maple Row Holdings/ }).waitFor(WAIT);
   await review.getByTestId('review-quiet').getByRole('link', { name: 'Quiet Pines Co' }).waitFor(WAIT);
   assert.equal(await review.getByTestId('review-quiet').getByText('Maple Row Holdings').count(), 0, 'in touch 3 days ago');
-  assert.equal(await review.getByTestId('review-not-connected').count(), 2, 'duplicate matches and order entry: not connected yet');
+  assert.equal(await review.getByTestId('review-not-connected').count(), 1, 'order entry: not connected yet');
+  // D2: duplicate matches come from the suite server (nothing to review in this data).
+  await review.getByTestId('review-matches').filter({ hasText: 'Nothing to review: no possible matches.' }).waitFor(WAIT);
 
   const goals = review.getByTestId('review-goals');
   const g = goals.locator(`[data-goal-id="${goalId}"]`);

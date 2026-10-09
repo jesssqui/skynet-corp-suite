@@ -22,7 +22,9 @@ holding area for everything it sends, linking its customers to accounts, and the
 refunds on the client timeline with spend and last order), and from **D3** the wholesale automations (same module:
 check-ins for quiet regulars, balance reminders over 30 days with a drafted email, ready-to-ship tasks on packed
 orders, and the "Quiet regular" flag on the client list and page), and from **D5** notes from the Order Manager (same
-module: its CRM notes on the linked client's timeline, and its follow-up dates as tasks).
+module: its CRM notes on the linked client's timeline, and its follow-up dates as tasks), and from **D2** matching
+(same module: Order Manager customers linked automatically on a clean email or phone, suggestions for review with
+"Not the same", possible duplicate clients, and an undo that puts back what linking changed).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -95,7 +97,10 @@ server/src/
                            D3: automations.js (wholesale-check-in, wholesale-balances, wholesale-ready-to-ship), figures.js
                            also holds orderRhythm / owingByOrder / overdueOrders (pure). D5: followUps.js
                            (wholesale-follow-ups: followUpPlan, followUpKey), migrations/004_notes.sql (held notes,
-                           follow-up columns, the synced wholesale_notes)
+                           follow-up columns, the synced wholesale_notes). D2: matching.js (the rules, pure:
+                           buildCrmIndex, matchCustomer, duplicateClients, inScope, customerContact), matchService.js
+                           (passes, the wholesale-auto-link automation, review lists, decisions), linkChanges.js (what
+                           each link changed; undo plan + steps), migrations/005_matching.sql
   backup/                  backup.js, restore.js (D5: runs this version's migrations on the restored copy, then
                            carryKeptTables: modules' keepOnRestore), schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file)
@@ -135,7 +140,10 @@ client/src/
                            wom card's address + secret, via connections/panels.js; lazy), parts.jsx (timeline rows,
                            account and client figures on the client page; D3: QuietRegularBadge; D5: note rows, the
                            next follow-up), logic.js (no React; D3: isQuietRegular, quietRegularText, quietFromByClient;
-                           D5: noteItem, NOTE_LABELS, NOTE_FILTER_TYPES, nextFollowUp; client/test/wholesale.test.js)
+                           D5: noteItem, NOTE_LABELS, NOTE_FILTER_TYPES, nextFollowUp; client/test/wholesale.test.js;
+                           D2: linkHowText, suggestionReason, customerAddressText, matchesSummary — client/test/
+                           matching.test.js), MatchesTab.jsx (D2: the Suggestions tab), UndoLinkSheet.jsx (D2: undo
+                           a link, from the Linked tab and the client page's account card)
   modules/crm/             C3b screens: ClientListPage (/crm), ClientPage (/crm/clients/:id), BusinessesPage
                            (/crm/businesses), forms.jsx (add/edit sheets), parts.jsx (chips, RecordSync, FormSheet),
                            data.js (cached offline reads), formFields.js (form values -> changed fields), logic.js (search, timeline filters, money, consent, errors — no
@@ -172,7 +180,7 @@ One folder per module on each side, same name on both (`server/src/modules/healt
   current rows across a restore (`restore.js` copies them into the restored copy) — for switches, never for data. **One
   exception (D1)**: the wholesale module's holding area, event keys and receiver status are kept too — they mirror
   another app (the Order Manager), which never re-sends what it already delivered, so rolling them back would lose its
-  changes (deletes above all) for good; the synced records are rebuilt from them at start (D5: its held notes and
+  changes (deletes above all) for good (D2 adds its "Not the same" decisions, for the same reason); the synced records are rebuilt from them at start (D5: its held notes and
   follow-up dates too). `bodyLimits: { '/import': '8mb' }` lets a path take JSON bodies bigger
   than the app's 1 MB (signed in only; crm's CSV import). `start(ctx, service)` runs once every service exists (auth uses it to notice a
   restore). Routes mount at `/api/<name>`. **Every `createRouter` route requires a signed-in session**
@@ -663,7 +671,8 @@ client `client/src/modules/crm/`; tests `server/test/crm.test.js`, `client/test/
 - `activity` (append-only): client_id*⇧, account_id→, business_id→ (ours), type* (`note|call|email|meeting|order|milestone`),
   body*, at* (datetime it happened; `created_by` = who logged it). A correction is a new activity.
 - `link` (create/delete only; undo = delete): account_id⇧ **or** contact_id⇧ (exactly one: SQL CHECK → `constraint`),
-  app* (`wom`; add values as apps join), external_id*, matched_by* (`auto|approved`). **One live link per (app,
+  app* (`wom`; add values as apps join), external_id*, matched_by* (`auto|approved`), match_reason (D2, text ≤ 200:
+  "same email", "same phone", "similar name", "same address" — why it was made; migration 004). **One live link per (app,
   external_id) and kind of target**, checked in code (the `check` hook; refused `already_linked`), counting only links
   whose account/contact **and its client** are live — not a UNIQUE index: deletes don't cascade, so a link under a
   deleted account stays in the table (an orphan), and an index would refuse re-linking that Order Manager customer
@@ -1065,8 +1074,9 @@ Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (
   (`quietClients`: last activity — C3b's `lastActivityByClient`, shared via `lastActivityOf`, **and (D1) the client's
   latest Order Manager order, whichever is later** (`reviewLastActivity`; the server's review numbers read the same
   through `wholesale.lastOrderAtByClient()`) — or, with none, when the client was made, ≥ 60 days ago), hand work over (Yours / Partner's: open tasks due by the end of next week or
-  undated; one tap gives/takes, Undo), relationships with no next step (C4a's rule), and two "Not connected yet"
-  lines (duplicate matches → D2; this week's order entry → the Order Manager connection). Each step has a "reviewed"
+  undated; one tap gives/takes, Undo), relationships with no next step (C4a's rule), one "Not connected yet"
+  line (this week's order entry → the Order Manager connection) and, since D2, **Duplicate matches**: the review
+  list's count from the server (`GET /api/wholesale/matches/counts`; offline it says it can't check) with a link to it. Each step has a "reviewed"
   tick kept per week on this device (`prefs.js`, localStorage, last 8 weeks) — a convenience, not data.
 - **Focus** `/focus?task=` (Today's Focus button; "Focus on this task" in the sheet): the queue is Today's order
   (`focusQueue` = buildToday's overdue + due today + picks; a task opened from elsewhere goes first), taken once.
@@ -1334,7 +1344,7 @@ and refunds show "Removed …" / "Kept as store credit when its order was delete
 counts), `POST /customers/:uid/link { clientId, accountId? }` (no account = a new account under that client named
 after the customer, with its address), `/create-client` (client + account + contact when there is a name/clean email
 or phone + the link; values the Order Manager couldn't clean go in the account's notes, never matched on),
-`/unlink` (deletes its account links; the account keeps its age mark and relationship). Each is one transaction;
+`/unlink` (deletes its account links; since D2 a full undo — see "Matching (D2)"; `GET /customers/:uid/undo` previews it). Each is one transaction;
 links are `matched_by: 'approved'`, `created_by` the person. The CRM's `check` already refuses a second live link.
 
 **Screens**: the client page's timeline merges activities and the Order Manager's records (type filter "Orders",
@@ -1351,14 +1361,10 @@ a client"); detail = linked
 count, refused events, several-links problems. pause()/resume() only log (the receiver reads the
 switch on every request).
 
-**For D2**: links are CRM `link` records (app `wom`, external_id = customer_uid). Create/delete them with `applyLocal`,
-then `wholesale.reconcile({ only: [uid], actor })`; undo = delete the link (records detach; the holding area keeps
-everything). `wholesale.list('waiting')` / `GET /api/wholesale/waiting` give the unlinked customers with clean
-email/phone for matching (`=` on the stored forms; `contactProblems` are never matched). Contact links (an Order Manager
-customer as a contact) aren't used by D1. Not built: a review list, "not the same", restoring the age flag /
-relationship on undo, pruning `wholesale_events` (see the rule above). D2's auto-links in bulk: call
-`reconcileAll()` (chunked) rather than `reconcile()`. Other modules read "last order per client" with
-`wholesale.lastOrderAtByClient()`.
+**D2 (done)**: matching, the review list, "Not the same" and a full undo — see "Matching (D2)". `unlink` is now that
+undo (the age flag and relationship a link set are put back when untouched). Contact links (an Order Manager customer
+as a contact) are still unused. Not built: pruning `wholesale_events` (see the rule above). Other modules read "last
+order per client" with `wholesale.lastOrderAtByClient()`.
 
 ## Wholesale automations (wholesale module, D3)
 Code `server/src/modules/wholesale/automations.js` (registered from the wholesale service when automations and planner
@@ -1537,6 +1543,94 @@ add, then deletes it), and of a customer's refused follow-up dates only the late
   kept tables, so a backup from before D5 keeps them too.
 - Not built: pruning held notes; notes typed in the suite going back (A11 is one way by design); a review list.
 
+## Matching (wholesale module, D2)
+Code: the rules `server/src/modules/wholesale/matching.js` (pure), the passes, lists and decisions `matchService.js`, the
+record of what links changed and the undo `linkChanges.js`, migration `005_matching.sql`; shared `addressKey` /
+`streetKey` / `similarEntries` in `shared/intake.js`; CRM reads `crm.matchingRecords()`, `crm.usageOf(entity, id)`,
+`crm.liveRecord(entity, id)`, planner `planner.tasksNaming({ clientId, accountId, relationshipId })`; client
+`MatchesTab.jsx`, `UndoLinkSheet.jsx`, `logic.js` (wholesale), the account card's link line (crm `ClientPage.jsx`), the
+Friday review's line. Tests: `server/test/matching.test.js`, `shared/test/intake.test.js` (addresses, similar names at
+scale), `client/test/matching.test.js`, `test/e2e/matching.e2e.test.js`, step 8 of `scripts/wom-e2e.mjs`.
+- **The plan's table**: same clean email (`=` on the stored form) or same clean phone → **linked automatically**;
+  similar business name or same address → **suggested**; name only (two "Mike"s) → nothing. **People's names are never
+  compared** (contact names, the customer's contact_name): only the customer's business name against clients' and
+  accounts' names (C7's `similarNames`, through `similarEntries`, which reads only two lists per name so a common word
+  like "Store" never scans every name — 3,000 clients ≈ 80 ms a pass).
+- **Scope**: live clients with a live relationship (any status) with **Wholesale, Great White North Design or Business
+  consulting** — linked automatically or suggested (`canAutoLink`) — and clients with **no relationship at all** (made
+  by hand): **suggested only, never linked automatically** (review decision). A client whose only relationships are Save
+  Point Shop, retail or Personal is never matched (nor suggested, nor in the duplicates).
+- **Customer side**: waiting customers (not attached, not deleted there, no several-links problem); only an email/phone
+  that is exactly the suite's clean form and not in `contact_problems` (`customerContact`). A value on more than 10
+  clients (`SHARED_VALUE_LIMIT`) is a shared placeholder (info@…): not matched.
+- **Automatic only when unambiguous** (`matchCustomer`): exactly one client in scope has the email/phone (email → A and
+  phone → B = two clients), it is **active** and has a Wholesale/GWND/consulting relationship, the account is clear — the account the matching contact(s) name, else the
+  client's **only** account (several and none named, or contacts naming different accounts → suggestion; no account →
+  suggestion) — that account has no other live Order Manager link, and no one said "Not the same" or **undid a link**
+  between them — and **no other waiting customer matches that client automatically in the same pass**
+  (`demoteShared`: all of them become strong suggestions, "Several Order Manager customers match this client: pick the
+  right one", so the result never depends on whether they arrived together or one by one; the run also never links
+  two customers to one account or client). Otherwise it's a strong suggestion with `why` ("The same email is on 2 clients: pick the right one", "The
+  client is closed", "The client has several accounts: pick one", "That account is already linked to another Order
+  Manager customer", "A link between them was undone before", "The client has no Wholesale, GWND or consulting
+  relationship yet: link it by hand"). Never for a customer deleted in the Order Manager.
+- **Address**: `addressKey(street, postal)` = the stored postal code (spaces dropped) + `streetKey`: the first
+  comma-separated part with a civic number, lowercase, accents/punctuation dropped, units/suites/apartments/"#4" left
+  out ("4-12 Main St" = unit 4 at 12), Street→st, Avenue→ave, North→n… (`STREET_WORDS`). No civic number or no valid
+  postal code → never an address match. The customer's address = its snapshot's line1 + line2 + postal code.
+- **The automatic links** (`pass`): automation **`wholesale-auto-link`** (event `wholesale.auto_link`, **on**, **alert**):
+  its switch turns automatic linking off (strong matches then wait as suggestions, "Linking automatically is switched
+  off"), its run log says what it linked, and **one in-app alert per pass** ("Linked 3 Order Manager customers
+  automatically", 5 lines + "and N more", link `/wholesale?tab=linked`). Links: `matched_by: 'auto'`, `match_reason`,
+  actor `system`, remembered under the customer uid (`automations_made`). Each run re-checks as things are now (still
+  waiting, no link meanwhile, the account still the client's). Then the customers are attached (`reconcile({ only })`,
+  or the chunked `reconcileAll` beyond 50) — before the request's events are emitted, so D3/D5 see them linked.
+  **When**: after each request from the Order Manager (only if a touched waiting customer has a usable email/phone),
+  every minute after the reconciler (picks up clients/contacts changed on devices — no sync hook exists, so up to a
+  minute), at start, and **Run now** (a full pass). The matching state is kept until something changes
+  (fingerprint: the sync seq, the held customers, the decisions): an idle pass costs < 1 ms. Linking customers in bulk
+  makes them eligible for D3's check-ins and balance reminders — capped there at 10 new a day each — and for D5's
+  follow-up tasks, which are **not** capped: every newly linked customer with a follow-up date gets its task at once
+  (fine: they are dates a person set in the Order Manager).
+- **The review list** (`/wholesale?tab=suggestions`, server data → needs a connection): each pair side by side —
+  the Order Manager customer (name, number, contact, email, phone, address, contact problems, orders, spend, last
+  order) and the suite client (status, businesses, accounts with the suggested one marked, contacts) — with reasons
+  ("Same email as Pat at Lefty’s Vape Shop", "Similar name: “Lefty’s”", "Same address: …"), `why`, **Link…** (the link
+  sheet with that client and account picked; the link keeps the suggestion's strongest reason as `match_reason`) and
+  **Not the same**. At most 5 suggestions per customer, strongest first. Then **possible duplicate clients** (both in
+  scope): a clean email or phone on contacts of both, or similar names (client or account) with accounts at the same
+  address — **nothing is merged** (open both pages; Not the same). **Show dismissed** lists "Not the same" decisions with
+  **Suggest again**. API: `GET /api/wholesale/matches/suggestions|duplicates|counts|dismissed`, `POST /matches/not-same`
+  and `/matches/suggest-again` `{ kind: 'customer' (a = customer uid, b = client id) | 'clients' (two client ids), a, b }`.
+- **Decisions** (`wholesale_match_decisions`, not synced, **keepOnRestore** — a person's decision about mirrored
+  Order Manager customers, like the holding area; rolled back, pairs would be suggested or linked again): per pair,
+  `not_same_*` (out of suggestions and automatic links until cleared) and `undone_*` (a link between them was undone:
+  never linked automatically again, still suggested). Pairs of clients are stored a < b.
+- **What a link changed** (`wholesale_link_changes`, not synced, **not** kept across restores — it describes synced
+  records that a restore rolls back with it): recorded in the same transaction as each change — `attached` (every
+  attachment, by any link: a person's, automatic, or a device's picked up by the reconciler), `age_restricted` (before =
+  the old value), `relationship_created`, and for "Link to a new account" / "Create a client" `account_created`,
+  `client_created`, `contact_created` (`after` = the record as stored).
+- **Undo** (`unlink`, from the Linked tab and the account card; `GET /customers/:uid/undo` previews it, changing
+  nothing): one transaction — the link(s) deleted, the customer detached (its records leave the timeline and devices;
+  the holding area keeps them: back in Waiting), then each recorded change put back **only if still as the link left
+  it and nothing else uses it**: a client the link made is deleted (its account, contact and relationship go with it —
+  deletes never cascade, they're hidden) unless changed or given anything else (accounts, contacts, notes, services,
+  consent, links, a person's task); otherwise an account it made, likewise (no other contacts naming it, notes, services,
+  links, other Order Manager customer, person's task); the wholesale relationship it made unless changed, it has a
+  service, a person's task names it, or another Order Manager customer is still on the account; the age mark goes back to
+  its old value unless no longer true or another customer is still on the account. "A person's task" = `created_by`
+  owner/partner — the suite's own D3/D5 tasks don't count (they're finished: follow-ups and, since D2, ship tasks at
+  once on `wholesale.attachment`; check-ins and balance reminders at their next daily run). Whatever stays is listed
+  with why ("Left as it is"). **Links made before D2** have no `attached` row: only the link is undone, and the sheet
+  says the account keeps its age mark and relationship. Every change row is marked undone (`outcome`).
+- **Shown**: the Linked tab and the account card say how ("Linked automatically (same email)", "Linked by you (similar
+  name)", "Linked by your partner" — `linkHowText`); the Friday review's "Duplicate matches" step counts customers with
+  suggestions + duplicate pairs (`GET /matches/counts`, says so offline) and links to the review list.
+- **Open**: a real merge of duplicate clients; address matching only on street + postal code (no fuzzy street names,
+  no PO boxes); matching runs on the server only (devices can't compute suggestions offline); contact links unused;
+  device edits are picked up within a minute, not at once.
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
@@ -1575,6 +1669,12 @@ add, then deletes it), and of a customer's refused follow-up dates only the late
   decided on the held order as it is now; backfill events and unlinked customers trigger nothing; the suite reopens
   only tasks it finished itself and never overwrites a person's title. D2: linking customers in bulk makes them eligible for check-ins/balances on the next daily run (10 new a
   day each). D5: build on `figures.js` and `automations.js`.
+- **D2 (matching)**: done — see "Matching (D2)". Automatic links go through an automation (`wholesale-auto-link`:
+  its switch, run log and one alert per pass) rather than a bare alert, so linking automatically can be switched off;
+  only unambiguous strong matches link (two waiting customers matching one client: both suggested); clients with
+  no relationship yet are suggested only, never linked automatically; "Not the same" is kept across
+  restores, the record of what links changed is not; undo puts back only what is untouched and unused, and an undone
+  pair is never linked automatically again. Next: a merge of duplicate clients; pruning `wholesale_events`.
 - **D5 (notes from the Order Manager)**: done — see "Wholesale notes and follow-ups". Notes are server-written synced
   records (`wholesale_note`), not activities (deletes must take them off; replays upsert by uid), filtered under the
   matching activity type; a deleted note comes back only through a backfill add (tombstones for unknown deletes); a
@@ -1599,6 +1699,7 @@ copy must pass `integrity_check`. Tests that depend on local time set
 switches D3's two scheduled wholesale automations off in its setup (they're on by default) so its ticks stay about C8. The e2e `startServer(t, { extraModules })` adds
 test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager checkout>` (D1) runs the real Order
 Manager (needs `npm ci` in its `server/`) against a real suite and checks the timeline and spend against its own;
+Step 8 (D2) checks an automatic link on a clean email, a similar name only suggested, and an undo.
 `--capture <file>` writes the events it sent (the fixture `server/test/fixtures/wom-captured-events.json`; D5's
 `wom-captured-notes.json` holds its A11 events and their customers' `customer.created`, taken from such a capture; step 7
 needs an Order Manager with A11). `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when

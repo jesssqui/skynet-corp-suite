@@ -212,3 +212,51 @@ export function daysBetween(a, b) {
   const t = (ymd) => Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)) - 1, Number(ymd.slice(8, 10)));
   return Math.round((t(b) - t(a)) / 86_400_000);
 }
+
+// ---- D2: how a customer was linked, suggestions, the review's count --------------------------------
+
+/** A suggestion's reasons, by kind, as the few words a link made from it carries ("similar name"). */
+export const REASON_WORDS = Object.freeze({ email: 'same email', phone: 'same phone', address: 'same address', name: 'similar name' });
+
+/**
+ * How a link was made, for the Linked tab and the account card: "Linked automatically (same email)",
+ * "Linked by you (similar name)", "Linked by your partner". `link` is a synced CRM link record
+ * (matched_by, match_reason, _sync.createdBy) or the server's view of one (matchedBy, reason, by);
+ * `me` = the signed-in person's actor.
+ */
+export function linkHowText(link, me) {
+  if (!link) return null;
+  const matchedBy = link.matched_by ?? link.matchedBy ?? null;
+  const reason = link.match_reason ?? link.reason ?? null;
+  const by = link.by ?? link.created_by ?? link._sync?.createdBy ?? null;
+  const tail = reason ? ` (${reason})` : '';
+  if (matchedBy === 'auto') return `Linked automatically${tail}`;
+  const who = by && by !== 'system' && me ? (by === me ? 'you' : 'your partner') : null;
+  return `Linked${who ? ` by ${who}` : ''}${tail}`;
+}
+
+/** The reason a person's link from a suggestion records: its strongest one ("same email" before "similar name"). */
+export function suggestionReason(suggestion) {
+  const kinds = new Set((suggestion?.reasons ?? []).map((r) => r.kind));
+  const kind = ['email', 'phone', 'address', 'name'].find((k) => kinds.has(k));
+  return kind ? REASON_WORDS[kind] : null;
+}
+
+/** An Order Manager customer's address on one line: "12 Main St, Unit 4, Simcoe ON N3Y 4K3". */
+export function customerAddressText(address) {
+  if (!address) return null;
+  const place = [address.city, address.province].filter(Boolean).join(' ');
+  const text = [address.line1, address.line2, [place, address.postal_code].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  return text || null;
+}
+
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+/** The Friday review's "Duplicate matches" line from GET /api/wholesale/matches/counts. */
+export function matchesSummary(counts) {
+  if (!counts) return null;
+  const parts = [];
+  if (counts.customers) parts.push(`${plural(counts.customers, 'Order Manager customer', 'Order Manager customers')} may already be ${counts.customers === 1 ? 'a client' : 'clients'}`);
+  if (counts.duplicates) parts.push(plural(counts.duplicates, 'possible duplicate among clients', 'possible duplicates among clients'));
+  return parts.length ? parts.join(' · ') : 'Nothing to review: no possible matches.';
+}
