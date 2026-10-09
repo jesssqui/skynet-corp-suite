@@ -46,7 +46,8 @@ test('Mac: make the link on Account → Calendar, a calendar reads it, a finishe
   await page.getByRole('button', { name: 'Make my calendar link' }).click();
   const url = (await page.getByTestId('calendar-url').textContent()).trim();
   assert.match(url, new RegExp(`^${server.base}/api/calendar/feed/[A-Za-z0-9_-]{43}\\.ics$`));
-  assert.equal(await page.getByTestId('calendar-webcal').getAttribute('href'), url.replace(/^http:/, 'webcal:'));
+  assert.equal(await page.locator('a[href^="webcal:"]').count(), 0, 'https link only (review decision)');
+  await page.getByTestId('calendar-privacy').filter({ hasText: 'Task titles go as written' }).waitFor(WAIT);
   await page.getByTestId('calendar-state').filter({ hasText: 'On' }).waitFor(WAIT);
   await shot(page, 'c6a-calendar-made-mac');
   assert.equal(await noSideways(page), 0);
@@ -97,7 +98,7 @@ test('iPhone: the partner makes their own link; it fits the screen and lists the
   await page.goto(`${server.base}/account/calendar`);
   await page.getByRole('button', { name: 'Make my calendar link' }).click();
   const url = (await page.getByTestId('calendar-url').textContent()).trim();
-  await page.getByText('Add Subscribed Calendar').waitFor(WAIT);
+  await page.getByText('Add Subscribed Calendar', { exact: true }).waitFor(WAIT);
   await shot(page, 'c6a-calendar-made-iphone');
   assert.equal(await noSideways(page), 0);
   const feed = await fetchFeed(url);

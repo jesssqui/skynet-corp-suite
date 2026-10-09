@@ -39,17 +39,10 @@ function ShownOnce({ links }) {
       <div style={stack} data-testid="calendar-new-link">
         <strong>Subscribe with this link now — it is shown only once.</strong>
         <div style={{ display: 'grid', gap: 6 }}>
-          <span style={muted}>Link (for Settings on the iPhone, or the Mac’s Calendar)</span>
+          <span style={muted}>Copy it, then paste it into Add Subscribed Calendar (iPhone) or New Calendar Subscription (Mac)</span>
           <div style={row}>
             <code style={code} data-testid="calendar-url">{links.url}</code>
             <CopyButton text={links.url} label="Copy link" testId="copy-calendar-url" />
-          </div>
-        </div>
-        <div style={{ display: 'grid', gap: 6 }}>
-          <span style={muted}>Or, on the iPhone or Mac itself</span>
-          <div style={row}>
-            <a href={links.webcal} data-testid="calendar-webcal" style={{ fontWeight: 600 }}>Open in Calendar</a>
-            <CopyButton text={links.webcal} label="Copy webcal link" />
           </div>
         </div>
         <span style={{ fontSize: 'var(--text-xs)' }}>
@@ -68,7 +61,7 @@ function HowTo() {
         <div>
           <strong style={{ fontSize: 'var(--text-sm)' }}>iPhone</strong>
           <ol style={steps}>
-            <li>Copy the link (above, right after you make it).</li>
+            <li>Copy the link (above, right after you make it) — on the iPhone itself, or send it to yourself.</li>
             <li>Settings → Apps → Calendar → Calendar Accounts → Add Account → Other → <em>Add Subscribed Calendar</em>
               {' '}(older iOS: Settings → Calendar → Accounts).</li>
             <li>Paste the link as the Server → Next → Save.</li>
@@ -96,12 +89,15 @@ function WhatsInIt({ timeZone }) {
     <Card title="What’s in it">
       <ul style={{ ...steps, listStyle: 'disc' }}>
         <li>Your own tasks and the shared list’s (marked “[Shared]”) that have a due date — from 30 days ago to a year ahead.
-          Overdue ones stay on their due date.</li>
+          Overdue ones stay on their due date; one overdue by more than 30 days drops out of the calendar (it’s still open in
+          the suite).</li>
         <li>A task with a time shows at that time ({timeZone ?? 'local time'}) for its estimate, or 30 minutes; the rest are
           all-day.</li>
         <li>Finished and deleted tasks drop out at the next refresh. It’s read-only: change tasks in the suite (each event
           links back to its task).</li>
-        <li>Only the title and the business — no notes, clients or contacts.</li>
+        <li data-testid="calendar-privacy">Task titles go as written — including the suite’s own tasks, like “Balance owing over 30 days:
+          Lefty’s, $412.50” — and show in Apple Calendar on your phone and Mac (lock screen, notifications). Notes, contacts and
+          other details are not sent.</li>
       </ul>
     </Card>
   );

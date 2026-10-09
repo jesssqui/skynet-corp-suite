@@ -1,13 +1,13 @@
-// The task calendar link's addresses (C6a), no React (client/test/calendar.test.js).
+// The task calendar link's address (C6a), no React (client/test/calendar.test.js).
+//
+// Only the https link, pasted into Add Subscribed Calendar / New Calendar Subscription. No webcal://
+// link (review decision): calendar apps may fetch webcal:// over plain http, which Tailscale Serve's
+// HTTPS-only address (often on :8443) doesn't answer, so a tap would fail in a confusing way.
 
-/**
- * The https (or http) link and its webcal:// twin, from the suite's address (SUITE_URL when the
- * server has one, else the address this page is open at) and the feed's path.
- */
+/** The link, from the suite's address (SUITE_URL when the server has one, else this page's) and the feed's path. */
 export function feedLinks(origin, path) {
   const base = String(origin ?? '').replace(/\/+$/, '');
-  const url = `${base}${path}`;
-  return { url, webcal: url.replace(/^https?:\/\//, 'webcal://') };
+  return { url: `${base}${path}` };
 }
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
