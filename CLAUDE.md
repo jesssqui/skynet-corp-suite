@@ -24,7 +24,9 @@ check-ins for quiet regulars, balance reminders over 30 days with a drafted emai
 orders, and the "Quiet regular" flag on the client list and page), and from **D5** notes from the Order Manager (same
 module: its CRM notes on the linked client's timeline, and its follow-up dates as tasks), and from **D2** matching
 (same module: Order Manager customers linked automatically on a clean email or phone, suggestions for review with
-"Not the same", possible duplicate clients, and an undo that puts back what linking changed).
+"Not the same", possible duplicate clients, and an undo that puts back what linking changed), and from **C6a** the task
+calendar feed (module `calendar`: each person's dated tasks as a read-only calendar Apple Calendar subscribes to, by a
+secret link per person).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -101,6 +103,10 @@ server/src/
                            buildCrmIndex, matchCustomer, duplicateClients, inScope, customerContact), matchService.js
                            (passes, the wholesale-auto-link automation, review lists, decisions), linkChanges.js (what
                            each link changed; undo plan + steps), migrations/005_matching.sql
+  modules/calendar/        C6a: the task calendar feed — ics.js (iCalendar writer, pure: escaping, 75-octet folding,
+                           VTIMEZONE from Intl's zone data, events), service.js (links: make/replace/turn off, token
+                           lookup, the feed, the per-address throttle, the 'calendar-feed' connection), routes.js
+                           (public GET /feed/<token>.ics; signed-in /link), migrations/001 (calendar_feeds, _changes)
   backup/                  backup.js, restore.js (D5: runs this version's migrations on the restored copy, then
                            carryKeptTables: modules' keepOnRestore), schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file)
@@ -135,6 +141,9 @@ client/src/
   modules/automations/     C8: AutomationsPage (/system/automations; /automations redirects), AlertsPage (/alerts),
                            AlertsBell.jsx (sidebar "Alerts" + count, the phone strip, useUnreadAlerts), alerts.js +
                            logic.js (no React; client/test/automations.test.js)
+  modules/calendar/        C6a: CalendarPage (/account/calendar, a tab of Account: make / replace / turn off the link,
+                           shown once, how to subscribe), links.js (no React: https + webcal links, "only works on
+                           this Mac"; client/test/calendar.test.js)
   modules/sync/            /sync (Offline data), /sync/attention (Needs attention), /sync/data/:entity (plain records view)
   modules/wholesale/       D1: WholesalePage (/wholesale: waiting for a client / linked; lazy), ConnectionPanel.jsx (the
                            wom card's address + secret, via connections/panels.js; lazy), parts.jsx (timeline rows,
@@ -214,7 +223,9 @@ One folder per module on each side, same name on both (`server/src/modules/healt
   (tailnet members only). Keep it that way even with sign-in: don't publish the port on other interfaces, and don't
   enable Tailscale Funnel.
 - **Sign-in on everything**: every API route needs a session except `POST /api/auth/login|login/code`,
-  `POST /api/wom/events` (D1: no session, authenticated by its HMAC signature only — see "Wholesale") and
+  `POST /api/wom/events` (D1: no session, authenticated by its HMAC signature only — see "Wholesale"),
+  `GET /api/calendar/feed/<token>.ics` (C6a: no session — a calendar app can't sign in; the link's secret token is the
+  only key, GET/HEAD only, that exact path, nothing else reachable with the token; see "Task calendar feed") and
   `GET /api/health` (which answers anonymous callers with `{ ok, name, version, time }` only; details, backup paths
   and errors need a session). Unknown `/api` paths answer 401 to anonymous callers. The built client (HTML/JS) is public;
   it shows nothing until `GET /api/auth/session` succeeds — except on a device where someone was signed in before:
@@ -226,6 +237,11 @@ One folder per module on each side, same name on both (`server/src/modules/healt
 - helmet sets a strict CSP (`script-src 'self'`): no inline scripts, no third-party script/style hosts. The service
   worker is a same-origin script (`worker-src` falls back to `script-src 'self'`); the cached `index.html` keeps its
   CSP header, so pages served offline have the same policy (the e2e test checks for violations).
+- **The calendar feed is the one session-less read of personal data** (C6a, deliberate): Apple Calendar fetches
+  subscribed calendars by URL with no way to sign in, so the URL carries a 256-bit random token (only its SHA-256
+  stored, compared in constant time, replaceable and switch-off-able per person, failed lookups rate-limited per
+  address). It stays tailnet-only like everything else (the ts.net address; on the Mac itself, localhost), carries only
+  task titles and business names, and is a `createPublicRouter` route, never a way into anything else.
 - **No HSTS** (helmet's is off): browsers apply it to the whole ts.net hostname on every port, which would force the
   Order Manager's plain-http port on the same Mac to https. Tailscale Serve already makes the suite HTTPS-only.
 
@@ -991,7 +1007,7 @@ only its own tables and has **no HTTP routes**: devices use their offline copy, 
 - **D3 / automations**: tasks from automations use `automatedOwnerFor` and `applyLocal`; a reminder or notification
   for "No next step" can reuse `relationshipsWithoutNextStep` on server reads (pass live rows only). Calendar feeds
   (tasks with a date/time) read `planner_tasks` with `deleted_at IS NULL AND done_at IS NULL`, ignoring a time without
-  a date.
+  a date — C6a does, through `planner.feedTasks({ owner, from, to, limit })` (see "Task calendar feed").
 - Open: the pull scope (open tasks only) is still TODO (see C2b "Scope"); done tasks accumulate.
 
 ## Planning (planner module, C4b)
@@ -1092,7 +1108,7 @@ Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (
 
 **For C5 / C6 / C8 / D15**
 - **C5** (Siri, share sheet): captured items still become tasks with no day or goal → they land in To sort, by design.
-- **C6 / calendar**: a task's day is `taskDay`; the overbooked warning has no calendar meetings yet — when Apple Calendar
+- **C6b / calendar** (C6a, the task feed, is done): a task's day is `taskDay`; the overbooked warning has no calendar meetings yet — when Apple Calendar
   events arrive, add their minutes to `dayLoad`/`loadsByDay` (timed events are never "suggested to push").
 - **C8 overview** ("goals against targets"): `ctx.services.planner.goals(kind, period)` returns live goals of one period
   (server); devices use `goalsOf` + `goalProgress`. The last-Friday-of-the-month review of priorities can reuse
@@ -1130,8 +1146,9 @@ switch pauses it without breaking the app.
   Restores by hand aren't covered.)
 - **Rows today**: the off-machine backup (from `backup/status.json`: last success, last error, "queue" = whole days
   behind once the last good backup is over 26 h old; `pausable: false` — backups are never pausable from the app), the
-  Order Manager (`wom`, D1 — real, see "Wholesale") and placeholders "Not connected yet · comes with …": Apple
-  Calendar (C6), Stockroom (D16). A connection's card can show extra settings: the client module registers a panel
+  Order Manager (`wom`, D1 — real, see "Wholesale"), the task calendar feed (`calendar-feed`, C6a: last read by a
+  calendar, refused lookups, whose links are on; paused = every feed answers 503) and placeholders "Not connected yet ·
+  comes with …": Apple Calendar (C6b, meetings over CalDAV), Stockroom (D16). A connection's card can show extra settings: the client module registers a panel
   (`registerConnectionPanel(id, Component)` in `client/src/modules/connections/panels.js`; D1's address + secret).
 - **API** (signed in; writes follow the JSON/Origin rules): `GET /api/connections` → `{ connections: [{ id, name,
   module, description, state: on|paused|always_on|not_connected, pausable, alwaysOnReason, comesWith, lastSuccessAt,
@@ -1631,6 +1648,65 @@ scale), `client/test/matching.test.js`, `test/e2e/matching.e2e.test.js`, step 8 
   no PO boxes); matching runs on the server only (devices can't compute suggestions offline); contact links unused;
   device edits are picked up within a minute, not at once.
 
+## Task calendar feed (calendar module, C6a)
+Code `server/src/modules/calendar/` (`ics.js` pure, `service.js`, `routes.js`, migration `001_create_calendar.sql`),
+the planner's read `planner.feedTasks({ owner, from, to, limit })`, client `client/src/modules/calendar/` (Account →
+Calendar); tests `server/test/calendar.test.js` (with a small RFC 5545 reader: CRLF, 75-octet lines, nesting, required
+properties, unescaping, resolving TZID times through the feed's own VTIMEZONE), `client/test/calendar.test.js`,
+`test/e2e/calendar.e2e.test.js`. Registered after the planner (it reads tasks only through `ctx.services.planner`;
+business names through `crm.getBusiness`, display names through `auth.accounts`). Apple Calendar's own meetings are
+**C6b** (CalDAV pull, the `calendar` connection placeholder).
+- **The feed**: `GET /api/calendar/feed/<token>.ics` → `text/calendar; charset=utf-8`. One VEVENT per **open, live task
+  with a due date** whose owner is the link's person **or `shared`** (never the other person's own), due from **30 days
+  ago** (`PAST_DAYS`; overdue tasks stay on their due date — moving them to today would rewrite the feed daily) to **365
+  days ahead** (`FUTURE_DAYS`), "today" in the tasks' zone; at most **2,000** events (`MAX_EVENTS`, soonest first).
+  Done / deleted / undated tasks are simply absent, so they drop out at the calendar's next refresh.
+  `UID` = `<task id>@skynet-corp-suite`; `DTSTAMP` = `LAST-MODIFIED` = the task's `updated_at` (no METHOD, so DTSTAMP
+  is "last revised" — and the body only changes when a task does); `SEQUENCE` = seconds since 2026-01-01 of
+  `updated_at` (grows with every edit); `CREATED`. `SUMMARY` = the title, **"[Shared] "** first for the shared list.
+  `DESCRIPTION` = the business name (+ " · Shared list") and "Open in the suite: <base>/tasks?open=<id>", `URL` the
+  same link; base = `SUITE_URL` (config `calendar.publicUrl`), else the address the calendar used. **No notes, client,
+  account or contact details** — the link can leak, so the feed carries as little as possible.
+  Date-only → all day (`DTSTART;VALUE=DATE`, `DTEND` the next day, `TRANSP:TRANSPARENT`). With a valid "HH:MM" →
+  `DTSTART/DTEND;TZID=<zone>` for `estimate_minutes` (30 when none), never past midnight. **Time zone decision**: TZID +
+  a VTIMEZONE (not floating times, not UTC): the tasks' zone is `CALENDAR_TIME_ZONE`, else `TZ` (America/Toronto in
+  the container); the VTIMEZONE is generated from Intl's zone data for the feed's window (the offset at its start, then
+  one observance per real transition with TZOFFSETFROM/TO and TZNAME), so a 09:00 task is 09:00 Toronto on both
+  sides of a DST change, and still right on a device in another zone (floating times would move with the device; UTC
+  would lose "09:00 local"). Apple Calendar knows `America/Toronto` by name anyway. Only feeds with a timed event carry
+  a VTIMEZONE. Calendar properties: `X-WR-CALNAME` "Suite tasks · <name>", `X-WR-TIMEZONE`,
+  `REFRESH-INTERVAL;VALUE=DURATION:PT15M` + `X-PUBLISHED-TTL:PT15M`. Lines are CRLF, folded at 75 octets (never inside
+  a UTF-8 character); TEXT escapes `\ ; ,` and newlines, other control characters are dropped.
+- **HTTP**: `Cache-Control: private, no-cache`, a strong `ETag` (SHA-256 of the body) and **304** on a matching
+  `If-None-Match` (own comparison: Express's `req.fresh` refuses whenever the request says `Cache-Control: no-cache`,
+  which fetch clients add to conditional requests). HEAD works. Unknown, replaced or turned-off token, or a path that
+  isn't `<43 base64url chars>.ics` → **404 `Not found`** (plain text, no detail). Paused on Connections → **503** +
+  `Retry-After: 900` before any lookup (calendars keep what they have). Anything else under `/api/calendar` needs a
+  session (`/feed/<token>.ics/x`, `/feed`, POST/DELETE on the feed path → 401).
+- **The token**: per person (`owner` / `partner` — the session's actor; each manages only their own), 32 random bytes
+  base64url, **only its SHA-256 stored** (`calendar_feeds`, one row per person); a lookup hashes the token and compares
+  it with every stored hash (two at most) with `timingSafeEqual`. Shown **once**, in the answer to
+  `POST /api/calendar/link` (`Cache-Control: no-store`) — like D1's secret. `POST /link` again **replaces** it (the old
+  token stops at once; `last_fetched_at` starts over); `DELETE /link` turns it off; `GET /link` → `{ feed: { on,
+  createdAt, lastFetchedAt, paused }, publicUrl, timeZone }` (never the token). Every change is in
+  `calendar_feed_changes` (made / replaced / turned_off, device). Signed-in routes follow the Origin/JSON rules.
+  `last_fetched_at` is written at most once a minute per person.
+- **Throttle** (in memory, per `req.ip` — the device's tailnet address via trust proxy): **20 failed lookups within an
+  hour** lock that address out of every feed for an hour (**429** + `Retry-After`, even for a good token); a good read
+  from an address clears its count. An old subscription left polling after a replace (4 an hour at 15 minutes) never
+  reaches it. Not persisted (a restart forgets it — with 256-bit tokens the limit is defence in depth, not the lock).
+  The Connections row counts refused lookups since start as its last error ("an old subscription still asking?").
+- **Restores**: `calendar_feeds` and `calendar_feed_changes` are **`keepOnRestore`** — a link someone subscribed to keeps
+  working after a restore, and one replaced or turned off after the backup was made (because it leaked) never comes
+  back to life. (Like the switches: server settings about access, not data.) Backups hold only hashes.
+- **Reach**: the feed URL is the suite's address — the ts.net HTTPS address from Tailscale Serve (devices on the
+  tailnet; Apple Calendar must fetch it **from the device**: on the Mac pick *On My Mac*, not iCloud, whose servers
+  can't reach the tailnet). Without Serve the Mac reaches it at `http://localhost:3100` only; the page says so when it
+  is open on localhost or plain http (`linkReachProblem`), unless `SUITE_URL` is set. iPhone subscribed calendars are
+  fetched on the "Fetch New Data" schedule (15 minutes at best), not pushed.
+- **For C6b**: meetings come in through the `calendar` connection (CalDAV pull) in this module; their minutes go into
+  C4b's `dayLoad`. The feed could later show them too, but they already are in Apple Calendar.
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
@@ -1650,8 +1726,8 @@ scale), `client/test/matching.test.js`, `test/e2e/matching.e2e.test.js`, step 8 
   (not synced) kept across restores; alerts are synced records. What comes next:
   - **D1** (Order Manager receiver): done — see "Wholesale". Its events (`order.placed`, …) go through
     `automations.emit` (no automations listen yet).
-  - **C6** (Apple Calendar) registers `calendar` (CalDAV pull: last success, error; pausing stops the pull and the
-    feed's refresh, never deletes anything); **D16** registers `stockroom` (read-only pull) the same way.
+  - **C6b** (Apple Calendar meetings) registers `calendar` (CalDAV pull: last success, error; pausing stops the pull,
+    never deletes anything); C6a's task feed is its own row, `calendar-feed`; **D16** registers `stockroom` (read-only pull) the same way.
   - **D3** (done, see "Wholesale automations"): check-ins, balances, ready to ship in the wholesale module. **Later
     packages** add automations with `register()` in their own module (renewals…): tasks via `automatedOwnerFor`,
     `made(key)` / `madeLike(prefix)` for "once per order/customer/period", event triggers with a `key` (and `accept`).
@@ -1682,6 +1758,11 @@ scale), `client/test/matching.test.js`, `test/e2e/matching.e2e.test.js`, step 8 
   held state as it is now, with linking/unlinking emitted as `wholesale.attachment` and a check at every start; backfill
   follow-ups make tasks (keyed by customer, episode and date, so replays never duplicate). One way: nothing goes back to
   the Order Manager. The restore now migrates the copy before carrying kept tables.
+- **C6a (task calendar feed)**: done — see "Task calendar feed". A session-less GET with a per-person secret token
+  (hash only, replaceable, throttled), not a CalDAV server or an iCloud write: read-only, no Apple password, works with
+  any calendar app on the tailnet. TZID + generated VTIMEZONE for timed tasks; overdue tasks on their due date; the
+  feed carries titles and business names only; the links survive restores (`keepOnRestore`); its own Connections row
+  (pausable). Next: C6b (meetings over CalDAV into Today and the day load).
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
