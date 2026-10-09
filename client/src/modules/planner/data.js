@@ -37,8 +37,9 @@ export function usePlannerData() {
   return { data: data ?? null, loading, error };
 }
 
-// D1: Order Manager orders count as activity for quiet clients, as on the client list and the server.
-const REVIEW_ENTITIES = [...PLANNER_ENTITIES, 'service', 'activity', 'wholesale_order'];
+// D1: Order Manager orders count as activity for quiet clients, as on the client list and the server;
+// D5: so do its notes.
+const REVIEW_ENTITIES = [...PLANNER_ENTITIES, 'service', 'activity', 'wholesale_order', 'wholesale_note'];
 
 /**
  * The Friday review: the planner's records plus services (renewals) and the last activity per
@@ -47,15 +48,16 @@ const REVIEW_ENTITIES = [...PLANNER_ENTITIES, 'service', 'activity', 'wholesale_
 export function useReviewData() {
   const { data, loading, error } = useSyncData(async (e) => {
     const entries = await cachedLists(e, REVIEW_ENTITIES);
-    const [services, activities, orders] = entries.slice(PLANNER_ENTITIES.length);
-    return { ...maps(entries), services: services.records, lastActivity: reviewLastActivity(activities, orders) };
+    const [services, activities, orders, notes] = entries.slice(PLANNER_ENTITIES.length);
+    return { ...maps(entries), services: services.records, lastActivity: reviewLastActivity(activities, orders, notes) };
   }, [], { entities: REVIEW_ENTITIES });
   return { data: data ?? null, loading, error };
 }
 
-/** Last activity per client for the review: notes and calls, or (D1) an Order Manager order, whichever is later. */
-export function reviewLastActivity(activities, orders) {
-  return mergeLastActivity(lastActivityOf(activities), orders.derive('lastOrderByClient', lastOrderByClient));
+/** Last activity per client for the review: notes and calls, or (D1) an Order Manager order or (D5) note, whichever is later. */
+export function reviewLastActivity(activities, orders, notes = null) {
+  const withOrders = mergeLastActivity(lastActivityOf(activities), orders.derive('lastOrderByClient', lastOrderByClient));
+  return notes ? mergeLastActivity(withOrders, notes.derive('lastOrderByClient', lastOrderByClient)) : withOrders;
 }
 
 /** How many items are still in the capture inbox (the nav's count). */

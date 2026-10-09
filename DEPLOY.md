@@ -202,7 +202,9 @@ docker compose run --rm suite node server/scripts/restore.js --list
 docker compose run --rm suite node server/scripts/restore.js /offsite/<newest suite-….db> --to /tmp/drill.db
 ```
 
-It should print `restored … (N tables, M migrations)` and `Restore complete`. (`/tmp/drill.db` is thrown away with
+It should print `restored … (N tables, M migrations)` and `Restore complete` — counted after the copy is brought up to
+this version (a backup from an older version adds ": the backup had K, L applied now"), so M matches the number of
+migrations System shows after the restore. (`/tmp/drill.db` is thrown away with
 the one-off container.)
 
 **b) Full drill** — restore the live database from the off-machine copy and confirm it is the same data. First, signed
@@ -271,6 +273,22 @@ path) and publishes port 3089 — so check before connecting:
   ["host.docker.internal:host-gateway"]` and still can't reach a port published on loopback — use the tailnet address.)
 - The Order Manager's Settings → Suite connection shows no *last error* and *waiting* goes to 0.
 
+4. **Notes and follow-ups (D5)** — **turn the switch on only after this version of the suite is running** (an older
+   suite refuses the three new events, and the Order Manager parks them as refused): in the Order Manager (admin), **Settings → Integrations → Suite
+   connection → Send CRM notes to the suite** → on. It sends every CRM note and follow-up date once (customers the suite
+   never heard of first). Linked customers' notes then show on their client's timeline (*from the Order Manager*, with
+   who wrote them; type Call / Email / Meeting / Note — a follow-up marked done shows under Notes as *Follow-up done*), and
+   each follow-up date is a task **Follow up with …** due that day on the wholesale business's default owner's Today
+   (System → Automations → *Order Manager follow-ups*). Mark follow-ups done **in the Order Manager**: the suite then
+   finishes its task; finishing the task in the suite doesn't change the Order Manager (one way). Unlinked customers'
+   notes wait with them on the Wholesale page (*N notes waiting*).
+   **If it was switched on too early** (note events refused): **don't press Send again on refused note events with an
+   Order Manager older than A11b** — for a note added and then deleted, both events were refused, and the older Order
+   Manager re-sends only the add (it marks the refused delete superseded), so the deleted note would stay on the
+   timeline for good. Update the Order Manager to A11b first: its **Send again** re-sends every refused event of a
+   record, in order (a note's add, then its delete), and only the latest of a customer's refused follow-up dates (with
+   the date as it is now). Then press **Send again**.
+
 **Pausing**: the switch on the Connections card pauses the connection: the suite answers 503 and the Order Manager
 keeps its events queued (nothing is lost), then sends them in order — within its retry wait, at most 5 minutes —
 once it is switched on. **New secret…** (either of you) replaces the secret at once; paste it into the Order Manager,
@@ -278,12 +296,12 @@ whose events wait meanwhile.
 
 **After restoring the suite from a backup** (step 5, same Mac): nothing to do in the Order Manager. The suite keeps the
 Order Manager's data as it last said across the restore (and the secret), and puts the client timelines back to match
-at start. **On a new Mac with the volume lost** (restored from the off-machine copy): the Order Manager's changes since
+at start — notes and follow-up tasks too (D5; also when the backup is from before D5). **On a new Mac with the volume lost** (restored from the off-machine copy): the Order Manager's changes since
 that backup aren't in it, and the Order Manager counts them as delivered. Make a new secret (the key file is gone),
 connect again, then in the Order Manager use **Forget everything (it's a different suite)** and **Send existing
 customers and orders**: everything that exists there now is sent again (applied by permanent id, nothing doubled).
 Orders and payments **deleted** there since the backup can't be known this way — they stay as they were in the backup
-(check the Order Manager's Bin and the client timelines by hand).
+(check the Order Manager's Bin and the client timelines by hand); the same for notes deleted there since the backup.
 
 ## Troubleshooting
 

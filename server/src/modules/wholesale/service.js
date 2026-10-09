@@ -21,16 +21,21 @@ import { nowIso, localDate } from '@suite/shared/time';
 import { BUSINESS_IDS } from '@suite/shared/crm';
 import { FORMATS, normalizeEmail, normalizePhone } from '@suite/shared/normalize';
 import { HttpError } from '../../lib/httpError.js';
-import { WHOLESALE_ENTITIES, checkServerOnly } from './entities.js';
+import { WHOLESALE_ENTITIES, NOTE_TYPES, checkServerOnly } from './entities.js';
 import {
   eventProblem, bodyProblem, isoTime, isDate, orderFigures, itemsSummary, ORDER_SNAPSHOT_EVENTS, ORDER_CREATION_EVENTS,
 } from './events.js';
 import { customerFigures, orderMoney, orderRhythm, owingByOrder } from './figures.js';
 import { registerWholesaleAutomations } from './automations.js';
+import { registerFollowUpAutomation } from './followUps.js';
 import { loadKey, encryptSecret, decryptSecret, newSecret, signatureProblem, headerProblem } from './secret.js';
 
 export const RECEIVER_PATH = '/api/wom/events';
 export const CONNECTION_ID = 'wom';
+/** D5: emitted to the automations when a held customer is linked, unlinked or moved (not an Order Manager event). */
+export const ATTACHMENT_EVENT = 'wholesale.attachment';
+/** D5: emitted at start: every customer's follow-up task checked against the held state (after a restore too). */
+export const CHECK_EVENT = 'wholesale.check';
 const APP = 'wom';
 const RECONCILE_EVERY_MS = 60 * 1000;
 const PROJECT_CHUNK = 200;
@@ -41,7 +46,7 @@ const REFUSAL_THROTTLE_MS = 60 * 1000;
  * usual_gap_days + quiet_from): at start every held customer is marked dirty once, so the
  * projection writes the new fields to every card through sync and devices pull them (sync rule 7).
  */
-export const CARD_VERSION = 2;
+export const CARD_VERSION = 3; // D5: + follow_up_date
 const MONEY_KEY = { payment: 'payment_uid', refund: 'refund_uid', return: 'return_uid', credit_note: 'credit_note_uid' };
 const MONEY_EVENT = { 'payment.recorded': ['payment', 'payment'], 'refund.issued': ['refund', 'refund'], 'return.received': ['return', 'return'], 'credit_note.issued': ['credit_note', 'credit_note'] };
 
@@ -53,6 +58,7 @@ const parse = (s) => {
   try { return JSON.parse(s); } catch { return null; }
 };
 const isInt = (v) => Number.isSafeInteger(v);
+const NOTE_TYPE_SET = new Set(NOTE_TYPES);
 
 export function createWholesaleService(ctx) {
   const { db, config, log, services } = ctx;
@@ -91,7 +97,9 @@ export function createWholesaleService(ctx) {
     dirtyItemsOf: [
       db.prepare('UPDATE wholesale_held_orders SET dirty = 1 WHERE customer_uid = ?'),
       db.prepare('UPDATE wholesale_held_money SET dirty = 1 WHERE customer_uid = ?'),
+      db.prepare('UPDATE wholesale_held_notes SET dirty = 1 WHERE customer_uid = ?'),
     ],
+    dirtyNotesOf: db.prepare('UPDATE wholesale_held_notes SET dirty = 1 WHERE customer_uid = ?'),
     allCustomers: db.prepare('SELECT uid, account_id, client_id, link_problem FROM wholesale_held_customers'),
     customerDone: db.prepare('UPDATE wholesale_held_customers SET record_id = ?, dirty = 0 WHERE uid = ?'),
 
@@ -125,10 +133,28 @@ export function createWholesaleService(ctx) {
     moneyOnOrder: db.prepare('SELECT kind, sub_kind, amount_cents, subtotal_cents, removed, moved_to FROM wholesale_held_money WHERE order_uid = ?'),
     moneyDone: db.prepare('UPDATE wholesale_held_money SET record_id = ?, dirty = 0 WHERE uid = ?'),
 
+    // D5: notes and follow-up dates (A11).
+    note: db.prepare('SELECT * FROM wholesale_held_notes WHERE uid = ?'),
+    upsertNote: db.prepare(`INSERT INTO wholesale_held_notes (uid, customer_uid, number, type, body, at, written_by, snapshot,
+        deleted, deleted_reason, updated_at, dirty)
+      VALUES (@uid, @customer_uid, @number, @type, @body, @at_note, @written_by, @snapshot, @deleted, @deleted_reason, @at, 1)
+      ON CONFLICT (uid) DO UPDATE SET customer_uid = excluded.customer_uid, number = excluded.number, type = excluded.type,
+        body = excluded.body, at = excluded.at, written_by = excluded.written_by, snapshot = excluded.snapshot,
+        deleted = excluded.deleted, deleted_reason = excluded.deleted_reason, updated_at = excluded.updated_at, dirty = 1`),
+    noteDone: db.prepare('UPDATE wholesale_held_notes SET record_id = ?, dirty = 0 WHERE uid = ?'),
+    setFollowUp: db.prepare(`UPDATE wholesale_held_customers SET follow_up_date = @date, follow_up_done = @done, follow_up_at = @at,
+      follow_up_episode = follow_up_episode + @new_episode, dirty = 1 WHERE uid = @uid`),
+    withFollowUp: db.prepare('SELECT uid FROM wholesale_held_customers WHERE follow_up_date IS NOT NULL ORDER BY uid'),
+    // The Order Manager forgets a deleted customer's follow-up (it sends the date again if the customer comes back).
+    clearFollowUp: db.prepare('UPDATE wholesale_held_customers SET follow_up_date = NULL, follow_up_done = 0 WHERE uid = ?'),
+    notesWaitingOf: db.prepare(`SELECT count(*) AS n FROM wholesale_held_notes
+      WHERE customer_uid = ? AND deleted = 0 AND snapshot IS NOT NULL`),
+
     // Keyset pages (uid > the last one seen), so rows that fail and stay dirty never hide the rest.
     dirtyOrders: db.prepare(`SELECT * FROM wholesale_held_orders WHERE dirty = 1 AND uid > ? ORDER BY uid LIMIT ${PROJECT_CHUNK}`),
     dirtyMoney: db.prepare(`SELECT * FROM wholesale_held_money WHERE dirty = 1 AND uid > ? ORDER BY uid LIMIT ${PROJECT_CHUNK}`),
     dirtyCustomers: db.prepare(`SELECT * FROM wholesale_held_customers WHERE dirty = 1 AND uid > ? ORDER BY uid LIMIT ${PROJECT_CHUNK}`),
+    dirtyNotes: db.prepare(`SELECT * FROM wholesale_held_notes WHERE dirty = 1 AND uid > ? ORDER BY uid LIMIT ${PROJECT_CHUNK}`),
 
     waitingCount: db.prepare(`SELECT
         (SELECT count(*) FROM wholesale_held_customers WHERE account_id IS NULL AND gone = 0) AS customers,
@@ -136,12 +162,14 @@ export function createWholesaleService(ctx) {
           WHERE c.account_id IS NULL AND c.gone = 0 AND o.snapshot IS NOT NULL) AS orders,
         (SELECT count(*) FROM wholesale_held_money m JOIN wholesale_held_customers c ON c.uid = m.customer_uid
           WHERE c.account_id IS NULL AND c.gone = 0) AS money,
+        (SELECT count(*) FROM wholesale_held_notes n JOIN wholesale_held_customers c ON c.uid = n.customer_uid
+          WHERE c.account_id IS NULL AND c.gone = 0 AND n.deleted = 0 AND n.snapshot IS NOT NULL) AS notes,
         (SELECT count(*) FROM wholesale_held_customers WHERE account_id IS NOT NULL) AS linked,
         (SELECT count(*) FROM wholesale_held_customers WHERE link_problem IS NOT NULL) AS problems`),
   };
   const recordRow = Object.fromEntries(WHOLESALE_ENTITIES.map((d) => [d.entity, db.prepare(`SELECT * FROM ${d.table} WHERE id = ?`)]));
   // Each synced record names its Order Manager record by uid: the one to adopt (and any extras) after a restore.
-  const UID_FIELD = { wholesale_order: 'order_uid', wholesale_entry: 'uid', wholesale_customer: 'customer_uid' };
+  const UID_FIELD = { wholesale_order: 'order_uid', wholesale_entry: 'uid', wholesale_customer: 'customer_uid', wholesale_note: 'note_uid' };
   const liveByUid = Object.fromEntries(WHOLESALE_ENTITIES.map((d) => [d.entity,
     db.prepare(`SELECT * FROM ${d.table} WHERE ${UID_FIELD[d.entity]} = ? AND deleted_at IS NULL ORDER BY id`)]));
   const markCustomersDirty = db.prepare('UPDATE wholesale_held_customers SET dirty = 1');
@@ -149,9 +177,15 @@ export function createWholesaleService(ctx) {
     db.prepare('UPDATE wholesale_held_customers SET dirty = 1'),
     db.prepare('UPDATE wholesale_held_orders SET dirty = 1'),
     db.prepare('UPDATE wholesale_held_money SET dirty = 1'),
+    db.prepare('UPDATE wholesale_held_notes SET dirty = 1'),
   ];
   const lastOrders = db.prepare(`SELECT client_id, max(at) AS at FROM wholesale_orders
     WHERE deleted_at IS NULL AND client_id IS NOT NULL GROUP BY client_id`);
+  // D5: the latest Order Manager order or note per client ("last activity": a call logged there counts).
+  const lastOrdersAndNotes = db.prepare(`SELECT client_id, max(at) AS at FROM (
+      SELECT client_id, at FROM wholesale_orders WHERE deleted_at IS NULL AND client_id IS NOT NULL
+      UNION ALL SELECT client_id, at FROM wholesale_notes WHERE deleted_at IS NULL AND client_id IS NOT NULL)
+    GROUP BY client_id`);
 
   // ---- receiver status (for the Connections row) ------------------------------------------------
   function status() {
@@ -235,11 +269,19 @@ export function createWholesaleService(ctx) {
     return q.waitingCount.get();
   }
 
+  /** "3 records and 2 notes from 2 customers waiting for a client" (D5: notes counted apart). */
+  function waitingLabel(w) {
+    const records = w.orders + w.money;
+    const parts = [`${records} record${records === 1 ? '' : 's'}`];
+    if (w.notes) parts.push(`${w.notes} note${w.notes === 1 ? '' : 's'}`);
+    return `${parts.join(' and ')} from ${w.customers} customer${w.customers === 1 ? '' : 's'} waiting for a client`;
+  }
+
   function describe() {
     const st = status();
     const w = waitingCounts();
     const sec = secretState();
-    const queueSize = w.orders + w.money;
+    const queueSize = w.orders + w.money + w.notes;
     const parts = [];
     if (!sec.set) parts.push('No shared secret yet: make one below and enter it in the Order Manager');
     else if (!sec.readable) parts.push('The shared secret can’t be read on this machine (its key file is missing): make a new one');
@@ -261,9 +303,7 @@ export function createWholesaleService(ctx) {
       lastErrorAt: (applyFirst ? st.apply_error_at : (fresh ? refusals.at : st.last_error_at)) ?? null,
       lastError: applyFirst ? st.apply_error : refusal,
       queueSize,
-      queueLabel: queueSize || w.customers
-        ? `${queueSize} record${queueSize === 1 ? '' : 's'} from ${w.customers} customer${w.customers === 1 ? '' : 's'} waiting for a client`
-        : 'Nothing waiting for a client',
+      queueLabel: queueSize || w.customers ? waitingLabel(w) : 'Nothing waiting for a client',
       detail: parts.join(' · '),
     };
   }
@@ -288,7 +328,82 @@ export function createWholesaleService(ctx) {
     };
     if (prev) q.updateCustomer.run(values);
     else q.insertCustomer.run(values);
+    // D5: a customer's notes are shown only while it isn't deleted there: deleted or back, they follow.
+    if (prev && Boolean(prev.gone) !== Boolean(values.gone)) q.dirtyNotesOf.run(c.customer_uid);
+    if (deleted) q.clearFollowUp.run(c.customer_uid);
     return c.customer_uid;
+  }
+
+  /** D5: a customer named only by a note or a follow-up (the Order Manager sends customer.created first; just in case). */
+  function holdCustomerStub(uid, at) {
+    if (!isId(uid) || q.customer.get(uid)) return;
+    q.insertCustomer.run({ uid, number: null, business_name: null, contact_name: null, email: null, phone: null, snapshot: null, gone: 0, gone_reason: null, at });
+  }
+
+  /**
+   * D5 note.added: upsert the note's snapshot by note_uid (latest arrival wins). A note held as deleted
+   * (a delete, or a tombstone for a delete that came first) stays deleted unless this add is a backfill
+   * one: the Order Manager's catch-up sends only notes that exist there now (e.g. brought back by a
+   * backup import), while a live add for a deleted note can only be an old one sent again (a refused
+   * event "sent again" after the delete) — its snapshot is kept, the note stays deleted.
+   */
+  function holdNote(n, { backfill, at, eventTime }) {
+    const prev = q.note.get(n.note_uid);
+    const stayDeleted = Boolean(prev?.deleted) && !backfill;
+    q.upsertNote.run({
+      uid: n.note_uid,
+      customer_uid: n.customer_uid,
+      number: isInt(n.number) ? n.number : null,
+      type: n.type,
+      body: n.body,
+      // No time there (a backup import lost it): the one we had, else the event's.
+      at_note: isoTime(n.at) ?? prev?.at ?? eventTime,
+      written_by: clip(n.written_by ?? null, 100),
+      snapshot: json(n),
+      deleted: stayDeleted ? 1 : 0,
+      deleted_reason: stayDeleted ? prev.deleted_reason : null,
+      at,
+    });
+    holdCustomerStub(n.customer_uid, at);
+    return { customerUids: [...new Set([n.customer_uid, prev?.customer_uid].filter(Boolean))], orderUid: null, noteUid: n.note_uid };
+  }
+
+  /** D5 note.deleted: marks the note deleted (kept); a note never seen is held as a tombstone. */
+  function holdNoteDeleted(d, { at }) {
+    const n = d.note;
+    const prev = q.note.get(n.note_uid);
+    const customerUid = prev?.customer_uid ?? n.customer_uid ?? null;
+    q.upsertNote.run({
+      uid: n.note_uid,
+      customer_uid: customerUid,
+      number: prev?.number ?? (isInt(n.number) ? n.number : null),
+      type: prev?.type ?? null,
+      body: prev?.body ?? null,
+      at_note: prev?.at ?? null,
+      written_by: prev?.written_by ?? null,
+      snapshot: prev?.snapshot ?? null,
+      deleted: 1,
+      deleted_reason: d.reason ?? 'deleted',
+      at,
+    });
+    return { customerUids: customerUid ? [customerUid] : [], orderUid: null, noteUid: n.note_uid };
+  }
+
+  /**
+   * D5 followup.changed: the customer's follow-up date as it is now (a state: the latest arrival
+   * wins). A date where there was none starts a new follow-up (follow_up_episode + 1).
+   */
+  function holdFollowUp(d, { at, eventTime }) {
+    holdCustomerStub(d.customer_uid, at);
+    const prev = q.customer.get(d.customer_uid);
+    q.setFollowUp.run({
+      uid: d.customer_uid,
+      date: d.follow_up_date,
+      done: d.done ? 1 : 0,
+      at: eventTime,
+      new_episode: d.follow_up_date && !prev.follow_up_date ? 1 : 0,
+    });
+    return { customerUids: [d.customer_uid], orderUid: null };
   }
 
   /** The customer an order names, from the order's own summary, when nothing else is known of it yet. */
@@ -413,6 +528,15 @@ export function createWholesaleService(ctx) {
     } else if (e.name === 'order.deleted') {
       info = holdOrderDeleted(d, { at, eventTime });
       subject = `order:${d.order_uid}`;
+    } else if (e.name === 'note.added') {
+      info = holdNote(d.note, { backfill: d.backfill === true, at, eventTime });
+      subject = `note:${d.note.note_uid}`;
+    } else if (e.name === 'note.deleted') {
+      info = holdNoteDeleted(d, { at });
+      subject = `note:${d.note.note_uid}`;
+    } else if (e.name === 'followup.changed') {
+      info = holdFollowUp(d, { at, eventTime });
+      subject = `follow_up:${d.customer_uid}`;
     } else {
       const [kind, field] = MONEY_EVENT[e.name];
       info = holdMoney(kind, d[field], d, { at, eventTime });
@@ -507,7 +631,7 @@ export function createWholesaleService(ctx) {
     try {
       automations.emit(e.name, {
         key: e.key, name: e.name, time: isoTime(e.time), backfill: e.data.backfill === true, by: e.data.by ?? null,
-        customerUid, orderUid: info.orderUid ?? null,
+        customerUid, orderUid: info.orderUid ?? null, noteUid: info.noteUid ?? null,
         accountId: c?.account_id ?? null, clientId: c?.client_id ?? null, linked: Boolean(c?.account_id),
         data: e.data,
       });
@@ -588,6 +712,31 @@ export function createWholesaleService(ctx) {
     return byUid;
   }
 
+  /**
+   * D5: attachments that changed (linked, unlinked, moved to another account or client), emitted to the
+   * automations as 'wholesale.attachment' once they are committed — the follow-up automation makes,
+   * moves or finishes a customer's follow-up task with them. Collected while a transaction is open (a
+   * person's link is one transaction with its reconcile) and emitted by flushAttachments() after it.
+   */
+  const attachmentChanges = [];
+  function flushAttachments() {
+    if (db.inTransaction || !attachmentChanges.length) return;
+    const changes = attachmentChanges.splice(0);
+    const automations = services.automations;
+    if (!automations?.emit) return;
+    for (const c of changes) {
+      try {
+        automations.emit(ATTACHMENT_EVENT, {
+          key: newId(), name: ATTACHMENT_EVENT, time: now(), backfill: false, by: null,
+          customerUid: c.customerUid, orderUid: null, accountId: c.accountId, clientId: c.clientId, linked: Boolean(c.accountId),
+          previousAccountId: c.previousAccountId, data: null,
+        });
+      } catch (err) {
+        log?.error?.(`automations for ${ATTACHMENT_EVENT} failed:`, err);
+      }
+    }
+  }
+
   /** Attach / move / detach `rows` (held customers) to match the links, in one transaction. → how many changed. */
   function reconcileRows(rows, byUid, actor) {
     const at = now();
@@ -603,6 +752,9 @@ export function createWholesaleService(ctx) {
         q.attach.run({ uid: row.uid, account_id: accountId, client_id: clientId, at: accountId ? at : null, problem });
         for (const s of q.dirtyItemsOf) s.run(row.uid);
         if (accountId && accountId !== row.account_id) attachRules(row.uid, accountId, actor);
+        if (accountId !== row.account_id || clientId !== row.client_id) {
+          attachmentChanges.push({ customerUid: row.uid, accountId, clientId, previousAccountId: row.account_id ?? null });
+        }
         changed += 1;
       }
     })();
@@ -617,6 +769,7 @@ export function createWholesaleService(ctx) {
     const rows = only ? [...only].map((uid) => q.customer.get(uid)).filter(Boolean) : q.allCustomers.all();
     const changed = reconcileRows(rows, linksByUid(), actor);
     project();
+    flushAttachments(); // not inside a person's link transaction: they flush after it commits
     return { changed };
   }
 
@@ -638,6 +791,7 @@ export function createWholesaleService(ctx) {
           const chunk = rows.slice(i, i + RECONCILE_CHUNK).map((r) => q.customer.get(r.uid)).filter(Boolean);
           changed += reconcileRows(chunk, byUid, actor);
           await projectAsync();
+          flushAttachments();
           await yieldNow();
         }
         await projectAsync(); // anything still dirty (a crash, a restore)
@@ -842,6 +996,27 @@ export function createWholesaleService(ctx) {
       gone: c.gone === 1,
       ...customerFigures(q.ordersOf.all(c.uid), q.moneyOf.all(c.uid)),
       ...cardRhythm(c),
+      follow_up_date: c.gone === 1 ? null : (c.follow_up_date ?? null), // D5
+    };
+  }
+
+  /**
+   * D5: a note of a linked customer, while the note is live and its customer isn't deleted there (the
+   * Order Manager deletes a customer's notes with it; they come back if the customer does).
+   */
+  function desiredNote(n) {
+    const target = attachmentOf(n.customer_uid);
+    if (!target || n.deleted || !n.snapshot || !NOTE_TYPE_SET.has(n.type)) return null;
+    if (q.customer.get(n.customer_uid)?.gone) return null;
+    return {
+      ...target,
+      customer_uid: n.customer_uid,
+      note_uid: n.uid,
+      number: n.number,
+      type: n.type,
+      body: clip(n.body ?? '', 20_000),
+      at: n.at ?? now(),
+      written_by: n.written_by,
     };
   }
 
@@ -868,6 +1043,7 @@ export function createWholesaleService(ctx) {
       [q.dirtyOrders, 'wholesale_order', desiredOrder, q.orderDone],
       [q.dirtyMoney, 'wholesale_entry', desiredEntry, q.moneyDone],
       [q.dirtyCustomers, 'wholesale_customer', desiredCustomer, q.customerDone],
+      [q.dirtyNotes, 'wholesale_note', desiredNote, q.noteDone], // D5
     ];
     for (const [select, entity, desired, done] of kinds) {
       let after = '';
@@ -971,6 +1147,7 @@ export function createWholesaleService(ctx) {
       write({ entity: 'link', op: 'create', fields: { account_id: account, app: APP, external_id: uid, matched_by: 'approved' } });
       reconcile({ only: [uid], actor });
     })();
+    flushAttachments();
     return linkedView(q.customer.get(uid));
   }
 
@@ -987,6 +1164,7 @@ export function createWholesaleService(ctx) {
       write({ entity: 'link', op: 'create', fields: { account_id: accountId, app: APP, external_id: uid, matched_by: 'approved' } });
       reconcile({ only: [uid], actor });
     })();
+    flushAttachments();
     return linkedView(q.customer.get(uid));
   }
 
@@ -1004,6 +1182,7 @@ export function createWholesaleService(ctx) {
       for (const l of links) write({ entity: 'link', op: 'delete', recordId: l.id });
       reconcile({ only: [uid], actor });
     })();
+    flushAttachments();
     return waitingView(q.customer.get(uid));
   }
 
@@ -1021,7 +1200,10 @@ export function createWholesaleService(ctx) {
   }
   function waitingView(c) {
     const f = figuresOf(c.uid);
-    return { ...base(c), orders: f.order_count, lastOrderDate: f.last_order_date, spendCents: f.spend_cents };
+    return {
+      ...base(c), orders: f.order_count, lastOrderDate: f.last_order_date, spendCents: f.spend_cents,
+      notes: q.notesWaitingOf.get(c.uid).n, followUpDate: c.gone ? null : (c.follow_up_date ?? null), // D5
+    };
   }
   function linkedView(c) {
     const f = figuresOf(c.uid);
@@ -1098,9 +1280,25 @@ export function createWholesaleService(ctx) {
     /** How many held customers are attached to an account (two Order Manager customers on one account). */
     attachedOn: (accountId) => q.attachedOn.get(accountId).n,
     figuresOf,
+    /** D5: uids of held customers with a follow-up date. */
+    customersWithFollowUp: () => q.withFollowUp.all().map((r) => r.uid),
   };
   if (services.automations && services.planner) {
     registerWholesaleAutomations({ automations: services.automations, planner: services.planner, crm, reads, log });
+    registerFollowUpAutomation({ automations: services.automations, planner: services.planner, crm, reads });
+  }
+
+  /**
+   * D5, at start (after the start's reconcile): every customer's follow-up task checked against the
+   * held state — after a restore (tasks rolled back, the holding area not) and after a run that failed.
+   * One 'wholesale.check' event: it runs (one run row) only when some task would change.
+   */
+  function checkFollowUps() {
+    if (!services.automations?.emit) return [];
+    return services.automations.emit(CHECK_EVENT, {
+      key: newId(), name: CHECK_EVENT, time: now(), backfill: false, by: null,
+      customerUid: null, orderUid: null, accountId: null, clientId: null, linked: false, data: null,
+    });
   }
 
   return {
@@ -1109,6 +1307,9 @@ export function createWholesaleService(ctx) {
     owingOf: (uid) => owingByOrder(q.ordersFull.all(uid), q.moneyOf.all(uid)),
     /** Latest Order Manager order time per client (Map client_id -> at), for "last activity" elsewhere (planner). */
     lastOrderAtByClient: () => new Map(lastOrders.all().map((r) => [r.client_id, r.at])),
+    /** D5: latest Order Manager order or note time per client (Map client_id -> at): "last activity" elsewhere. */
+    lastActivityAtByClient: () => new Map(lastOrdersAndNotes.all().map((r) => [r.client_id, r.at])),
+    checkFollowUps,
     makeSecret, secretState, connectionInfo,
     linkToClient, createClient, unlink, list, waitingCounts,
     isPaused: () => handle.isPaused(),

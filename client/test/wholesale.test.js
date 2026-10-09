@@ -14,7 +14,7 @@ import { SyncError } from '../src/sync/engine.js';
 import { filterTimeline } from '../src/modules/crm/logic.js';
 import {
   wholesaleItems, activityItem, sumCards, orderItem, entryItem, lastOrderByClient, mergeLastActivity,
-  isQuietRegular, quietRegularText, quietFromByClient, daysBetween,
+  isQuietRegular, quietRegularText, quietFromByClient, daysBetween, noteItem, nextFollowUp, NOTE_LABELS,
 } from '../src/modules/wholesale/logic.js';
 import { buildClientIndex } from '../src/modules/crm/logic.js';
 import { womKit } from '../../server/test/fixtures/wom.js';
@@ -167,4 +167,68 @@ test('a device gets the quiet-regular flag for a regular past their usual gap, a
   assert.equal(card.last_order_date, today);
   assert.equal(isQuietRegular(card, today), false);
   assert.equal(card.quiet_from, addDays(today, 15));
+});
+
+// ---- D5: notes and follow-ups from the Order Manager -------------------------------------------------
+
+test('notes as timeline items: their own type (a follow-up done under Notes), business wholesale, who wrote it; the next follow-up', () => {
+  const call = noteItem({ id: 'n1', account_id: 'a', type: 'call', body: 'Wants 3mg', at: '2026-10-01T14:00:00.000Z', written_by: 'sam' });
+  assert.deepEqual([call.source, call.type, call.title, call.body, call.by, call.business_id, call.struck], ['wholesale_note', 'call', 'Call', 'Wants 3mg', 'sam', BUSINESS_IDS.wholesale, false]);
+  const done = noteItem({ id: 'n2', account_id: 'a', type: 'follow_up', body: 'Followed up', at: '2026-10-02T14:00:00.000Z', written_by: null });
+  assert.deepEqual([done.type, done.title, done.by], ['note', NOTE_LABELS.follow_up, null]);
+  assert.equal(NOTE_LABELS.follow_up, 'Follow-up done');
+  const items = [...wholesaleItems([], [], [{ id: 'n1', account_id: 'a', type: 'call', body: 'x', at: '2026-10-01T14:00:00.000Z' }, { id: 'n2', account_id: 'b', type: 'follow_up', body: 'y', at: '2026-10-02T14:00:00.000Z' }]),
+    activityItem({ id: 'mine', client_id: 'k', type: 'note', body: 'mine', at: '2026-09-01T00:00:00.000Z' })];
+  assert.deepEqual(filterTimeline(items, { type: 'note' }).map((x) => x.id), ['n2', 'mine'], 'Notes: a follow-up done there and our own');
+  assert.deepEqual(filterTimeline(items, { type: 'call' }).map((x) => x.id), ['n1']);
+  assert.deepEqual(filterTimeline(items, { business: BUSINESS_IDS.wholesale }).map((x) => x.id), ['n2', 'n1']);
+  assert.deepEqual(filterTimeline(items, { account: 'b' }).map((x) => x.id), ['n2']);
+  assert.equal(nextFollowUp([]), null);
+  assert.equal(nextFollowUp([{ follow_up_date: '2026-10-20' }, { follow_up_date: '2026-10-12', gone: true }, { follow_up_date: '2026-10-15' }, { follow_up_date: null }]), '2026-10-15');
+});
+
+test('a device pulls a linked customer’s notes and follow-up: on the timeline, offline too; a deleted note goes; unlinking takes them off', async (t) => {
+  const server = await startServer(t, undefined, { crm: true });
+  const secret = server.ctx.services.wholesale.makeSecret({ actor: 'owner' });
+  const phone = await makeDevice(t, server, 'partner');
+  const e = phone.engine;
+  const clientId = await e.create('client', { name: 'Lefty’s', status: 'active' });
+  const accountId = await e.create('account', { client_id: clientId, name: 'Lefty’s Vape Shop' });
+  await e.create('activity', { client_id: clientId, type: 'note', body: 'Our own note', at: '2026-09-01T15:00:00.000Z' });
+  await e.syncNow();
+  const om = womKit();
+  const c = om.customer();
+  const call = om.note(c, { type: 'call', body: 'Asked about Velo', at: '2026-10-01T14:00:00.000Z', written_by: 'sam' });
+  const email = om.note(c, { type: 'email', body: 'Sent the price list', at: '2026-10-03T14:00:00.000Z' });
+  assert.equal((await postEvents(server.base, secret, [om.customerCreated(c), om.noteAdded(call), om.noteAdded(email), om.followUpChanged(c, '2026-10-20')])).status, 200);
+  const owner = sessionFor(server.ctx, server.users.owner).cookie;
+  const post = (path) => fetch(`${server.base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', origin: server.base, cookie: owner }, body: JSON.stringify({ clientId, accountId }) });
+  assert.equal((await post(`/api/wholesale/customers/${c.customer_uid}/link`)).status, 200);
+  await e.syncNow();
+  let [notes, activities, cards, tasks] = await cachedLists(e, ['wholesale_note', 'activity', 'wholesale_customer', 'task']);
+  assert.equal(notes.where('client_id', clientId).length, 2);
+  const items = [...activities.where('client_id', clientId).map(activityItem), ...wholesaleItems([], [], notes.where('client_id', clientId))];
+  assert.deepEqual(filterTimeline(items, {}).map((x) => x.body), ['Sent the price list', 'Asked about Velo', 'Our own note']);
+  assert.equal(nextFollowUp(cards.records), '2026-10-20', 'the account card’s next follow-up');
+  assert.deepEqual(tasks.records.filter((x) => /^Follow up with/.test(x.title)).map((x) => [x.due_date, x.client_id]), [['2026-10-20', clientId]]);
+  // The list's and the review's "last activity" count the notes.
+  assert.equal(reviewLastActivity(activities, (await cachedLists(e, ['wholesale_order']))[0], notes).get(clientId), '2026-10-03T14:00:00.000Z');
+  // Offline: still there.
+  phone.online = false;
+  assert.equal((await e.listMany(['wholesale_note'])).wholesale_note.length, 2);
+  phone.online = true;
+  // Read-only on devices.
+  assert.equal(e.definition('wholesale_note').readOnly, true);
+  await assert.rejects(e.update('wholesale_note', notes.records[0].id, { body: 'x' }), (err) => err instanceof SyncError && err.code === 'op_not_allowed');
+  // Deleted there → gone from the device.
+  assert.equal((await postEvents(server.base, secret, [om.noteDeleted(call)])).status, 200);
+  await e.syncNow();
+  [notes] = await cachedLists(e, ['wholesale_note']);
+  assert.deepEqual(notes.records.map((n) => n.body), ['Sent the price list']);
+  // Unlinked → off the device; the follow-up task is finished.
+  assert.equal((await post(`/api/wholesale/customers/${c.customer_uid}/unlink`)).status, 200);
+  await e.syncNow();
+  [notes, tasks] = await cachedLists(e, ['wholesale_note', 'task']);
+  assert.equal(notes.records.length, 0);
+  assert.ok(tasks.records.find((x) => /^Follow up with/.test(x.title)).done_at);
 });

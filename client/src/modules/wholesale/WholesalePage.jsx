@@ -27,6 +27,9 @@ const syncSoon = () => { try { store.syncNow(); } catch { /* signed out meanwhil
 function Facts({ c }) {
   const bits = [`${c.orders} order${c.orders === 1 ? '' : 's'}`, `spend ${formatMoney(c.spendCents) || '$0'}`];
   if (c.lastOrderDate) bits.push(`last order ${formatDate(c.lastOrderDate)}`);
+  // D5: its notes from the Order Manager wait here too, and its follow-up date (a task once it is linked).
+  if (c.notes) bits.push(`${c.notes} note${c.notes === 1 ? '' : 's'} waiting`);
+  if (c.followUpDate) bits.push(`follow-up ${formatDate(c.followUpDate)}`);
   return <span style={{ ...muted, fontVariantNumeric: 'tabular-nums' }}>{bits.join(' · ')}</span>;
 }
 
@@ -102,8 +105,8 @@ function LinkSheet({ customer, onClose, onDone }) {
     >
       <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
         <p style={{ ...muted, margin: 0 }}>
-          Its orders, payments, returns and refunds go on the client’s timeline, and the account is marked age-restricted
-          with a wholesale relationship if it has none.
+          Its orders, payments, returns, refunds and notes go on the client’s timeline (a follow-up date becomes a task),
+          and the account is marked age-restricted with a wholesale relationship if it has none.
         </p>
         <TextField label="Find the client" value={q} onChange={(e) => { setQ(e.target.value); setClientId(null); }} autoComplete="off" />
         {!clientId ? (
@@ -212,7 +215,7 @@ export default function WholesalePage() {
         {tab === 'waiting' && counts ? (
           <p style={{ ...muted, margin: 0 }} data-testid="waiting-counts">
             {counts.customers
-              ? `${counts.customers} customer${counts.customers === 1 ? '' : 's'} waiting · their ${counts.orders} order${counts.orders === 1 ? '' : 's'} and ${counts.money} payment${counts.money === 1 ? '' : 's'}, refunds or returns are kept until they are linked`
+              ? `${counts.customers} customer${counts.customers === 1 ? '' : 's'} waiting · their ${counts.orders} order${counts.orders === 1 ? '' : 's'}, ${counts.money} payment${counts.money === 1 ? '' : 's'}, refunds or returns${counts.notes ? ` and ${counts.notes} note${counts.notes === 1 ? '' : 's'}` : ''} are kept until they are linked`
               : 'Every customer the Order Manager has sent is linked.'}
             {' '}· {counts.linked} linked
           </p>

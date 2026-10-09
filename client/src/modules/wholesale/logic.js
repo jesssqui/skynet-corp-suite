@@ -92,9 +92,44 @@ export function entryItem(e) {
   };
 }
 
-/** A client's Order Manager records as timeline items (merged with its activities by the page). */
-export function wholesaleItems(orders = [], entries = []) {
-  return [...orders.map(orderItem), ...entries.map(entryItem)];
+// ---- D5: notes from the Order Manager -------------------------------------------------------------
+// Its CRM notes (a call, an email, a meeting, a note, a follow-up marked done) for linked customers:
+// timeline rows like the suite's own activities, filtered under the matching activity type — a
+// follow-up marked done under Notes — and always business wholesale, with who wrote it there.
+
+export const NOTE_LABELS = Object.freeze({ note: 'Note', call: 'Call', email: 'Email', meeting: 'Meeting', follow_up: 'Follow-up done' });
+/** The timeline's Type filter a note shows under: its own type; a follow-up marked done as a note. */
+export const NOTE_FILTER_TYPES = Object.freeze({ note: 'note', call: 'call', email: 'email', meeting: 'meeting', follow_up: 'note' });
+
+/** One Order Manager note as a timeline item. */
+export function noteItem(n) {
+  return {
+    id: n.id,
+    source: 'wholesale_note',
+    type: NOTE_FILTER_TYPES[n.type] ?? 'note',
+    business_id: WHOLESALE_BUSINESS_ID,
+    account_id: n.account_id,
+    at: n.at,
+    title: NOTE_LABELS[n.type] ?? 'Note',
+    facts: null,
+    body: n.body || null,
+    by: n.written_by ?? null,
+    status: null,
+    struck: false,
+    record: n,
+  };
+}
+
+/** A client's Order Manager records (D5: and notes) as timeline items (merged with its activities by the page). */
+export function wholesaleItems(orders = [], entries = [], notes = []) {
+  return [...orders.map(orderItem), ...entries.map(entryItem), ...notes.map(noteItem)];
+}
+
+/** D5: "Next follow-up in the Order Manager: Oct 12" — the earliest follow-up date on these cards (deleted customers left out), or null. */
+export function nextFollowUp(cards = []) {
+  let next = null;
+  for (const c of cards) if (!c.gone && c.follow_up_date && (!next || c.follow_up_date < next)) next = c.follow_up_date;
+  return next;
 }
 
 /** Activities as timeline items in the same shape (the page renders both). */

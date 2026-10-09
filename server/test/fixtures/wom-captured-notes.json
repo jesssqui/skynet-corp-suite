@@ -1,0 +1,319 @@
+{
+ "capturedAt": "2026-10-09T00:25:59.340Z",
+ "from": "scripts/wom-e2e.mjs --capture (step 7: the A11 events and their customers’ customer.created)",
+ "events": [
+  {
+   "name": "customer.created",
+   "version": 1,
+   "key": "01a11e0d-5454-7456-a470-7cfdbb89d9b5",
+   "source": "wom",
+   "time": "2026-10-09T00:25:52.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "customer": {
+     "customer_uid": "01a11e0d-542d-779d-a5fc-81b476151fb7",
+     "number": 1,
+     "business_name": "Lefty’s Vape Shop",
+     "contact_name": "Lefty",
+     "email": "lefty@leftys.ca",
+     "phone": "5195550100",
+     "contact_problems": [],
+     "address": {
+      "line1": "12 Main St",
+      "line2": null,
+      "city": "Simcoe",
+      "province": "ON",
+      "postal_code": "N3Y 4K3",
+      "country": "CA"
+     },
+     "notes": null,
+     "tax_exempt": false,
+     "group": null,
+     "created_at": "2026-10-09T00:25:52.000Z"
+    }
+   }
+  },
+  {
+   "name": "customer.created",
+   "version": 1,
+   "key": "01a11e0d-65bd-7406-a6b5-840bbdea3ccd",
+   "source": "wom",
+   "time": "2026-10-09T00:25:56.925Z",
+   "data": {
+    "by": "admin",
+    "customer": {
+     "customer_uid": "01a11e0d-65bd-7405-be2c-b2a0992f4988",
+     "number": 2,
+     "business_name": "Northwind Corner Store",
+     "contact_name": "Robin",
+     "email": "robin@northwind.example",
+     "phone": null,
+     "contact_problems": [],
+     "address": {
+      "line1": null,
+      "line2": null,
+      "city": null,
+      "province": null,
+      "postal_code": null,
+      "country": "CA"
+     },
+     "notes": null,
+     "tax_exempt": false,
+     "group": null,
+     "created_at": "2026-10-09T00:25:56.000Z"
+    }
+   }
+  },
+  {
+   "name": "note.added",
+   "version": 1,
+   "key": "01a11e0d-66a7-7525-8c38-9161c98941d5",
+   "source": "wom",
+   "time": "2026-10-09T00:25:57.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "note": {
+     "note_uid": "01a11e0d-66a0-728e-b5e2-ecf063d4524d",
+     "number": 1,
+     "customer_uid": "01a11e0d-542d-779d-a5fc-81b476151fb7",
+     "type": "call",
+     "body": "Asked about Zyn 3mg",
+     "at": "2026-10-09T00:25:57.000Z",
+     "written_by": "admin"
+    }
+   }
+  },
+  {
+   "name": "followup.changed",
+   "version": 1,
+   "key": "01a11e0d-66a8-72db-b8a1-7f072a627f15",
+   "source": "wom",
+   "time": "2026-10-09T00:25:57.160Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "customer_uid": "01a11e0d-65bd-7405-be2c-b2a0992f4988",
+    "follow_up_date": "2026-10-14",
+    "done": false
+   }
+  },
+  {
+   "name": "note.added",
+   "version": 1,
+   "key": "01a11e0d-687b-73cc-8f58-f3185827a7fd",
+   "source": "wom",
+   "time": "2026-10-09T00:25:57.627Z",
+   "data": {
+    "by": "admin",
+    "note": {
+     "note_uid": "01a11e0d-687a-7316-bb7c-b8db5b288f60",
+     "number": 2,
+     "customer_uid": "01a11e0d-542d-779d-a5fc-81b476151fb7",
+     "type": "email",
+     "body": "Sent the October price list",
+     "at": "2026-10-09T00:25:57.000Z",
+     "written_by": "admin"
+    }
+   }
+  },
+  {
+   "name": "followup.changed",
+   "version": 1,
+   "key": "01a11e0d-687d-7469-ae3b-834675b41731",
+   "source": "wom",
+   "time": "2026-10-09T00:25:57.629Z",
+   "data": {
+    "by": "admin",
+    "customer_uid": "01a11e0d-542d-779d-a5fc-81b476151fb7",
+    "follow_up_date": "2026-10-12",
+    "done": false
+   }
+  },
+  {
+   "name": "followup.changed",
+   "version": 1,
+   "key": "01a11e0d-69b2-751d-8065-8eb48e8ef20d",
+   "source": "wom",
+   "time": "2026-10-09T00:25:57.938Z",
+   "data": {
+    "by": "admin",
+    "customer_uid": "01a11e0d-542d-779d-a5fc-81b476151fb7",
+    "follow_up_date": "2026-10-19",
+    "done": false
+   }
+  },
+  {
+   "name": "followup.changed",
+   "version": 1,
+   "key": "01a11e0d-6ae7-71a9-9bdf-feaf8e0d921e",
+   "source": "wom",
+   "time": "2026-10-09T00:25:58.247Z",
+   "data": {
+    "by": "admin",
+    "customer_uid": "01a11e0d-542d-779d-a5fc-81b476151fb7",
+    "follow_up_date": null,
+    "done": true
+   }
+  },
+  {
+   "name": "note.added",
+   "version": 1,
+   "key": "01a11e0d-6ae8-743b-ad03-fc8f260ae340",
+   "source": "wom",
+   "time": "2026-10-09T00:25:58.248Z",
+   "data": {
+    "by": "admin",
+    "note": {
+     "note_uid": "01a11e0d-6ae7-71a8-9d08-288ec7bbcb47",
+     "number": 3,
+     "customer_uid": "01a11e0d-542d-779d-a5fc-81b476151fb7",
+     "type": "follow_up",
+     "body": "Called, ordering Friday",
+     "at": "2026-10-09T00:25:58.000Z",
+     "written_by": "admin"
+    }
+   }
+  },
+  {
+   "name": "note.deleted",
+   "version": 1,
+   "key": "01a11e0d-6aea-7113-ac71-b6ec717c7bd3",
+   "source": "wom",
+   "time": "2026-10-09T00:25:58.250Z",
+   "data": {
+    "by": "admin",
+    "note": {
+     "note_uid": "01a11e0d-687a-7316-bb7c-b8db5b288f60",
+     "number": 2,
+     "customer_uid": "01a11e0d-542d-779d-a5fc-81b476151fb7"
+    }
+   }
+  },
+  {
+   "name": "customer.created",
+   "version": 1,
+   "key": "01a11e0d-6c20-73a2-9834-66d1ef2b11a7",
+   "source": "wom",
+   "time": "2026-10-09T00:25:58.560Z",
+   "data": {
+    "by": "admin",
+    "customer": {
+     "customer_uid": "01a11e0d-6c20-73a1-a929-91cef97b6342",
+     "number": 3,
+     "business_name": "Southside Convenience",
+     "contact_name": null,
+     "email": null,
+     "phone": null,
+     "contact_problems": [],
+     "address": {
+      "line1": null,
+      "line2": null,
+      "city": null,
+      "province": null,
+      "postal_code": null,
+      "country": "CA"
+     },
+     "notes": null,
+     "tax_exempt": false,
+     "group": null,
+     "created_at": "2026-10-09T00:25:58.000Z"
+    }
+   }
+  },
+  {
+   "name": "note.added",
+   "version": 1,
+   "key": "01a11e0d-6c23-77c8-9fe4-402f38ee012d",
+   "source": "wom",
+   "time": "2026-10-09T00:25:58.563Z",
+   "data": {
+    "by": "admin",
+    "note": {
+     "note_uid": "01a11e0d-6c23-77c7-923f-92dc1b853665",
+     "number": 4,
+     "customer_uid": "01a11e0d-6c20-73a1-a929-91cef97b6342",
+     "type": "meeting",
+     "body": "Met at the trade show",
+     "at": "2026-10-09T00:25:58.000Z",
+     "written_by": "admin"
+    }
+   }
+  },
+  {
+   "name": "note.added",
+   "version": 1,
+   "key": "01a11e0d-6d5c-73f8-9bc3-4ad35e7bc527",
+   "source": "wom",
+   "time": "2026-10-09T00:25:57.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "note": {
+     "note_uid": "01a11e0d-66a0-728e-b5e2-ecf063d4524d",
+     "number": 1,
+     "customer_uid": "01a11e0d-542d-779d-a5fc-81b476151fb7",
+     "type": "call",
+     "body": "Asked about Zyn 3mg",
+     "at": "2026-10-09T00:25:57.000Z",
+     "written_by": "admin"
+    }
+   }
+  },
+  {
+   "name": "note.added",
+   "version": 1,
+   "key": "01a11e0d-6d5c-73f9-bb93-966659397bdc",
+   "source": "wom",
+   "time": "2026-10-09T00:25:58.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "note": {
+     "note_uid": "01a11e0d-6ae7-71a8-9d08-288ec7bbcb47",
+     "number": 3,
+     "customer_uid": "01a11e0d-542d-779d-a5fc-81b476151fb7",
+     "type": "follow_up",
+     "body": "Called, ordering Friday",
+     "at": "2026-10-09T00:25:58.000Z",
+     "written_by": "admin"
+    }
+   }
+  },
+  {
+   "name": "note.added",
+   "version": 1,
+   "key": "01a11e0d-6d5c-73fa-80dd-685c4388078a",
+   "source": "wom",
+   "time": "2026-10-09T00:25:58.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "note": {
+     "note_uid": "01a11e0d-6c23-77c7-923f-92dc1b853665",
+     "number": 4,
+     "customer_uid": "01a11e0d-6c20-73a1-a929-91cef97b6342",
+     "type": "meeting",
+     "body": "Met at the trade show",
+     "at": "2026-10-09T00:25:58.000Z",
+     "written_by": "admin"
+    }
+   }
+  },
+  {
+   "name": "followup.changed",
+   "version": 1,
+   "key": "01a11e0d-6d5d-7709-a179-cb909bfd39ab",
+   "source": "wom",
+   "time": "2026-10-09T00:25:58.877Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "customer_uid": "01a11e0d-65bd-7405-be2c-b2a0992f4988",
+    "follow_up_date": "2026-10-14",
+    "done": false
+   }
+  }
+ ]
+}

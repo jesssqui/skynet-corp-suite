@@ -8,7 +8,9 @@
 // placed / edited / packed / shipped / cancelled / returned / deleted / restored, payments, refunds,
 // store credit, a pause and catch-up, and "Forget everything" + "Send existing" (every record sent
 // again with new keys) — checking the suite's timeline records and spend against the Order Manager's own, and (D3)
-// the money owing (balance and over-30-days aging) against its Balances page.
+// the money owing (balance and over-30-days aging) against its Balances page, and (D5) its CRM notes and follow-up
+// dates once "Send CRM notes to the suite" is switched on there: notes on the timeline, follow-up tasks moved and
+// finished, deletes, notes waiting with an unlinked customer, and everything sent again with nothing doubled.
 // --capture writes every event the suite received, in order (test fixtures).
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -281,6 +283,62 @@ async function main() {
     ok(run.status === 'ok' && task && /\$126\.90 \(2 orders\)$/.test(task.title), 'the balance reminder: $126.90 on the two old orders (the oldest-first rule)', { run: run.summary, title: task?.title });
     ok(/Total owing: \$126\.90/.test(task?.notes ?? '') && /To: Robin <robin@northwind\.example>/.test(task?.notes ?? ''), 'its drafted email: the total and the Order Manager’s email');
   }
+
+  console.log('\n7. Notes and follow-ups (D5): "Send CRM notes to the suite" switched on in the Order Manager');
+  const noteRows = () => live('wholesale_notes');
+  const followUps = (title) => sdb.prepare("SELECT * FROM planner_tasks WHERE deleted_at IS NULL AND title = ? ORDER BY created_at, id").all(title);
+  const inDays = (n) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+  // Written before the switch is on: they go with the one-time catch-up when it is turned on.
+  const early1 = (await wom('POST', `/api/crm/customers/${lefty.id}/activities`, { type: 'call', content: 'Asked about Zyn 3mg' })).data;
+  ok(early1?.uid, 'a call logged in the Order Manager before the switch (nothing sent yet)', early1);
+  ok((await wom('PUT', `/api/crm/customers/${corner.id}/follow-up`, { follow_up_date: inDays(5) })).status === 200, 'a follow-up date set for Northwind');
+  await settle();
+  ok(noteRows().length === 0 && followUps('Follow up with Northwind Corner Store').length === 0, 'nothing reached the suite while the switch was off');
+  const on = await wom('POST', '/api/settings/crm/notes', { on: true });
+  ok(on.status === 200 && on.data.backfill, 'switched on: the one-time catch-up queued the notes and follow-ups', on.data);
+  await settle();
+  ok(outbox().refused === undefined, 'nothing refused by the suite (it knows the three events)', omQuery("SELECT name, last_error FROM crm_outbox WHERE status = 'refused'"));
+  {
+    const [n] = noteRows();
+    ok(noteRows().length === 1 && n.type === 'call' && n.body === 'Asked about Zyn 3mg' && n.written_by === 'admin' && n.client_id === clientId,
+      'the call is on Lefty’s timeline (type, text, who wrote it)', noteRows());
+    const [task] = followUps('Follow up with Northwind Corner Store');
+    ok(task && task.due_date === inDays(5) && task.business_id === (await import('@suite/shared/crm')).BUSINESS_IDS.wholesale,
+      'the backfilled follow-up is a task on the wholesale business, due that day', task);
+    ok(live('wholesale_customers', 'customer_uid = ?', cornerUid)[0]?.follow_up_date === inDays(5), 'and on the customer card');
+  }
+  // Live: a note, a follow-up set, moved, then done (its follow-up note comes too); a note deleted.
+  const live1 = (await wom('POST', `/api/crm/customers/${lefty.id}/activities`, { type: 'email', content: 'Sent the October price list' })).data;
+  ok((await wom('PUT', `/api/crm/customers/${lefty.id}/follow-up`, { follow_up_date: inDays(3) })).status === 200, 'Lefty: follow-up in 3 days');
+  await settle();
+  let [leftyTask] = followUps('Follow up with Lefty’s Vape Shop');
+  ok(leftyTask?.due_date === inDays(3) && leftyTask.done_at === null, 'Lefty’s follow-up task, due in 3 days', leftyTask);
+  ok((await wom('PUT', `/api/crm/customers/${lefty.id}/follow-up`, { follow_up_date: inDays(10) })).status === 200, 'snoozed to 10 days');
+  await settle();
+  ok(followUps('Follow up with Lefty’s Vape Shop').length === 1 && followUps('Follow up with Lefty’s Vape Shop')[0].due_date === inDays(10), 'the same task moved');
+  ok((await wom('POST', `/api/crm/customers/${lefty.id}/follow-up/done`, { note: 'Called, ordering Friday' })).status === 200, 'marked done in the Order Manager');
+  ok((await wom('DELETE', `/api/crm/activities/${live1.id}`)).status === 200, 'the email note deleted there');
+  await settle();
+  [leftyTask] = followUps('Follow up with Lefty’s Vape Shop');
+  ok(leftyTask?.done_at && /Done in the Order Manager/.test(leftyTask.notes), 'the task is finished: done in the Order Manager', leftyTask);
+  ok(JSON.stringify(noteRows().map((n) => [n.type, n.body]).sort()) === JSON.stringify([['call', 'Asked about Zyn 3mg'], ['follow_up', 'Called, ordering Friday']]),
+    'the timeline: the call and the follow-up note; the deleted email is gone', noteRows().map((n) => [n.type, n.body]));
+  // A customer not linked yet: its note waits, counted.
+  const south = (await wom('POST', '/api/customers', { business_name: 'Southside Convenience' })).data;
+  await wom('POST', `/api/crm/customers/${south.id}/activities`, { type: 'meeting', content: 'Met at the trade show' });
+  await settle();
+  const waitingSouth = (await suite('GET', '/api/wholesale/waiting')).data.customers.find((c) => c.businessName === 'Southside Convenience');
+  ok(waitingSouth?.notes === 1, 'an unlinked customer’s note waits with it (“1 note waiting”)', waitingSouth);
+  ok(/1 note/.test(ctx.services.connections.get('wom').queueLabel), 'Connections: notes counted', ctx.services.connections.get('wom').queueLabel);
+  // Everything sent again with new keys: nothing doubled.
+  const beforeNotes = { notes: noteRows().length, tasks: sdb.prepare("SELECT count(*) AS n FROM planner_tasks WHERE deleted_at IS NULL AND title LIKE 'Follow up with%'").get().n };
+  ok((await wom('POST', '/api/settings/crm/forget', { confirm: true })).status === 200, 'forgot everything again');
+  await wom('POST', '/api/settings/crm/send-existing');
+  await settle();
+  const afterNotes = { notes: noteRows().length, tasks: sdb.prepare("SELECT count(*) AS n FROM planner_tasks WHERE deleted_at IS NULL AND title LIKE 'Follow up with%'").get().n };
+  ok(JSON.stringify(beforeNotes) === JSON.stringify(afterNotes), 'sent again: each note once, no second follow-up task', { beforeNotes, afterNotes });
+  ok(followUps('Follow up with Northwind Corner Store').filter((x) => !x.done_at).length === 1, 'Northwind’s follow-up: still one open task');
+  ok(outbox().refused === undefined, 'nothing refused');
 
   if (CAPTURE) {
     fs.writeFileSync(CAPTURE, `${JSON.stringify({ capturedAt: new Date().toISOString(), from: 'scripts/wom-e2e.mjs', events: captured }, null, 1)}\n`);

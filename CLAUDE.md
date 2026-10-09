@@ -21,7 +21,8 @@ from **D1** the wholesale connection (module `wholesale`: the signed receiver fo
 holding area for everything it sends, linking its customers to accounts, and their orders, payments, returns and
 refunds on the client timeline with spend and last order), and from **D3** the wholesale automations (same module:
 check-ins for quiet regulars, balance reminders over 30 days with a drafted email, ready-to-ship tasks on packed
-orders, and the "Quiet regular" flag on the client list and page).
+orders, and the "Quiet regular" flag on the client list and page), and from **D5** notes from the Order Manager (same
+module: its CRM notes on the linked client's timeline, and its follow-up dates as tasks).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -92,15 +93,19 @@ server/src/
                            the key file, HMAC check), entities.js (synced wholesale_customer/_order/_entry, server-only
                            check), routes.js (POST /api/wom/events + /api/wholesale/*), migrations/001..003.
                            D3: automations.js (wholesale-check-in, wholesale-balances, wholesale-ready-to-ship), figures.js
-                           also holds orderRhythm / owingByOrder / overdueOrders (pure)
-  backup/                  backup.js, restore.js (+ carryKeptTables: modules' keepOnRestore), schedule.js
+                           also holds orderRhythm / owingByOrder / overdueOrders (pure). D5: followUps.js
+                           (wholesale-follow-ups: followUpPlan, followUpKey), migrations/004_notes.sql (held notes,
+                           follow-up columns, the synced wholesale_notes)
+  backup/                  backup.js, restore.js (D5: runs this version's migrations on the restored copy, then
+                           carryKeptTables: modules' keepOnRestore), schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file)
 server/scripts/            backup.js, restore.js, users.js (CLIs)
 scripts/wom-e2e.mjs        D1: the real Order Manager (a checkout) against a real suite: `npm run test:wom -- <path>`
 server/test/               node --test; helpers.js: tmpDir/testConfig/startApp/testClock/ensureTestUsers/sessionFor/dumpDb;
                            fixtures/syncdemo = test-only synced module; fixtures/conndemo = test-only connection (C8);
-                           fixtures/wom.js = A10 event builders + signed POST (D1), wom-captured-events.json = a
-                           real Order Manager's events (scripts/wom-e2e.mjs --capture)
+                           fixtures/wom.js = A10 event builders + signed POST (D1; D5: note, noteAdded, noteDeleted,
+                           followUpChanged), wom-captured-events.json = a real Order Manager's events and (D5)
+                           wom-captured-notes.json its A11 events (scripts/wom-e2e.mjs --capture)
 client/src/
   main.jsx, App.jsx        providers + router built from the module list, behind AuthGate and SyncProvider;
                            main.jsx registers the service worker (production builds)
@@ -128,8 +133,9 @@ client/src/
   modules/sync/            /sync (Offline data), /sync/attention (Needs attention), /sync/data/:entity (plain records view)
   modules/wholesale/       D1: WholesalePage (/wholesale: waiting for a client / linked; lazy), ConnectionPanel.jsx (the
                            wom card's address + secret, via connections/panels.js; lazy), parts.jsx (timeline rows,
-                           account and client figures on the client page; D3: QuietRegularBadge), logic.js (no React;
-                           D3: isQuietRegular, quietRegularText, quietFromByClient; client/test/wholesale.test.js)
+                           account and client figures on the client page; D3: QuietRegularBadge; D5: note rows, the
+                           next follow-up), logic.js (no React; D3: isQuietRegular, quietRegularText, quietFromByClient;
+                           D5: noteItem, NOTE_LABELS, NOTE_FILTER_TYPES, nextFollowUp; client/test/wholesale.test.js)
   modules/crm/             C3b screens: ClientListPage (/crm), ClientPage (/crm/clients/:id), BusinessesPage
                            (/crm/businesses), forms.jsx (add/edit sheets), parts.jsx (chips, RecordSync, FormSheet),
                            data.js (cached offline reads), formFields.js (form values -> changed fields), logic.js (search, timeline filters, money, consent, errors — no
@@ -166,7 +172,8 @@ One folder per module on each side, same name on both (`server/src/modules/healt
   current rows across a restore (`restore.js` copies them into the restored copy) — for switches, never for data. **One
   exception (D1)**: the wholesale module's holding area, event keys and receiver status are kept too — they mirror
   another app (the Order Manager), which never re-sends what it already delivered, so rolling them back would lose its
-  changes (deletes above all) for good; the synced records are rebuilt from them at start. `bodyLimits: { '/import': '8mb' }` lets a path take JSON bodies bigger
+  changes (deletes above all) for good; the synced records are rebuilt from them at start (D5: its held notes and
+  follow-up dates too). `bodyLimits: { '/import': '8mb' }` lets a path take JSON bodies bigger
   than the app's 1 MB (signed in only; crm's CSV import). `start(ctx, service)` runs once every service exists (auth uses it to notice a
   restore). Routes mount at `/api/<name>`. **Every `createRouter` route requires a signed-in session**
   (app.js puts `auth.requireSession` in front; `req.auth = { user: { id, actor, username, displayName }, device: { id,
@@ -314,8 +321,10 @@ Design (code in `server/src/backup/`, tests in `server/test/backup.test.js`):
   setup, no Node on the Mac and no `docker exec` from a plist; it ships with the image and moves with it (e.g. to Fly.io).
   Trade-off: no backups while the app is down — but then nothing changes either; the catch-up covers restarts.
 - **Restore** (`restore.js`) refuses while the server's heartbeat file (`<db>.server-lock`, refreshed every 15 s, removed
-  on clean shutdown) is fresh, verifies the file, saves the current database as `backups/pre-restore-*.db`, removes
-  `-wal/-shm`, swaps the file in. The heartbeat works across containers sharing the volume (a port check would not).
+  on clean shutdown) is fresh, verifies the file, (D5) runs this version's migrations on the restored copy — so a backup
+  from before a kept table or column existed still receives the current rows (`keepOnRestore`; best effort, the next
+  start runs a migration that failed) — carries the kept tables, saves the current database as
+  `backups/pre-restore-*.db`, removes `-wal/-shm`, swaps the file in. The heartbeat works across containers sharing the volume (a port check would not).
 
 ## Offline sync (C2a: server half)
 Devices (iPhone, Mac) keep working with no connection: they make records with their own IDs and save every change as
@@ -1107,7 +1116,8 @@ switch pauses it without breaking the app.
   `connections_changes` (actor, device, time) and the log. **They survive restores**: the module lists
   `keepOnRestore: ['connections_switches', 'connections_changes']`, and `restore.js` (`carryKeptTables`) copies those
   tables from the database being replaced into the restored copy — a restore never quietly switches a paused connection
-  back on. (A backup from before C8 has no such table: its switches start on. Restores by hand aren't covered.)
+  back on. (Since D5 the restored copy is migrated first, so a backup from before C8 gets the current switches too.
+  Restores by hand aren't covered.)
 - **Rows today**: the off-machine backup (from `backup/status.json`: last success, last error, "queue" = whole days
   behind once the last good backup is over 26 h old; `pausable: false` — backups are never pausable from the app), the
   Order Manager (`wom`, D1 — real, see "Wholesale") and placeholders "Not connected yet · comes with …": Apple
@@ -1158,7 +1168,8 @@ it uses.
   its run key) the first time the scheduler looks afterwards — the page shows it; no late task is made for a week
   that is over; nothing is noted for an automation that had never run before. A failed scheduled run is retried no sooner than 15 min later (`RETRY_MS`).
   `run` also gets `update(entity, id, fields)` (sync, as `system`) for records it made before; an alert is raised
-  when a run created **or updated** something. D3 added `madeLike(prefix)` (everything made under keys starting with
+  when a run created **or updated** something. (D5: `automations.madeLike(id, prefix)` for reads outside a run, as
+  `made(id, key)`.) D3 added `madeLike(prefix)` (everything made under keys starting with
   it, with `key`: "every task for this customer" when keys are `<customer uid>:<…>`) and `remember(key, entity, id)`
   (file something made earlier under one more key), and `automations.made(id, key)` for reads outside a run.
   Every `run` must also be idempotent by content (`made(key)` = what it made before): **Run now** (`POST …/run`) relies
@@ -1167,7 +1178,8 @@ it uses.
 - **Scheduler**: `startScheduler()` (from `src/index.js` when `AUTOMATIONS_ENABLED`, on by default in production) —
   one look 15 s after start, then every minute; runs are synchronous so looks never overlap. Tests call `tick()` and
   move `ctx.now` (all run times use the module's clock). `emit(event, data)` is the event hook (D1's wholesale module
-  emits the Order Manager's events). An event trigger may list several `events` (D3) and an `accept(data)` filter: an
+  emits the Order Manager's events, and (D5) two of its own: `wholesale.attachment` when a customer is linked, unlinked
+  or moved, `wholesale.check` at start). An event trigger may list several `events` (D3) and an `accept(data)` filter: an
   event it doesn't accept runs nothing and leaves **no run row** (so a backfill of thousands of events, or events for
   unlinked customers, don't fill the run log); an `accept` that throws is logged and skipped.
 - **Switches**: `automations_settings` (no row = the automation's defaults), changes logged in
@@ -1245,6 +1257,9 @@ Registered last (after crm, planner, connections, automations); reads/writes onl
   year), and never a key the Order Manager still lists as waiting. Not pruned yet (one small row per event). After the batch: `reconcile({ only: touched })`,
   then `automations.emit(name, { key, name, time, backfill, by, customerUid, orderUid, accountId, clientId, linked, data })`
   for each applied event (D3 hangs automations off these; a duplicate emits nothing).
+
+**D5** added the Order Manager's A11 events (`note.added`, `note.deleted`, `followup.changed`): held, shown and turned
+into tasks as described in "Wholesale notes and follow-ups (D5)".
 
 **The secret**: made in the suite (`POST /api/wholesale/connection/secret`, either person; 32 random bytes,
 base64url) and answered **once** (`{ secret, connection }`); stored AES-256-GCM-encrypted in `wholesale_connection`
@@ -1331,7 +1346,8 @@ client uses the device's copy). The `wom` card on System → Connections: the ad
 state, **Make the secret / New secret…** (shown once, Copy).
 
 **Connection row**: last success = last good request; last error = last refused request with a count; queue = held
-orders + money of unlinked, not-gone customers ("N records from M customers waiting for a client"); detail = linked
+orders + money (D5: + live notes) of unlinked, not-gone customers ("N records and K notes from M customers waiting for
+a client"); detail = linked
 count, refused events, several-links problems. pause()/resume() only log (the receiver reads the
 switch on every request).
 
@@ -1440,6 +1456,87 @@ by the suite: when their reason is gone they are **finished** (`done_at`) with a
   (a customer who pauses for winter), a "snooze" for a check-in, and emailing for real (would need consent per
   business and an explicit person's send — never automatic).
 
+## Wholesale notes and follow-ups (wholesale module, D5)
+Code: the receiver and holding area in `server/src/modules/wholesale/` (`events.js` checks, `service.js` hold / project,
+`entities.js` `wholesale_note`, migration `004_notes.sql`), the follow-up automation `followUps.js`; client
+`client/src/modules/wholesale/logic.js` + `parts.jsx` (+ the client page, the Wholesale page); tests
+`server/test/wholesale-notes.test.js` (TZ Toronto; with the real Order Manager's A11 events,
+`fixtures/wom-captured-notes.json`), `client/test/wholesale.test.js`, `test/e2e/wholesale-notes.e2e.test.js`, and step 7
+of `scripts/wom-e2e.mjs`. The sender's spec: the Order Manager's CLAUDE.md, "CRM notes to the suite (A11)" and the A10
+events table. It sends them only while its **"Send CRM notes to the suite"** switch is on (off by default; turn it on
+after deploying D5 — before, this receiver refused the three names and the Order Manager parked them as refused).
+**Refused note events from before**: not "Send again" with an Order Manager older than A11b — for a note added then
+deleted it re-sends only the add (the refused delete is marked superseded), leaving a deleted note on the timeline.
+A11b's Send again re-sends every refused event of a record, in order (the add, then the delete — the suite applies the
+add, then deletes it), and of a customer's refused follow-up dates only the latest; update the Order Manager first
+(DEPLOY.md step 6.4).
+- **The events** (envelope unchanged; `eventProblem` checks exactly these, a malformed one is refused with a reason):
+  `note.added { note: { note_uid, number, customer_uid, type: note|call|email|meeting|follow_up, body, at, written_by } }`
+  (`at` may be null — a backup import there can lose it: the time held before, else the event's `time`, is used)
+  (envelope time = when queued, or `at` for a backfill), `note.deleted { note: { note_uid, number|null,
+  customer_uid|null }, reason?: customer_deleted|gone|gone_after_restore }` (no reason = by hand),
+  `followup.changed { customer_uid, follow_up_date: 'YYYY-MM-DD'|null, done }` (a state; `done: true` only with null).
+  A type the Order Manager adds later is refused until the suite knows it (it waits there for "Send again").
+- **Held notes** (`wholesale_held_notes`, not synced, `keepOnRestore` with the rest of the holding area — same
+  reasoning): an upsert by `note_uid`, latest arrival wins (`note.added` for a held note replaces its text). A delete only
+  marks it (`deleted`, `deleted_reason`, snapshot kept). **Ordering decision**: events apply in arrival order (the Order
+  Manager's queue order), and a deleted note — including a **tombstone**, the delete of a note never seen — comes back
+  **only through a backfill `note.added`**: the Order Manager's catch-up sends only notes that exist there now (e.g. a
+  backup import brought one back), while a live `note.added` for a deleted note can only be an old event sent again after
+  the delete (a refused add "sent again"): it is answered `applied`, its text kept, and the note stays deleted. A note
+  for a customer never heard of gets a stub customer row (the Order Manager always sends `customer.created` first; just
+  in case). A `note.deleted` after its customer's own delete (the switch was off when the customer was deleted) is fine.
+- **Follow-up state** on `wholesale_held_customers`: `follow_up_date`, `follow_up_done` (the last change was "done"),
+  `follow_up_at`, `follow_up_episode` (+1 each time a date is set where there was none). A customer deleted there has its
+  follow-up cleared (the Order Manager forgets it too, and sends the date again if the customer comes back).
+- **On devices**: `wholesale_note` (synced, `readOnly` + `checkServerOnly`, `account_id` ⇧, `client_id` plain, fields
+  customer_uid, note_uid, number, type, body, at, written_by), projected like `wholesale_order` (adopted by `note_uid`
+  after a restore, extras deleted). It exists only while the customer is attached, the note isn't deleted and the
+  **customer isn't deleted there** (the Order Manager deletes a customer's notes with it) — so a deleted note, an unlinked
+  or deleted customer takes it off devices, and linking again (or the customer coming back) brings it back. The card
+  `wholesale_customer.follow_up_date` (migration 004; `CARD_VERSION` 3) is the held date (null when deleted there).
+- **The timeline**: notes merge with activities and orders (`noteItem`): business wholesale, their account, **under
+  their own type** (Call, Email, Meeting, Note); a follow-up marked done there (`follow_up`) is labelled "Follow-up done"
+  and filtered under **Notes** — no new filter value. Each row says who wrote it there ("by sam") and "from the Order
+  Manager". The account's wholesale card shows "Next follow-up in the Order Manager: <date>" (`nextFollowUp`). Notes
+  count as **last activity** (the client list, the Friday review's quiet clients; server `lastActivityAtByClient()`).
+- **Waiting**: notes of unlinked customers wait in the holding area and appear when the customer is linked; the
+  Wholesale page's rows say "N notes waiting" (and the follow-up date), its counts and the Connections row's queue count
+  them ("3 records and 2 notes from 2 customers waiting for a client"; `queueSize` includes notes).
+- **Follow-up tasks** — automation `wholesale-follow-ups` (event; **on**, **silent**), in `followUps.js`. One open task
+  **"Follow up with <account>"** per linked customer with a follow-up date, due that date, on the wholesale business, owner
+  `planner.automatedOwnerFor(wholesale)`, with the client, account and the account's wholesale relationship (taskBase,
+  as D3). Its notes say it is one way: "Mark it done in the Order Manager too" — finishing it here changes nothing there.
+  - **Decided on the held customer as it is now** (`followUpPlan`), whatever the event — so a catch-up batch where a
+    date is set then done makes nothing. Listens to `followup.changed`, `customer.created` / `customer.updated` (deleted
+    there: finished), `wholesale.attachment` (emitted by reconcile after a link, unlink or move is committed — a person's
+    link transaction, the minute reconciler, D2's links) and `wholesale.check` (emitted once at every start after the
+    start's reconcile, so a restore or a run that failed is put right; Run now does the same check for every customer).
+    `accept` runs it only when the customer's task would change — no run rows for the thousands of other events.
+  - **Keys** `<customer uid>:<episode>:<date>` (automations_made). Set → **create**. A new date while one is open → the
+    **same task moves** (filed under the new key too) — only while its due date is still the one the suite set (D3's
+    `wrote:` bookkeeping); a person's own day is kept and a line "The follow-up date in the Order Manager is now …" is
+    added once (`told:<task>:<date>`). Title and notes are refreshed only while still the suite's; client, account and
+    relationship follow the link. Null + `done: true` → **finished** "Done in the Order Manager"; null + `done: false` →
+    "Cleared in the Order Manager"; unlinked → "Unlinked from the Order Manager customer"; deleted there → "Deleted in
+    the Order Manager". Never more than one open task per customer (the newest open one is the one kept up to date).
+  - **Who finished it decides** (D3's rule): a task the suite finished because its customer was unlinked is
+    **reopened** when it is linked again (same key; its due date goes back to the Order Manager's only while the
+    current one is still the suite's — a person's own day is kept, review fix); one a person finished or deleted isn't
+    made again for that date — but a **new date** there (moved), or a new follow-up after a done one (a new episode,
+    even on the same date), is a new task. A customer **deleted** there and back is a new follow-up too: deleting clears
+    the held date, so the date the Order Manager sends again starts a new episode — a **new task**; the one finished
+    "Deleted in the Order Manager" stays finished.
+  - **Backfill events count** (unlike D3's): a follow-up date is the current state the owner wants to see, so turning
+    the switch on there makes the tasks; replays can't duplicate — the same date finds its task by key, and nothing is
+    made while one is open.
+  - Closed clients and an archived wholesale business still get them: a person set the date in the Order Manager.
+- **Restores**: the held notes and follow-up columns survive (keepOnRestore); `checkRestore` marks held notes dirty with
+  everything else, so the notes are re-projected, and the start's `wholesale.check` brings the follow-up tasks (rolled
+  back with the database) in line with the held dates. `restore.js` now migrates the restored copy before carrying the
+  kept tables, so a backup from before D5 keeps them too.
+- Not built: pruning held notes; notes typed in the suite going back (A11 is one way by design); a review list.
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
@@ -1478,6 +1575,13 @@ by the suite: when their reason is gone they are **finished** (`done_at`) with a
   decided on the held order as it is now; backfill events and unlinked customers trigger nothing; the suite reopens
   only tasks it finished itself and never overwrites a person's title. D2: linking customers in bulk makes them eligible for check-ins/balances on the next daily run (10 new a
   day each). D5: build on `figures.js` and `automations.js`.
+- **D5 (notes from the Order Manager)**: done — see "Wholesale notes and follow-ups". Notes are server-written synced
+  records (`wholesale_note`), not activities (deletes must take them off; replays upsert by uid), filtered under the
+  matching activity type; a deleted note comes back only through a backfill add (tombstones for unknown deletes); a
+  follow-up date is held as a state and becomes one task per customer through an event automation that decides on the
+  held state as it is now, with linking/unlinking emitted as `wholesale.attachment` and a check at every start; backfill
+  follow-ups make tasks (keyed by customer, episode and date, so replays never duplicate). One way: nothing goes back to
+  the Order Manager. The restore now migrates the copy before carrying kept tables.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -1491,11 +1595,13 @@ the crm module (nor the planner, which needs it, nor the automations with their 
 shift their counts; `startServer(t, config, { crm: true })` includes them. A restore of a broken live database still
 works with `--force`: carrying the switches is best effort (a warning, then the backup's switches) and the restored
 copy must pass `integrity_check`. Tests that depend on local time set
-`process.env.TZ = 'America/Toronto'` at the top (automations.test.js, wholesale-automations.test.js). automations.test.js
+`process.env.TZ = 'America/Toronto'` at the top (automations.test.js, wholesale-automations.test.js, wholesale-notes.test.js). automations.test.js
 switches D3's two scheduled wholesale automations off in its setup (they're on by default) so its ticks stay about C8. The e2e `startServer(t, { extraModules })` adds
 test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager checkout>` (D1) runs the real Order
 Manager (needs `npm ci` in its `server/`) against a real suite and checks the timeline and spend against its own;
-`--capture <file>` writes the events it sent (the fixture `server/test/fixtures/wom-captured-events.json`). `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
+`--capture <file>` writes the events it sent (the fixture `server/test/fixtures/wom-captured-events.json`; D5's
+`wom-captured-notes.json` holds its A11 events and their customers' `customer.created`, taken from such a capture; step 7
+needs an Order Manager with A11). `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
 touching the engine, the service worker or the sync UI. Write a test with every module and every bug fix.
 
 ## Git
