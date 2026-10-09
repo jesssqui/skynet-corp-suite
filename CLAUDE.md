@@ -1557,19 +1557,23 @@ scale), `client/test/matching.test.js`, `test/e2e/matching.e2e.test.js`, step 8 
   accounts' names (C7's `similarNames`, through `similarEntries`, which reads only two lists per name so a common word
   like "Store" never scans every name — 3,000 clients ≈ 80 ms a pass).
 - **Scope**: live clients with a live relationship (any status) with **Wholesale, Great White North Design or Business
-  consulting**, or with **no relationship at all** (made by hand; quick add and the import file them under GWND by
-  default anyway). A client whose only relationships are Save Point Shop, retail or Personal is never matched (nor
-  suggested, nor in the duplicates).
+  consulting** — linked automatically or suggested (`canAutoLink`) — and clients with **no relationship at all** (made
+  by hand): **suggested only, never linked automatically** (review decision). A client whose only relationships are Save
+  Point Shop, retail or Personal is never matched (nor suggested, nor in the duplicates).
 - **Customer side**: waiting customers (not attached, not deleted there, no several-links problem); only an email/phone
   that is exactly the suite's clean form and not in `contact_problems` (`customerContact`). A value on more than 10
   clients (`SHARED_VALUE_LIMIT`) is a shared placeholder (info@…): not matched.
 - **Automatic only when unambiguous** (`matchCustomer`): exactly one client in scope has the email/phone (email → A and
-  phone → B = two clients), it is **active**, the account is clear — the account the matching contact(s) name, else the
+  phone → B = two clients), it is **active** and has a Wholesale/GWND/consulting relationship, the account is clear — the account the matching contact(s) name, else the
   client's **only** account (several and none named, or contacts naming different accounts → suggestion; no account →
   suggestion) — that account has no other live Order Manager link, and no one said "Not the same" or **undid a link**
-  between them. Otherwise it's a strong suggestion with `why` ("The same email is on 2 clients: pick the right one", "The
+  between them — and **no other waiting customer matches that client automatically in the same pass**
+  (`demoteShared`: all of them become strong suggestions, "Several Order Manager customers match this client: pick the
+  right one", so the result never depends on whether they arrived together or one by one; the run also never links
+  two customers to one account or client). Otherwise it's a strong suggestion with `why` ("The same email is on 2 clients: pick the right one", "The
   client is closed", "The client has several accounts: pick one", "That account is already linked to another Order
-  Manager customer", "A link between them was undone before"). Never for a customer deleted in the Order Manager.
+  Manager customer", "A link between them was undone before", "The client has no Wholesale, GWND or consulting
+  relationship yet: link it by hand"). Never for a customer deleted in the Order Manager.
 - **Address**: `addressKey(street, postal)` = the stored postal code (spaces dropped) + `streetKey`: the first
   comma-separated part with a civic number, lowercase, accents/punctuation dropped, units/suites/apartments/"#4" left
   out ("4-12 Main St" = unit 4 at 12), Street→st, Avenue→ave, North→n… (`STREET_WORDS`). No civic number or no valid
@@ -1585,7 +1589,9 @@ scale), `client/test/matching.test.js`, `test/e2e/matching.e2e.test.js`, step 8 
   every minute after the reconciler (picks up clients/contacts changed on devices — no sync hook exists, so up to a
   minute), at start, and **Run now** (a full pass). The matching state is kept until something changes
   (fingerprint: the sync seq, the held customers, the decisions): an idle pass costs < 1 ms. Linking customers in bulk
-  makes them eligible for D3 check-ins/balances and D5 follow-ups — already capped there (10 new a day each).
+  makes them eligible for D3's check-ins and balance reminders — capped there at 10 new a day each — and for D5's
+  follow-up tasks, which are **not** capped: every newly linked customer with a follow-up date gets its task at once
+  (fine: they are dates a person set in the Order Manager).
 - **The review list** (`/wholesale?tab=suggestions`, server data → needs a connection): each pair side by side —
   the Order Manager customer (name, number, contact, email, phone, address, contact problems, orders, spend, last
   order) and the suite client (status, businesses, accounts with the suggested one marked, contacts) — with reasons
@@ -1665,7 +1671,8 @@ scale), `client/test/matching.test.js`, `test/e2e/matching.e2e.test.js`, step 8 
   day each). D5: build on `figures.js` and `automations.js`.
 - **D2 (matching)**: done — see "Matching (D2)". Automatic links go through an automation (`wholesale-auto-link`:
   its switch, run log and one alert per pass) rather than a bare alert, so linking automatically can be switched off;
-  only unambiguous strong matches link; scope includes clients with no relationship yet; "Not the same" is kept across
+  only unambiguous strong matches link (two waiting customers matching one client: both suggested); clients with
+  no relationship yet are suggested only, never linked automatically; "Not the same" is kept across
   restores, the record of what links changed is not; undo puts back only what is untouched and unused, and an undone
   pair is never linked automatically again. Next: a merge of duplicate clients; pruning `wholesale_events`.
 - **D5 (notes from the Order Manager)**: done — see "Wholesale notes and follow-ups". Notes are server-written synced
