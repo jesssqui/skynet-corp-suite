@@ -260,7 +260,8 @@ test('switches: off skips the scheduler but Run now still works; who changed it 
   const list = await env.call('GET', '/api/automations');
   assert.deepEqual(list.body.automations.map((a) => a.id),
     ['friday-review', 'no-next-step', 'wholesale-check-in', 'wholesale-balances', 'wholesale-ready-to-ship', 'wholesale-follow-ups', 'wholesale-auto-link',
-      'service-renewals', 'cost-renewals', 'probe-off']);
+      'service-renewals', 'cost-renewals',
+      'stockroom-reorders', 'stockroom-spot-check', 'stockroom-deliveries', 'stockroom-differences', 'probe-off']);
   assert.equal(list.body.timeZone, 'America/Toronto');
 });
 
