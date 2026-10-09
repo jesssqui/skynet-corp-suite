@@ -15,6 +15,7 @@ import {
   filterCosts, groupCosts, totalsText, resoldTotalsText, renewalLabel, resoldLine, costRenewalsDue, relationshipOptions, costForm, compareCosts,
 } from '../src/modules/costs/logic.js';
 import { reviewLists } from '../src/modules/planner/plan.js';
+import { effectiveAnchor, rollForward } from '@suite/shared/costs';
 
 const AGENCY = BUSINESS_IDS.agency;
 const PERSONAL = BUSINESS_IDS.personal;
@@ -185,4 +186,35 @@ test('two devices: a cost added offline syncs; an open edit sheet keeps the othe
   assert.equal(row(server.db, 'costs_recurring', bad), undefined);
   const attention = await phone.engine.attentionList();
   assert.ok(attention.some((a) => a.step.recordId === bad && a.code === 'invalid_value'), JSON.stringify(attention));
+});
+
+test('two devices: a split date/billing-day pair (one sends the date only) rolls by the date’s own day', async (t) => {
+  const server = await startServer(t, undefined, { crm: true });
+  const mac = await makeDevice(t, server, 'owner');
+  const phone = await makeDevice(t, server, 'partner');
+  const id = await mac.engine.create('recurring_cost', costForm.toFields({
+    ...valuesFrom(costForm, null), name: 'Seat', business_id: AGENCY, amount: '10', period: 'monthly', next_renewal: '2027-01-31', auto_renews: true,
+  }).fields);
+  await mac.engine.syncNow();
+  await phone.engine.syncNow();
+  assert.equal(row(server.db, 'costs_recurring', id).anchor_day, 31);
+  // Both offline: the Mac sets Mar 20 through the sheet (date + billing day 20), then the phone sets
+  // Mar 15 with the date ONLY (as the plain records view does), later: the later date wins its field,
+  // the billing day (sent by the Mac alone) applies — a split pair, with no clash on anchor_day.
+  mac.online = false;
+  phone.online = false;
+  const macStart = valuesFrom(costForm, await mac.engine.get('recurring_cost', id));
+  const macEdit = editChanges(costForm, macStart, { ...macStart, next_renewal: '2027-03-20' }).fields;
+  assert.deepEqual(macEdit, { next_renewal: '2027-03-20', anchor_day: 20 });
+  await mac.engine.update('recurring_cost', id, macEdit);
+  await new Promise((r) => setTimeout(r, 5));
+  await phone.engine.update('recurring_cost', id, { next_renewal: '2027-03-15' });
+  mac.online = true;
+  phone.online = true;
+  await mac.engine.syncNow();
+  await phone.engine.syncNow();
+  const r = row(server.db, 'costs_recurring', id);
+  assert.deepEqual([r.next_renewal, r.anchor_day], ['2027-03-15', 20], 'the pair is split: the phone’s date, the Mac’s billing day');
+  assert.equal(effectiveAnchor(r.next_renewal, r.anchor_day), 15);
+  assert.equal(rollForward(r.next_renewal, 'monthly', '2027-03-16', r.anchor_day), '2027-04-15', 'rolled by the date’s own day, not the 20th');
 });

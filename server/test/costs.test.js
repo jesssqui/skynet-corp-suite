@@ -465,7 +465,7 @@ test('recurring cost: auto-renewing ones roll forward once their date has passed
   assert.equal(env.tasks('done_at IS NULL').length, 0);
 });
 
-test('month-end: a monthly cost billed on the 31st rolls Jan 31 → Feb 28 → Mar 31 day by day, as in one jump; the billing day is set by the suite when missing', async (t) => {
+test('month-end: a monthly cost billed on the 31st rolls Jan 31 → Feb 28 → Mar 31 day by day, as in one jump; the billing day is set by the suite when missing, and a stale one is corrected', async (t) => {
   const env = await setup(t);
   // Made without a billing day (server code, or a cost from before the field): the first roll sets it.
   const daily = env.local('recurring_cost', { name: 'Seat A', business_id: AGENCY, amount_cents: 1000, period: 'monthly', next_renewal: '2027-01-31', auto_renews: true });
@@ -483,6 +483,15 @@ test('month-end: a monthly cost billed on the 31st rolls Jan 31 → Feb 28 → M
   assert.equal(env.cost(daily).anchor_day, 31, 'set from the date at the first roll');
   assert.equal(env.cost(daily).updated_by, 'system');
   assert.deepEqual([env.cost(set).next_renewal, env.cost(set).anchor_day], ['2027-04-30', 30], 'its own billing day kept');
+  // A date set without its billing day (the plain records view, a split offline pair): the stale
+  // anchor (31) is read as the date's own day — Apr 15, not Apr 30 — and the pair is written whole.
+  env.edit('recurring_cost', daily, { next_renewal: '2027-05-15' });
+  env.setNow(at('2027-05-16 08:00'));
+  env.autos.tick();
+  assert.deepEqual([env.cost(daily).next_renewal, env.cost(daily).anchor_day], ['2027-06-15', 15]);
+  env.setNow(at('2027-06-16 08:00'));
+  env.autos.tick();
+  assert.equal(env.cost(daily).next_renewal, '2027-07-15');
   env.edit('recurring_cost', jump, { status: 'active' });
   env.setNow(at('2027-04-02 08:00'));
   env.autos.runNow(COST_RENEWALS_ID);

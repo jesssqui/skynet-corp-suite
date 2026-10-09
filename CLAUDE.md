@@ -68,7 +68,8 @@ shared/                    @suite/shared — ids.js (UUIDv7), time.js, hlc.js (s
                            C7: csv.js (CSV reader: quotes, BOM, ; and tab, line ends), intake.js (rows from a brain dump
                            or a CSV: cleanRow, nameKey/similarNames, buildMatchIndex/findMatch/flagRows, planRow,
                            fingerprintText/rowKey, detectMapping/rowFromCells); D6: costs.js (COST_PERIODS, rollForward,
-                           costTotals, costState, wantsCostReminder, moneyText/costAmountText, the reminder lead days);
+                           effectiveAnchor, costTotals, costState, wantsCostReminder, moneyText/costAmountText, the
+                           reminder lead days);
                            tests in shared/test
 server/src/
   index.js                 start: open db, createApp, listen, heartbeat, backup schedule, shutdown
@@ -1761,7 +1762,14 @@ what we pay) + resold_amount_cents (what the client pays us, **per the same peri
 **anchor_day** (integer 1–31, null = the next renewal's own day): the **billing day of the month**. Devices send it with
 the date whenever a person sets the date (the sheet: kept as stored while the date isn't changed, else the new date's
 day); the suite writes it on roll-forward when it is null (derived from the current date, through applyLocal — no
-backfill otherwise). `checkCost` (the sync `check`, the step's own values only): currency shape, amounts ≥ 0, anchor
+backfill otherwise). **A stale or split anchor is read from the date** (re-review fix, `effectiveAnchor(date, anchor)`
+in `shared/costs.js`, used by `rollForward` and `rollCostsForward`): the date and its billing day can come apart — a
+date set without it (the plain `/sync/data` view), two devices' offline edits settling field by field (one sends the
+date only, the other date + day: the later date wins its field, the day applies, no clash on `anchor_day`), the
+system's roll racing a device edit. So `anchor_day` counts only when the date falls on it, or the date is its month's
+last day and that day is below it (the clamp: Feb 28 with 31); otherwise the date's own day is used, and the roll writes
+that corrected `anchor_day` with the new date (applyLocal), making the pair whole again. Anchor 31, Jan 31 → Feb 28 →
+date set to Mar 15 alone → the next roll is Apr 15, not Apr 30. `checkCost` (the sync `check`, the step's own values only): currency shape, amounts ≥ 0, anchor
 1–31 — so a device may queue a negative amount and see it refused in Needs attention. New fields: nullable, never renamed.
 
 **Totals** (`costTotals`, shared — the page and `costs.monthlyTotals()` use the same rule): ACTIVE costs only; yearly =
@@ -1819,7 +1827,8 @@ and its date has passed: the page says "Overdue — renewed?" until a person set
   jump: a week of downtime doesn't leave it behind), written through `applyLocal` (as `system`, so devices pull it and a
   device's concurrent edit is a normal clash), and its open reminder is **finished** ("Renewed on its own on …; the next
   renewal is …"). Not auto-renewing → it stays (Overdue — renewed?) and its reminder stays open. Each date falls on the
-  cost's **billing day** (`anchor_day`, else the current date's day — then written with the new date), clamped to a
+  cost's **billing day** (`anchor_day` while it agrees with the date — `effectiveAnchor` —, else the current date's
+  day — then written with the new date), clamped to a
   short month's last day: Jan 31 → Feb 28 → Mar 31, the same rolled daily or in one jump (review fix: before, a roll
   started from the clamped day and stuck on the 28th).
   With the automation switched off nothing rolls (the page then shows "Renewed on its own … moves to the next date").

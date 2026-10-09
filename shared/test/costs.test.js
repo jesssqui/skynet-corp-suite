@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   addPeriods, rollForward, yearlyCents, costTotals, costState, wantsCostReminder, costsRenewingBetween, moneyText, costAmountText,
-  daysFromTo, isCurrency, costCurrency, monthlyFromYearly, dayOfMonth, isAnchorDay,
+  daysFromTo, isCurrency, costCurrency, monthlyFromYearly, dayOfMonth, isAnchorDay, effectiveAnchor,
 } from '../costs.js';
 
 test('periods: added on the calendar; once stays put', () => {
@@ -48,6 +48,20 @@ test('rollForward with the billing day: daily rolls and one jump give the same d
   assert.equal(isAnchorDay(31), true);
   assert.equal(isAnchorDay(32), false);
   assert.equal(isAnchorDay(null), false);
+});
+
+test('a stale or split billing day is read from the date: trusted only on its day, or on a short month’s last day (the clamp)', () => {
+  assert.equal(effectiveAnchor('2027-03-15', 31), 15, 'date set to the 15th without the anchor: the 15th wins');
+  assert.equal(effectiveAnchor('2027-02-28', 31), 31, 'the clamp');
+  assert.equal(effectiveAnchor('2028-02-29', 31), 31, 'the clamp, leap year');
+  assert.equal(effectiveAnchor('2027-04-30', 31), 31);
+  assert.equal(effectiveAnchor('2027-03-31', 15), 31, 'a later day than the anchor: the date wins');
+  assert.equal(effectiveAnchor('2027-02-28', 28), 28);
+  assert.equal(effectiveAnchor('2027-03-15', null), 15);
+  // The reproduction: anchor 31, Jan 31 → Feb 28 (clamp), then the date set to Mar 15 alone.
+  assert.equal(rollForward('2027-01-31', 'monthly', '2027-02-01', 31), '2027-02-28');
+  assert.equal(rollForward('2027-02-28', 'monthly', '2027-03-01', 31), '2027-03-31', 'the clamp still holds');
+  assert.equal(rollForward('2027-03-15', 'monthly', '2027-03-16', 31), '2027-04-15', 'not Apr 30');
 });
 
 test('costTotals: the resold side only for costs whose relationship is still there', () => {
