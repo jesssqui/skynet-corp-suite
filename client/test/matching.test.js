@@ -5,6 +5,7 @@
 // Friday review's line).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { BUSINESS_IDS } from '@suite/shared/crm';
 import { startServer, makeDevice } from './helpers.js';
 import { postEvents, womKit } from '../../server/test/fixtures/wom.js';
 import { sessionFor } from '../../server/test/helpers.js';
@@ -25,6 +26,8 @@ test('a contact made on a phone links an Order Manager customer automatically; u
   phone.online = false;
   const clientId = await e.create('client', { name: 'Harbour Smoke', status: 'active' });
   const accountId = await e.create('account', { client_id: clientId, name: 'Harbour Smoke Shop', age_restricted: false });
+  // A GWND client (a client with no relationship yet would only be suggested).
+  await e.create('relationship', { account_id: accountId, business_id: BUSINESS_IDS.agency, kind: 'website', status: 'active' });
   await e.create('contact', { client_id: clientId, account_id: accountId, name: 'Dana', email: ' Dana@Harbour.EXAMPLE' });
   phone.online = true;
   await e.syncNow();

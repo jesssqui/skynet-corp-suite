@@ -7,13 +7,15 @@
 //   same street and postal code            -> suggested for review
 //   name only (two "Mike"s)                -> never linked, never suggested (people's names aren't compared)
 // "Automatically" only when it is unambiguous: exactly one client in scope has the email/phone, it is
-// active, the account is clear (the contact's own, else the client's only one), that account isn't
-// linked to another Order Manager customer yet, and no one said "Not the same" or undid a link between
-// them. Anything else strong is a suggestion that says why it wasn't linked.
+// active and has a Wholesale, GWND or consulting relationship, the account is clear (the contact's own,
+// else the client's only one), that account isn't linked to another Order Manager customer yet, no one
+// said "Not the same" or undid a link between them — and (demoteShared, in the service's state()) no
+// other waiting customer matches that client automatically too. Anything else strong is a suggestion
+// that says why.
 // Scope: clients with a relationship (any status) with Wholesale, Great White North Design or Business
-// consulting — and clients with no relationship at all yet (made by hand; quick add and the import file
-// them under GWND by default). A client whose only relationships are with Save Point Shop, the retail
-// stores or Personal is never matched.
+// consulting — linked automatically or suggested — and clients with no relationship at all yet (made by
+// hand): suggested only, never linked automatically. A client whose only relationships are with Save
+// Point Shop, the retail stores or Personal is never matched.
 import { BUSINESS_IDS } from '@suite/shared/crm';
 import { normalizeEmail, isEmail, normalizePhone, isPhone, formatPhone } from '@suite/shared/normalize';
 import { buildMatchIndex, similarEntries, similarNames, addressKey } from '@suite/shared/intake';
@@ -25,10 +27,18 @@ export const SHARED_VALUE_LIMIT = 10;
 /** At most this many suggestions per Order Manager customer (strongest first). */
 export const SUGGESTIONS_PER_CUSTOMER = 5;
 
-/** Is a client (by the businesses it has relationships with) one matching looks at? */
+const idSet = (businessIds) => (businessIds instanceof Set ? businessIds : new Set(businessIds ?? []));
+
+/** Can a client be linked automatically? Only with a Wholesale, GWND or consulting relationship (any status). */
+export function canAutoLink(businessIds) {
+  const ids = idSet(businessIds);
+  return MATCH_BUSINESS_IDS.some((id) => ids.has(id));
+}
+
+/** Is a client (by the businesses it has relationships with) one matching looks at (suggestions)? */
 export function inScope(businessIds) {
-  const ids = businessIds instanceof Set ? businessIds : new Set(businessIds ?? []);
-  return ids.size === 0 || MATCH_BUSINESS_IDS.some((id) => ids.has(id));
+  const ids = idSet(businessIds);
+  return ids.size === 0 || canAutoLink(ids);
 }
 
 /**
@@ -75,7 +85,9 @@ export function buildCrmIndex({ clients = [], accounts = [], contacts = [], rela
   const clientsById = new Map();
   for (const c of clients) {
     const ids = businesses.get(c.id) ?? new Set();
-    clientsById.set(c.id, { id: c.id, name: c.name, status: c.status, businessIds: [...ids].sort(), inScope: inScope(ids), accounts: [], contacts: [] });
+    clientsById.set(c.id, {
+      id: c.id, name: c.name, status: c.status, businessIds: [...ids].sort(), inScope: inScope(ids), canAutoLink: canAutoLink(ids), accounts: [], contacts: [],
+    });
   }
   const accountsById = new Map();
   for (const a of accounts) {
@@ -121,7 +133,7 @@ function addressText(account) {
  * @param {{ decision?: (clientId) => ({ notSame, undone } | null), linkedAccounts?: Set<string> }} opts
  *   decision: what people decided about this customer and that client; linkedAccounts: accounts that
  *   already have a live Order Manager link.
- * @returns {{ auto: null | { clientId, accountId, reason }, suggestions: Array<{ clientId, accountId,
+ * @returns {{ auto: null | { clientId, accountId, reason, reasons }, suggestions: Array<{ clientId, accountId,
  *   strong, reasons: Array<{ kind, text }>, why }> }}
  */
 export function matchCustomer(customer, index, { decision = () => null, linkedAccounts = new Set() } = {}) {
@@ -192,11 +204,12 @@ export function matchCustomer(customer, index, { decision = () => null, linkedAc
     else if (customer.gone) e.why = 'Deleted in the Order Manager';
     else if (customer.linkProblem) e.why = 'Linked to more than one account: undo one link first';
     else if (client.status !== 'active') e.why = 'The client is closed';
+    else if (!client.canAutoLink) e.why = 'The client has no Wholesale, GWND or consulting relationship yet: link it by hand';
     else if (named.size > 1) e.why = 'Its contacts are on different accounts: pick one';
     else if (!accountId) e.why = client.accounts.length ? 'The client has several accounts: pick one' : 'The client has no account yet';
     else if (decision(e.clientId)?.undone) e.why = 'A link between them was undone before';
     else if (linkedAccounts.has(accountId)) e.why = 'That account is already linked to another Order Manager customer';
-    else auto = { clientId: client.id, accountId, reason: `same ${kinds}` };
+    else auto = { clientId: client.id, accountId, reason: `same ${kinds}`, reasons: e.reasons };
   }
 
   const suggestions = [...entries.values()]
@@ -212,6 +225,25 @@ export function matchCustomer(customer, index, { decision = () => null, linkedAc
       || String(index.clientsById.get(x.clientId).name).localeCompare(String(index.clientsById.get(y.clientId).name)))
     .slice(0, SUGGESTIONS_PER_CUSTOMER);
   return { auto, suggestions };
+}
+
+export const SEVERAL_CUSTOMERS_WHY = 'Several Order Manager customers match this client: pick the right one';
+
+/**
+ * One pass's results (matchCustomer per waiting customer): when two or more customers would be linked
+ * automatically to the same client, none is — each becomes a strong suggestion saying so — so the result
+ * never depends on whether they arrived together or one at a time. Changes `results` in place.
+ */
+export function demoteShared(results) {
+  const perClient = new Map();
+  for (const r of results) if (r.auto) perClient.set(r.auto.clientId, (perClient.get(r.auto.clientId) ?? 0) + 1);
+  for (const r of results) {
+    if (!r.auto || perClient.get(r.auto.clientId) < 2) continue;
+    r.suggestions = [{ clientId: r.auto.clientId, accountId: r.auto.accountId, strong: true, reasons: r.auto.reasons, why: SEVERAL_CUSTOMERS_WHY },
+      ...r.suggestions].slice(0, SUGGESTIONS_PER_CUSTOMER);
+    r.auto = null;
+  }
+  return results;
 }
 
 /** A pair of client ids in one order (the decisions table's a < b). */

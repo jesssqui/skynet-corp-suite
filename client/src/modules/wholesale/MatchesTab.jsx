@@ -114,9 +114,9 @@ export default function MatchesTab({ offline, onLink, onChanged }) {
     <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
       {problem ? <Notice tone="danger">{problem}</Notice> : null}
       <p style={{ ...muted, margin: 0 }}>
-        Same email or phone as exactly one client links automatically; everything less certain waits here. “Not the same” is
-        remembered, so the pair isn’t suggested again. Only clients of Wholesale, Great White North Design and Business consulting
-        (or with no business yet) are compared.
+        Same email or phone as exactly one client of Wholesale, Great White North Design or Business consulting links
+        automatically; everything less certain waits here (clients with no business yet are only suggested). “Not the same” is
+        remembered, so the pair isn’t suggested again.
       </p>
       <Card padded={false}>
         <div style={{ padding: 'var(--space-3) var(--space-4)', fontWeight: 650 }}>

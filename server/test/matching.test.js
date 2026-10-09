@@ -16,7 +16,7 @@ import { createLogger } from '../src/lib/log.js';
 import { runBackup } from '../src/backup/backup.js';
 import { restoreBackup } from '../src/backup/restore.js';
 import { AUTO_LINK_ID } from '../src/modules/wholesale/matchService.js';
-import { buildCrmIndex, matchCustomer, customerContact, inScope } from '../src/modules/wholesale/matching.js';
+import { buildCrmIndex, matchCustomer, customerContact, inScope, canAutoLink } from '../src/modules/wholesale/matching.js';
 import { tmpDir, testConfig, ensureTestUsers, sessionFor } from './helpers.js';
 import { womKit, postEvents } from './fixtures/wom.js';
 
@@ -193,10 +193,12 @@ test('ambiguous strong matches are suggestions, never links — each says why', 
   // The account is already linked to another Order Manager customer.
   assert.equal(linksOf(second.customer_uid).length, 0);
   assert.equal(why(second, taken.clientId).why, 'That account is already linked to another Order Manager customer');
-  // Out of scope (retail only): nothing. No business yet: in scope.
+  // Out of scope (retail only): nothing. No business yet: suggested only, never linked automatically.
   assert.deepEqual(pairsOf(retailC.customer_uid), []);
   assert.equal(linksOf(retailC.customer_uid).length, 0);
-  assert.equal(linksOf(noneC.customer_uid)[0]?.account_id, none.accountId);
+  assert.equal(linksOf(noneC.customer_uid).length, 0);
+  assert.deepEqual([why(noneC, none.clientId).strong, why(noneC, none.clientId).why],
+    [true, 'The client has no Wholesale, GWND or consulting relationship yet: link it by hand']);
   // An email the Order Manager couldn't clean is never matched.
   assert.deepEqual(pairsOf(problem.customer_uid), []);
   assert.equal(retail.contactIds.length, 1);
@@ -214,6 +216,7 @@ test('pure rules: scope, clean values only, the shared-placeholder limit', () =>
   assert.equal(inScope([]), true, 'no relationship yet');
   assert.equal(inScope([W.agency, W.retail]), true);
   assert.equal(inScope([W.save_point]), false);
+  assert.deepEqual([canAutoLink([]), canAutoLink([W.consulting]), canAutoLink([W.retail])], [false, true, false], 'no relationship: suggested only');
   assert.deepEqual(customerContact({ email: 'Bob@X.ca', phone: '519-555-0100' }), { email: null, phone: null }, 'not the stored form: not matched');
   assert.deepEqual(customerContact({ email: 'bob@x.ca', phone: '5195550100' }), { email: 'bob@x.ca', phone: '5195550100' });
   assert.deepEqual(customerContact({ email: 'bob@x.ca', phone: '5195550100', contactProblems: [{ field: 'phone' }] }), { email: 'bob@x.ca', phone: null });
@@ -524,6 +527,7 @@ test('cost: 3,000 clients and 1,000 waiting customers — a pass, the review lis
     for (let i = 0; i < 3000; i += 1) {
       const clientId = sync.applyLocal({ actor: 'owner', entity: 'client', op: 'create', fields: { name: `Client ${i} Holdings`, status: 'active' } }).recordId;
       const accountId = sync.applyLocal({ actor: 'owner', entity: 'account', op: 'create', fields: { client_id: clientId, name: `Client ${i} Store`, street: `${i} Main St`, postal_code: 'N3Y 4K3' } }).recordId;
+      sync.applyLocal({ actor: 'owner', entity: 'relationship', op: 'create', fields: { account_id: accountId, business_id: W.agency, kind: 'website', status: 'active' } });
       sync.applyLocal({ actor: 'owner', entity: 'contact', op: 'create', fields: { client_id: clientId, account_id: accountId, name: `Owner ${i}`, email: `owner${i}@clients.example`, phone: `519555${String(i).padStart(4, '0')}` } });
     }
   })();
@@ -553,4 +557,56 @@ test('cost: 3,000 clients and 1,000 waiting customers — a pass, the review lis
   assert.equal(list.total, 100, 'a name suggestion for each “Client N Store Ltd”');
   assert.ok(passMs < 5000, `pass ${passMs} ms`);
   assert.ok(idleMs < 50, `idle pass ${idleMs} ms`);
+});
+
+// ---- review fixes ------------------------------------------------------------------------------------
+
+test('two customers matching one client in the same pass: neither is linked — together or one by one', async (t) => {
+  const env = await setup(t);
+  const lefty = env.client('Lefty’s', { contacts: [{ name: 'Pat', email: 'pat@leftys.ca' }] });
+  const k = om();
+  // In one request.
+  const a = k.customer({ business_name: 'Lefty’s Vape', email: 'pat@leftys.ca' });
+  const b = k.customer({ business_name: 'Lefty’s Smoke', email: 'pat@leftys.ca' });
+  await env.post([k.customerCreated(a), k.customerCreated(b)]);
+  for (const c of [a, b]) {
+    assert.equal(env.linksOf(c.customer_uid).length, 0, 'not linked');
+    const [s] = env.pairsOf(c.customer_uid);
+    assert.deepEqual([s.client.id, s.accountId, s.strong, s.auto, s.why],
+      [lefty.clientId, lefty.accountId, true, false, 'Several Order Manager customers match this client: pick the right one']);
+    assert.equal(s.reasons[0].text, 'Same email as Pat');
+  }
+  // Waiting while the switch was off, then one pass: the same.
+  const other = env.client('Harbour Smoke', { contacts: [{ name: 'Dana', email: 'dana@harbour.example' }] });
+  const autos = env.ctx.services.automations;
+  autos.setSettings(AUTO_LINK_ID, { enabled: false }, { actor: 'owner' });
+  const c = k.customer({ business_name: 'Harbour 1', email: 'dana@harbour.example' });
+  const d = k.customer({ business_name: 'Harbour 2', email: 'dana@harbour.example' });
+  await env.post([k.customerCreated(c)]);
+  await env.post([k.customerCreated(d)]);
+  autos.setSettings(AUTO_LINK_ID, { enabled: true }, { actor: 'owner' });
+  assert.deepEqual(env.m.pass().linked, []);
+  assert.equal(env.linksOf(c.customer_uid).length + env.linksOf(d.customer_uid).length, 0);
+  assert.equal(env.pairsOf(d.customer_uid)[0].client.id, other.clientId);
+  // "Not the same" for one of them: the other is the only one left and is linked.
+  env.m.notSame({ kind: 'customer', a: c.customer_uid, b: other.clientId }, { actor: 'owner' });
+  assert.deepEqual(env.m.pass().linked, [d.customer_uid]);
+});
+
+test('the automatic-link run never links two customers to one account or client, whatever plans it is given', async (t) => {
+  const env = await setup(t);
+  const shop = env.client('Corner Shop', { contacts: [{ name: 'Robin', email: 'robin@corner.example' }] });
+  const k = om();
+  const autos = env.ctx.services.automations;
+  autos.setSettings(AUTO_LINK_ID, { enabled: false }, { actor: 'owner' });
+  const a = k.customer({ business_name: 'Corner A' });
+  const b = k.customer({ business_name: 'Corner B' });
+  await env.post([k.customerCreated(a), k.customerCreated(b)]);
+  autos.setSettings(AUTO_LINK_ID, { enabled: true }, { actor: 'owner' });
+  // Two plans for the same account in one event (as a stale pass could make): one link only.
+  const plan = (c) => ({ uid: c.customer_uid, clientId: shop.clientId, accountId: shop.accountId, reason: 'same email', label: c.business_name });
+  const [run] = autos.emit('wholesale.auto_link', { key: 'review-fix', name: 'wholesale.auto_link', plans: [plan(a), plan(b)] });
+  assert.equal(run.summary, 'Linked 1 Order Manager customer automatically');
+  assert.equal(env.linksOf(a.customer_uid).length, 1);
+  assert.equal(env.linksOf(b.customer_uid).length, 0);
 });

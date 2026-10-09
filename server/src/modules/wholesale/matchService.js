@@ -15,7 +15,7 @@
 import { newId, isId } from '@suite/shared/ids';
 import { nowIso } from '@suite/shared/time';
 import { HttpError } from '../../lib/httpError.js';
-import { buildCrmIndex, matchCustomer, duplicateClients, clientSummary, customerContact, pairKey } from './matching.js';
+import { buildCrmIndex, matchCustomer, duplicateClients, clientSummary, customerContact, pairKey, demoteShared } from './matching.js';
 
 export const AUTO_LINK_ID = 'wholesale-auto-link';
 export const AUTO_LINK_EVENT = 'wholesale.auto_link';
@@ -74,10 +74,11 @@ export function createMatchService({ db, log, clock, crm, sync, services, figure
     const index = buildCrmIndex(crm.matchingRecords());
     const decided = new Map(q.decisions.all().map((r) => [`${r.kind}|${r.a}|${r.b}`, { notSame: Boolean(r.not_same_at), undone: Boolean(r.undone_at) }]));
     const linkedAccounts = new Set(crm.liveAccountLinks(APP).map((l) => l.account_id));
-    const results = q.waiting.all().map(customerOf).map((customer) => ({
+    // Two customers matching one client automatically: neither is linked (demoteShared).
+    const results = demoteShared(q.waiting.all().map(customerOf).map((customer) => ({
       customer,
       ...matchCustomer(customer, index, { decision: (clientId) => decided.get(`customer|${customer.uid}|${clientId}`) ?? null, linkedAccounts }),
-    }));
+    })));
     const duplicates = duplicateClients(index, { notSame: (a, b) => decided.get(`clients|${a}|${b}`)?.notSame });
     cache = { fp, index, results, duplicates, ms: Math.round(performance.now() - started) };
     return cache;
@@ -143,9 +144,10 @@ export function createMatchService({ db, log, clock, crm, sync, services, figure
       name: 'Link Order Manager customers automatically',
       module: 'wholesale',
       description: 'Links an Order Manager customer waiting for a client to the client one of whose contacts has the same email or '
-        + 'phone — only when exactly one active client of Wholesale, Great White North Design or Business consulting (or one with no '
-        + 'business yet) has it, and the account is clear. Anything weaker — a similar name, the same address, two clients with the '
-        + 'same email — waits on Wholesale → Suggestions. Every link can be undone (Wholesale → Linked, or the client’s account).',
+        + 'phone — only when exactly one active client of Wholesale, Great White North Design or Business consulting has it, the '
+        + 'account is clear and no other waiting customer matches that client too. Anything weaker — a similar name, the same address, '
+        + 'two clients with the same email, a client with no business yet — waits on Wholesale → Suggestions. Every link can be undone '
+        + '(Wholesale → Linked, or the client’s account).',
       trigger: {
         type: 'event',
         event: AUTO_LINK_EVENT,
@@ -159,12 +161,17 @@ export function createMatchService({ db, log, clock, crm, sync, services, figure
         const manual = !data?.plans;
         const plans = manual ? currentPlans() : data.plans;
         const made = [];
+        // Accounts with an Order Manager link now (as matchCustomer's rule), and the accounts and clients this
+        // run links: never two customers at once (state() already makes such pairs suggestions; this is the guard).
+        const taken = new Set(crm.liveAccountLinks(APP).map((l) => l.account_id));
         for (const p of plans) {
-          // As things are now: still waiting, not linked meanwhile, the account still the client's.
+          // As things are now: still waiting, not linked meanwhile, the account still the client's and free.
           const row = q.customer.get(p.uid);
           if (!row || row.account_id || row.gone || row.link_problem || crm.liveLinks(APP, p.uid).length) continue;
           const account = crm.liveAccount(p.accountId);
-          if (!account || account.client_id !== p.clientId) continue;
+          if (!account || account.client_id !== p.clientId || taken.has(p.accountId) || taken.has(p.clientId)) continue;
+          taken.add(p.accountId);
+          taken.add(p.clientId);
           create('link', { account_id: p.accountId, app: APP, external_id: p.uid, matched_by: 'auto', match_reason: p.reason }, { key: p.uid });
           made.push(p);
         }
@@ -198,7 +205,7 @@ export function createMatchService({ db, log, clock, crm, sync, services, figure
       if (r.auto) {
         out.push({
           customer: r.customer, clientId: r.auto.clientId, accountId: r.auto.accountId, strong: true, auto: true,
-          reasons: [{ kind: r.auto.reason.includes('email') ? 'email' : 'phone', text: `Same ${r.auto.reason.replace('same ', '')}` }],
+          reasons: r.auto.reasons,
           why: enabled ? 'Links automatically within a minute' : 'Linking automatically is switched off (System → Automations)',
         });
       }
