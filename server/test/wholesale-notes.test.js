@@ -491,3 +491,50 @@ test('a restore of a backup made before D5 (no notes table, no follow-up columns
   assert.equal(held.follow_up_date, '2026-10-20');
   assert.equal(again.db.prepare('SELECT count(*) AS n FROM wholesale_held_notes').get().n, 1);
 });
+
+// ---- the real thing ----------------------------------------------------------------------------------
+
+test('the Order Manager’s real A11 events (captured by scripts/wom-e2e.mjs) replayed twice, then again with new keys: same notes, same tasks', async (t) => {
+  const env = await setup(t);
+  const { events } = JSON.parse(fs.readFileSync(new URL('./fixtures/wom-captured-notes.json', import.meta.url), 'utf8'));
+  const customers = new Map(events.filter((e) => e.name === 'customer.created').map((e) => [e.data.customer.business_name, e.data.customer]));
+  const lefty = customers.get('Lefty’s Vape Shop');
+  const north = customers.get('Northwind Corner Store');
+  const south = customers.get('Southside Convenience');
+  assert.ok(lefty && north && south);
+  for (const c of [lefty, north]) {
+    const { accountId } = env.client(c.business_name);
+    env.link(c, { accountId });
+  }
+  const view = () => ({
+    notes: env.notes().map((n) => [n.customer_uid === lefty.customer_uid ? 'lefty' : 'other', n.type, n.body]).sort(),
+    tasks: env.followTasks().map((x) => [x.title, x.due_date, Boolean(x.done_at)]).sort(),
+    waiting: env.svc.list('waiting').customers.map((c) => [c.businessName, c.notes]),
+  });
+  // As they went out live (each in its own request): Lefty's follow-up task is made, moved, then finished.
+  for (const e of events) assert.deepEqual(env.apply([e]), ['applied']);
+  const want = view();
+  assert.deepEqual(want.notes, [['lefty', 'call', 'Asked about Zyn 3mg'], ['lefty', 'follow_up', 'Called, ordering Friday']], 'the deleted email is gone');
+  assert.deepEqual(want.tasks, [
+    ['Follow up with Lefty’s Vape Shop', '2026-10-19', true],
+    ['Follow up with Northwind Corner Store', north && events.filter((e) => e.name === 'followup.changed' && e.data.customer_uid === north.customer_uid).at(-1).data.follow_up_date, false],
+  ]);
+  assert.deepEqual(want.waiting, [['Southside Convenience', 1]]);
+  assert.ok(env.apply(events).every((s) => s === 'duplicate'));
+  assert.deepEqual(view(), want);
+  const { newId } = await import('@suite/shared/ids');
+  env.apply(events.map((e) => ({ ...e, key: newId() })));
+  assert.deepEqual(view(), want, 'sent again with new keys (a resend): nothing doubled, nothing reopened');
+});
+
+test('a catch-up batch where a follow-up is set and then done makes no task at all (decided on the state as it is now)', async (t) => {
+  const env = await setup(t);
+  const om = womKit();
+  const c = om.customer();
+  const { accountId } = env.client();
+  env.apply([om.customerCreated(c)]);
+  env.link(c, { accountId });
+  env.apply([om.followUpChanged(c, '2026-10-20'), om.followUpChanged(c, '2026-10-22'), om.followUpChanged(c, null, { done: true })]);
+  assert.equal(env.followTasks().length, 0);
+  assert.equal(env.runs().length, 0, 'no run rows either');
+});
