@@ -19,36 +19,49 @@ export function matchesEtag(header, etag) {
  *  paused (System → Connections) → 503 + Retry-After, nothing looked up;
  *  this address locked out (too many unknown links) → 429 + Retry-After;
  *  unknown, replaced or turned-off link → 404 "Not found" (plain text, no detail);
- *  else 200 text/calendar with an ETag (304 when the calendar already has this version).
+ *  else 200 text/calendar with an ETag (304 when the calendar already has this version);
+ *  an error while answering → 503 + Retry-After, logged **without the path** (it holds the token).
  */
-export function createCalendarPublicRouter(_ctx, service) {
+export function createCalendarPublicRouter(ctx, service) {
   const router = Router();
   router.get('/feed/:file', (req, res) => {
-    res.set('Cache-Control', 'private, no-cache');
-    res.set('X-Robots-Tag', 'noindex, nofollow');
-    if (service.isPaused()) {
-      return res.status(503).set('Retry-After', '900').type('text/plain').send('The task calendar is switched off for now.');
+    // Everything inside one try: an error (SQLITE_BUSY, a bug) must never reach app.js's error handler
+    // with the token in req.originalUrl. Logged without the path; answered with a plain 503.
+    try {
+      return answerFeed(req, res, service);
+    } catch (err) {
+      ctx.log?.error?.('calendar feed: could not answer a feed request:', err?.message ?? err);
+      if (res.headersSent) return res.end();
+      return res.status(503).set('Retry-After', '300').type('text/plain').send('The task calendar can’t be read right now.');
     }
-    const ip = req.ip ?? 'unknown';
-    const wait = service.lockedFor(ip);
-    if (wait > 0) {
-      return res.status(429).set('Retry-After', String(Math.ceil(wait / 1000))).type('text/plain').send('Too many attempts.');
-    }
-    const m = /^(.+)\.ics$/.exec(req.params.file ?? '');
-    const actor = m ? service.actorForToken(m[1]) : null;
-    if (!actor) {
-      service.failed(ip);
-      return res.status(404).type('text/plain').send('Not found');
-    }
-    service.succeeded(ip);
-    const feed = service.feedFor(actor, { baseUrl: `${req.protocol}://${req.host}` });
-    service.markFetched(actor);
-    res.set('ETag', feed.etag);
-    res.set('Content-Disposition', 'inline; filename="suite-tasks.ics"');
-    if (matchesEtag(req.get('if-none-match'), feed.etag)) return res.status(304).end();
-    return res.type('text/calendar; charset=utf-8').send(feed.body);
   });
   return router;
+}
+
+function answerFeed(req, res, service) {
+  res.set('Cache-Control', 'private, no-cache');
+  res.set('X-Robots-Tag', 'noindex, nofollow');
+  if (service.isPaused()) {
+    return res.status(503).set('Retry-After', '900').type('text/plain').send('The task calendar is switched off for now.');
+  }
+  const ip = req.ip ?? 'unknown';
+  const wait = service.lockedFor(ip);
+  if (wait > 0) {
+    return res.status(429).set('Retry-After', String(Math.ceil(wait / 1000))).type('text/plain').send('Too many attempts.');
+  }
+  const m = /^(.+)\.ics$/.exec(req.params.file ?? '');
+  const actor = m ? service.actorForToken(m[1]) : null;
+  if (!actor) {
+    service.failed(ip);
+    return res.status(404).type('text/plain').send('Not found');
+  }
+  service.succeeded(ip);
+  const feed = service.feedFor(actor, { baseUrl: `${req.protocol}://${req.host}` });
+  service.markFetched(actor);
+  res.set('ETag', feed.etag);
+  res.set('Content-Disposition', 'inline; filename="suite-tasks.ics"');
+  if (matchesEtag(req.get('if-none-match'), feed.etag)) return res.status(304).end();
+  return res.type('text/calendar; charset=utf-8').send(feed.body);
 }
 
 const NO_STORE = (_req, res, next) => {

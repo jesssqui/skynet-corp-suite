@@ -10,6 +10,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { BUSINESS_IDS } from '@suite/shared/crm';
 import { modules } from '../src/modules/index.js';
+import { openDb } from '../src/db/open.js';
+import { createApp } from '../src/app.js';
+import { redactPath } from '../src/lib/redact.js';
 import { runBackup } from '../src/backup/backup.js';
 import { restoreBackup, KEPT_TABLES } from '../src/backup/restore.js';
 import { escapeText, foldLine, eventTimes, zoneTransitions } from '../src/modules/calendar/ics.js';
@@ -432,4 +435,49 @@ test('restores keep the links as they are now: a replaced link doesn’t come ba
   const r = await second.feed(current.path);
   assert.equal(r.status, 200, 'the current link keeps working');
   assert.deepEqual(summaries(parseIcs(r.text)), ['Before the backup']);
+});
+
+// ---- the token never reaches the log (review fix) ---------------------------------------------
+/** A logger that keeps every line. */
+function capturingLog(lines = []) {
+  const make = () => {
+    const out = (level) => (...args) => lines.push({ level, text: args.map((a) => (a instanceof Error ? `${a.message}\n${a.stack}` : String(a))).join(' ') });
+    return { debug: out('debug'), info: out('info'), warn: out('warn'), error: out('error'), child: () => make() };
+  };
+  return Object.assign(make(), { lines });
+}
+
+test('a feed that fails answers 503 and logs nothing of its token; the app’s error handler redacts feed paths too', async (t) => {
+  assert.equal(redactPath('/api/calendar/feed/AbC_-123.ics?x=1'), '/api/calendar/feed/[link]?x=1');
+  assert.equal(redactPath('/api/crm/clients?q=1'), '/api/crm/clients?q=1');
+  const config = testConfig(tmpDir(t), { CALENDAR_TIME_ZONE: ZONE });
+  const db = openDb(config.dbPath);
+  const log = capturingLog();
+  // A test-only route on a feed-like path that fails, to reach app.js's own error handler with it.
+  const SECRETISH = 'lowercasesecretlookingtokenthatmustnotbelogged';
+  const thrower = {
+    name: 'throwdemo',
+    migrationsDir: null,
+    signedRoutes: [{ method: 'post', path: `/api/calendar/feed/${SECRETISH}`, handlers: () => [(_req, _res, next) => next(new Error('boom'))] }],
+  };
+  const { app, ctx } = await createApp({ config, db, log, modules: [...modules, thrower] });
+  const server = await new Promise((resolve) => { const srv = app.listen(0, '127.0.0.1', () => resolve(srv)); });
+  t.after(() => new Promise((resolve) => server.close(() => { db.close(); resolve(); })));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  const { token, path: p } = ctx.services.calendar.makeLink({ actor: 'owner' });
+  ctx.services.planner.feedTasks = () => { throw new Error('SQLITE_BUSY: database is locked'); };
+  const res = await fetch(`${base}${p}`);
+  assert.equal(res.status, 503);
+  assert.equal(res.headers.get('retry-after'), '300');
+  assert.equal(await res.text(), 'The task calendar can’t be read right now.');
+  const errorsLogged = log.lines.filter((l) => l.level === 'error');
+  assert.ok(errorsLogged.some((l) => /calendar feed: could not answer a feed request: SQLITE_BUSY/.test(l.text)));
+
+  const failed = await fetch(`${base}/api/calendar/feed/${SECRETISH}`, { method: 'POST' });
+  assert.equal(failed.status, 500);
+  assert.ok(log.lines.some((l) => l.level === 'error' && l.text.includes('POST /api/calendar/feed/[link]:')));
+  const all = log.lines.map((l) => l.text).join('\n');
+  assert.ok(!all.includes(token), 'the real token is never logged');
+  assert.ok(!all.includes(SECRETISH), 'nor a feed path through the app’s error handler');
 });
