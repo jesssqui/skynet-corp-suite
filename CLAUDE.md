@@ -126,7 +126,7 @@ server/src/
                            its sealed secret, the pulls + backoff + startPuller, snapshots, the 'stockroom' Connections
                            row), plans.js (pure: reorderPlan/spotCheckPlan/keyedPlan, deliveries/differences, applyPlan,
                            caps), automations.js (the four automations, applyReorderPlan), routes.js (/api/stockroom:
-                           connection, pull), migrations/001_create_stockroom.sql
+                           connection, pull), migrations/001_create_stockroom.sql, 002_order_soon_wanted.sql
   backup/                  backup.js, restore.js (D5: runs this version's migrations on the restored copy, then
                            carryKeptTables: modules' keepOnRestore), schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file), redact.js (C6a), sealed.js (D16: AES-GCM
@@ -1882,7 +1882,7 @@ and its date has passed: the page says "Overdue — renewed?" until a person set
 ## Stock tasks from Stockroom (stockroom module, D16)
 Code `server/src/modules/stockroom/` (`client.js` the signed GET client, `service.js` the connection + pulls + the
 Connections row, `plans.js` the pure planners, `automations.js` the four automations, `routes.js`, migration
-`001_create_stockroom.sql`), the shared AES-GCM helpers `server/src/lib/sealed.js` (moved from D1's `secret.js`, which
+`001_create_stockroom.sql`, `002_order_soon_wanted.sql`), the shared AES-GCM helpers `server/src/lib/sealed.js` (moved from D1's `secret.js`, which
 re-exports them), client `client/src/modules/stockroom/` (the card's panel only); tests `server/test/stockroom.test.js`
 (TZ Toronto; against `server/test/fixtures/stockroomHub.js`, a fake Stockroom implementing B5), `client/test/stockroom.test.js`,
 `test/e2e/stockroom.e2e.test.js`, and the cross-app run `scripts/stockroom-e2e.mjs` (+ `scripts/stockroom-hub.mjs`).
@@ -1921,10 +1921,14 @@ home call out to Fly; Stockroom never calls the suite.
   (`unsupported_version`: update the suite) — Stockroom bumps it only to rename or remove a field.
 
 **The pulls** (`service.js`; the loop `startPuller()` from `src/index.js` when `STOCKROOM_PULL_ENABLED`, on in
-production; one look a minute, 20 s after start; calls only when an answer is due; one round at a time):
-- `deliveries`, `differences`, `counts` **hourly**; `order-soon` **daily after 6:30 a.m.** (local), again in the same round
-  when the deliveries answer changed (a purchase order confirmed or received changes what is on order), and whenever its
-  answer is over a day old. **Why**: deliveries, differences and spot checks change during the working day and their
+production; one look a minute, 20 s after start; calls only when an answer is due; one round at a time — a plain
+request while one runs gets that round, a **forced** one (Pull now, a new code) gets one forced round chained after
+it, shared by every forced request made meanwhile):
+- `deliveries`, `differences`, `counts` **hourly**; `order-soon` **daily after 6:30 a.m.** (local), again when the
+  deliveries answer changed (a purchase order confirmed, received or cancelled changes what is on order), and whenever
+  its answer is over a day old. "Changed" ignores what moves with the calendar alone (`as_of`, the deliveries' `today`,
+  `counts`, each order's `overdue`, `ended`). The re-read is a flag on the order-soon row (`wanted`, migration 002) kept
+  until that read succeeds: normally the same round, otherwise after its backoff (or a restart) — never lost. **Why**: deliveries, differences and spot checks change during the working day and their
   answers are small (a 304 when unchanged: Stockroom measured 0–12 ms for these); the forecast behind order-soon works on
   whole days (its windows end yesterday), so an hourly read would only churn the reorder tasks' notes, and it is the
   costliest read (60–90 ms on live-sized data). Reorders are not urgent within the day.
@@ -1977,27 +1981,33 @@ while it is still the one the suite wrote. **New tasks are capped per day** (`DA
 - **`stockroom-deliveries`** — "Receive delivery PO-0012 from <supplier>: N tins" per purchase order on the deliveries
   answer (confirmed or partly received), key `po:<po_id>`, due its `expected_on` (or the day it is made when none),
   following a changed expected day while the due date is still the suite's (a person's day is kept). Notes: confirmed
-  when and by whom, expected (late), each line still to come ("40 of 100 tins"). **Finished when it leaves the list**:
-  "No longer expected in Stockroom (received in full, cancelled or closed short)" — Stockroom doesn't say which (see the
-  hub addition below). Listed again (a receipt deleted there) → reopened if the suite had finished it.
+  when and by whom, expected (late), each line still to come ("40 of 100 tins"). **Finished when it leaves the list**,
+  saying how it ended from Stockroom's **B10** fields (hub PR #11): `ended: [{ po_id, number, supplier, supplier_id,
+  status: received|cancelled|closed_short, ended_at, reason }]` (the last 30 days) → "Received in full in Stockroom",
+  "Cancelled in Stockroom: <reason>", "Closed short in Stockroom: <reason>" (`endedWhy`); not in `ended` (ended longer
+  ago), or a Stockroom without B10 → "No longer expected in Stockroom (received in full, cancelled or closed short)".
+  **`purchase_orders_truncated: true`** (over 500 open, the list was cut) → nothing is finished; missing (before B10) →
+  the list is whole. Listed again (a receipt deleted there) → reopened if the suite had finished it — with the order's
+  current notes, which keep following it (review fix: `finishOwn` marks the finished notes as the suite's when they
+  were, and the reopen marks its notes; kept in this module, so taskBook and D3/D5/D6 are unchanged — D3's ship task
+  still keeps its notes as they were after a suite reopen).
 - **`stockroom-differences`** — "Investigate count difference: <product> (<sku>), ±N tins" per open difference with
   |variance| ≥ **Stockroom's own limit** (`threshold_tins`, its Settings → variance threshold — decision: one limit, set in
-  one place; Stockroom already opens differences only from it, so in practice every open one), key `diff:<id>`, due the
+  one place). Stockroom opens a difference only when it is at or over the limit *at the time*; raising the limit later
+  leaves the older ones open there, so the check here only decides which get a **new** task. key `diff:<id>`, due the
   day it is made. Notes: expected, counted, the difference and its value, the count and its day, reason, who opened it.
-  **Finished "Marked investigated in Stockroom"** when it leaves the list — never while the list is `truncated` (over
-  500 open: a missing one may just be cut off).
+  **Finished "Marked investigated in Stockroom"** only when it leaves the list (`keyedPlan`'s `listedKeys` = every open
+  id, whatever its size — review fix: a raised limit no longer finishes still-open ones as "investigated") — and never
+  while the list is `truncated` (over 500 open: a missing one may just be cut off).
 - **Idempotent**: every task has its key; replayed events are no-ops (run key), Run now, re-pulls (304s) and restarts
   make nothing twice; after a restore, tasks made after the backup are gone with it and are made again once at the next
   pull (tested).
 
-**Hub addition needed (not built — Stockroom unchanged)**: the deliveries answer lists only open orders, so the suite
-can't tell *why* one left (received in full vs cancelled vs closed short) and finishes its task with the generic reason.
-Proposed (additive, B5's rules: signed GET, nonce, version 1, ETag): `GET /v1/suite/deliveries?include=ended` (or a
-separate `/v1/suite/purchase-orders`) adding, beside `items`, `ended: [{ po_id, number, supplier, supplier_id, status:
-received|cancelled|closed_short, ended_at, ended_by, reason }]` for orders that ended in the last 30 days. The suite
-would then say "Received in full on …" / "Cancelled in Stockroom: <reason>" and could finish a reorder episode only on a
-received or still-open order. Everything else D16 needs is in B5 (suppliers on order-soon since B6a, `on_order_orders`,
-confirmed orders with `confirmed_at` and `expected_on`, the spot check's time and suggestions, open differences).
+**Hub fields**: everything D16 needs is in B5 (suppliers on order-soon since B6a, `on_order_orders`, confirmed orders
+with `confirmed_at` and `expected_on`, the spot check's time and suggestions, open differences) plus **B10** (hub PR #11,
+`ended` + `purchase_orders_truncated` on the deliveries read: how an order left the list, and whether the list was cut),
+used when present and not needed (a Stockroom without them works as before). Tested with and without them (fake hub)
+and against a `git archive` of the hub's B10 branch and of master.
 
 **Not built / open**: Stockroom's `/summary` (the stock card on the overview is **D15**); the decisions waiting in
 Stockroom's `/orders` (B8) as tasks; per-supplier or per-product overrides; editing anything in Stockroom from the suite
@@ -2076,7 +2086,8 @@ Stockroom's `/orders` (B8) as tasks; per-supplier or per-product overrides; edit
   (and when deliveries change), 304s, backoff to 60 min, revoked = stop. Four event automations decide on the stored
   answers after each round (wholesale business, the business's default owner; the spot check on the shared list), with
   daily caps; reorders are per supplier "episode", finished when a purchase order to it is confirmed or nothing is left;
-  the difference limit is Stockroom's own. Hub addition proposed: ended purchase orders with their status. Next: D15's
+  the difference limit is Stockroom's own (for new tasks; an open difference keeps its task until investigated);
+  delivery tasks say how the order ended from B10's `ended` when the hub has it. Next: D15's
   stock card reads `/v1/suite/summary` through this connection.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
@@ -2104,7 +2115,8 @@ needs an Order Manager with A11). `npm run test:stockroom -- <inventory-hub chec
 checkout) runs a real Stockroom from its own code (live-sized data from its generator, suppliers, a purchase order, a
 count difference; the reader made through its admin API) against a real suite: the code checked, every read, the tasks
 made, 304s, then Stockroom's own actions (an order confirmed, received, cancelled, a difference investigated, a spot
-check applied) finishing them, nothing made twice, 405 for a POST, and Disconnect (revoked). Run it against a
+check applied) finishing them — with how each order ended when the hub has B10 —, nothing made twice, 405 for a POST,
+and Disconnect (revoked). Run it against a
 `git archive` export of the hub, never by changing the hub repo. `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
 touching the engine, the service worker or the sync UI. Write a test with every module and every bug fix.
 

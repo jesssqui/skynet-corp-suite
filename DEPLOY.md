@@ -410,7 +410,8 @@ never calls the Mac.
      The suite finishes it once a purchase order to that supplier is **confirmed as placed in Stockroom**, or when
      nothing from that supplier needs ordering. Products with no supplier set in Stockroom share one task.
    - **Receive delivery PO-… from <supplier>** — one per purchase order confirmed in Stockroom, due on its expected day;
-     finished once Stockroom no longer expects it (received in full, cancelled or closed short).
+     finished once Stockroom no longer expects it, saying how it ended (received in full, cancelled or closed short, with
+     the reason typed there).
    - **Investigate count difference: <product>, ±N tins** — one per open difference at or over Stockroom's own limit
      (Stockroom → Settings → variance threshold); finished once it is marked investigated there.
    - **Weekly spot check in Stockroom** — on the **shared list**, once a week (Monday–Sunday), with Stockroom's
@@ -426,6 +427,10 @@ never calls the Mac.
 6. **Disconnect**: in Stockroom, **Settings → Connections → Disconnect** stops the key at once (the card then says
    *Disconnected in Stockroom*: paste a new code to connect again); in the suite, **Forget…** on the card removes it
    here (tasks already made stay). A new code from Stockroom (*Make a new secret*) is pasted the same way (step 2).
+7. **After restoring the suite from a backup** (step 5, same Mac): nothing to do — the connection is kept as it is now.
+   **On a new Mac with the volume lost** (restored from the off-machine copy): the key file is gone, so the secret can't
+   be read (the card says so). In Stockroom use *Make a new secret* (or Connect the suite again) and paste the new code
+   here (step 2).
 
 ## Troubleshooting
 
