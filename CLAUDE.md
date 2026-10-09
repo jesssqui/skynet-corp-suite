@@ -1421,7 +1421,8 @@ by the suite: when their reason is gone they are **finished** (`done_at`) with a
   and notes too while they are still the suite's; a customer no longer linked finishes it. Not ready (shipped,
   cancelled, deleted, unpacked, put back, "Changed in the Order Manager — check again") → the open one is finished with
   the reason. Packed again after an unpack or a check-again, unshipped, or restored packed → a new task. **Unlinked customers get nothing, and linking one later replays nothing** (only new events
-  count). Run now does nothing (it runs on events).
+  count) — until such an order next changes: an order packed before its customer was linked gets its ship task on its
+  next `order.changed` (even a tags edit), since it really is waiting to ship. Run now does nothing (it runs on events).
 - **The "Quiet regular" flag**: `wholesale_customer` cards carry `usual_gap_days` and `quiet_from` (nullable; null =
   not a regular or deleted in the Order Manager), computed in `desiredCustomer` by `orderRhythm`. `quiet_from` is a
   **date**, so a device shows the flag from that day on with its own `localDate()` (`isQuietRegular(card, today)`) —
