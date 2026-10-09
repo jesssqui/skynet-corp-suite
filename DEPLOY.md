@@ -389,6 +389,44 @@ Nothing to set up. After this version starts:
 - The Friday review's *Renewals* step lists both. Devices need nothing (no *Download everything again*): costs are a new
   record type and arrive with the next sync.
 
+## 9. Stock tasks from Stockroom (D16)
+
+The suite reads Stockroom (the Inventory Hub on Fly) and turns what it reads into tasks: what to reorder (one task per
+supplier), purchase orders to receive, count differences to investigate and the weekly spot check. **It only reads**:
+nothing in the suite can change stock or anything else in Stockroom. The Mac calls out to Fly over HTTPS; Stockroom
+never calls the Mac.
+
+1. **In Stockroom** (signed in as an admin): **Settings → Connections → Connect the suite** (name it *Skynet Corp
+   Suite*). It shows a **connection code** starting with `SLR1.` **once** — copy it now (it holds Stockroom's address,
+   the key and its secret). If it is lost before step 2, use *Make a new secret* there for a new code.
+2. **In the suite** (either of you): **System → Connections → Stockroom (Inventory Hub)** → paste the code → **Connect**.
+   The suite checks it with Stockroom first and saves it only if Stockroom accepts it (a wrong or old code says so and
+   saves nothing). The secret is kept encrypted with a key file in the suite's data volume (`stockroom-secret.key`):
+   backups hold it only encrypted, and a restore keeps the connection as it is now.
+3. Within a minute the card shows *Last success*, what Stockroom lists (to reorder, deliveries expected, differences
+   open) and each read's time; **Pull now** reads everything at once. The tasks appear on Today and Tasks:
+   - **Reorder from <supplier>: N products** — due the day Stockroom first suggests ordering, for the wholesale
+     business's default owner; the products, suggested quantities and days left are in its notes and kept up to date.
+     The suite finishes it once a purchase order to that supplier is **confirmed as placed in Stockroom**, or when
+     nothing from that supplier needs ordering. Products with no supplier set in Stockroom share one task.
+   - **Receive delivery PO-… from <supplier>** — one per purchase order confirmed in Stockroom, due on its expected day;
+     finished once Stockroom no longer expects it (received in full, cancelled or closed short).
+   - **Investigate count difference: <product>, ±N tins** — one per open difference at or over Stockroom's own limit
+     (Stockroom → Settings → variance threshold); finished once it is marked investigated there.
+   - **Weekly spot check in Stockroom** — on the **shared list**, once a week (Monday–Sunday), with Stockroom's
+     suggestions; not made when a spot check was already applied that week, finished once one is.
+   Finishing or deleting one of these tasks yourself is final for it (a reorder: until that need ends). At most 10 new
+   reorder or difference tasks (20 deliveries) a day; the rest come the next days.
+4. How often: deliveries, differences and counts **every hour**, the order-soon list **once a day after 6:30 a.m.** (and
+   again when deliveries change). Each answer is only re-sent by Stockroom when it changed. A failure waits 2, 4, 8 … up
+   to 60 minutes before trying again and shows as the card's *Last error*; nothing else in the suite is affected.
+5. **Switch it off** on its card: no calls at all until it is switched on again (then it catches up). The four
+   automations (**System → Automations → Reorder from suppliers / Weekly spot check / Receive deliveries / Investigate
+   count differences**) are on and silent; switch any off, or to *Alert* for an in-app alert.
+6. **Disconnect**: in Stockroom, **Settings → Connections → Disconnect** stops the key at once (the card then says
+   *Disconnected in Stockroom*: paste a new code to connect again); in the suite, **Forget…** on the card removes it
+   here (tasks already made stay). A new code from Stockroom (*Make a new secret*) is pasted the same way (step 2).
+
 ## Troubleshooting
 
 Offline:
