@@ -14,7 +14,8 @@
     "./crm": "./crm.js",
     "./planner": "./planner.js",
     "./csv": "./csv.js",
-    "./intake": "./intake.js"
+    "./intake": "./intake.js",
+    "./costs": "./costs.js"
   },
   "scripts": {
     "test": "node --test \"test/*.test.js\""

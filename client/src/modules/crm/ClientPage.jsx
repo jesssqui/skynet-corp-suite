@@ -19,6 +19,7 @@ import { useToday } from '../planner/parts.jsx';
 import { wholesaleItems, activityItem, sumCards, linkHowText } from '../wholesale/logic.js';
 import { WholesaleTimelineItem, AccountWholesale, ClientWholesale, QuietRegularBadge } from '../wholesale/parts.jsx';
 import UndoLinkSheet from '../wholesale/UndoLinkSheet.jsx';
+import { resoldLine } from '../costs/logic.js';
 import './crm.css';
 
 // One client on one screen (/crm/clients/:id): who they are, their businesses (accounts) with
@@ -116,7 +117,23 @@ function ServiceItem({ service, open }) {
   );
 }
 
-function RelationshipItem({ rel, business, services, onEdit, onAddService, onEditService, noNextStep, clientId, businesses }) {
+/** D6: our recurring costs resold on this relationship — "Hosting — we pay $300/yr, they pay $480/yr" (tap to edit on Costs). */
+function ResoldCosts({ costs }) {
+  return (
+    <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 2 }} data-testid="resold-costs">
+      {[...costs].sort((a, b) => String(a.name).localeCompare(String(b.name))).map((c) => (
+        <li key={c.id} style={{ ...muted, display: 'flex', gap: 'var(--space-1)', alignItems: 'center', flexWrap: 'wrap' }} data-cost-id={c.id}>
+          <Icon name="card" size={14} />
+          <Link to={`/costs?open=${c.id}`} style={{ color: 'inherit', textDecoration: c.status === 'cancelled' ? 'line-through' : 'none' }}>{resoldLine(c)}</Link>
+          {c.status === 'cancelled' ? <Badge tone="neutral">Cancelled</Badge> : null}
+          <Badges record={c} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function RelationshipItem({ rel, business, services, resold = [], onEdit, onAddService, onEditService, noNextStep, clientId, businesses }) {
   return (
     <li className="crm-rel" data-relationship-id={rel.id}>
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -134,12 +151,20 @@ function RelationshipItem({ rel, business, services, onEdit, onAddService, onEdi
           {services.map((s) => <ServiceItem key={s.id} service={s} open={() => onEditService(s)} />)}
         </ul>
       ) : null}
-      <TextButton onClick={onAddService} style={{ paddingLeft: 0, width: 'fit-content' }}><Icon name="plus" size={14} />Add service</TextButton>
+      {resold.length ? <ResoldCosts costs={resold} /> : null}
+      <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+        <TextButton onClick={onAddService} style={{ paddingLeft: 0, width: 'fit-content' }}><Icon name="plus" size={14} />Add service</TextButton>
+        {rel.kind === 'wholesale' ? null : (
+        <Link to={`/costs?new=1&relationship=${rel.id}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--accent)', minHeight: 'var(--tap)', fontSize: 'var(--text-sm)', fontWeight: 600, textDecoration: 'none' }}>
+          <Icon name="plus" size={14} />Add resold cost
+        </Link>
+        )}
+      </div>
     </li>
   );
 }
 
-function AccountItem({ account, rels, servicesByRel, links, businessesById, open, noNextStep, businesses, wholesaleCards, today, clientClosed, me }) {
+function AccountItem({ account, rels, servicesByRel, resoldByRel, links, businessesById, open, noNextStep, businesses, wholesaleCards, today, clientClosed, me }) {
   const lines = addressLines(account);
   const href = websiteHref(account.website);
   return (
@@ -172,6 +197,7 @@ function AccountItem({ account, rels, servicesByRel, links, businessesById, open
               rel={r}
               business={businessesById.get(r.business_id)}
               services={servicesByRel.get(r.id) ?? []}
+              resold={resoldByRel.get(r.id) ?? []}
               onEdit={() => open({ kind: 'relationship', record: r })}
               onAddService={() => open({ kind: 'service', relationshipId: r.id })}
               onEditService={(s) => open({ kind: 'service', record: s, relationshipId: r.id })}
@@ -380,6 +406,9 @@ function ClientScreen({ clientId }) {
     for (const r of data.relationships) relsByAccount.set(r.account_id, [...(relsByAccount.get(r.account_id) ?? []), r]);
     const servicesByRel = new Map();
     for (const s of data.services) servicesByRel.set(s.relationship_id, [...(servicesByRel.get(s.relationship_id) ?? []), s]);
+    // D6: our recurring costs resold on each relationship.
+    const resoldByRel = new Map();
+    for (const c of data.resoldCosts ?? []) resoldByRel.set(c.relationship_id, [...(resoldByRel.get(c.relationship_id) ?? []), c]);
     const consentsByContact = new Map();
     for (const k of data.consents) consentsByContact.set(k.contact_id, [...(consentsByContact.get(k.contact_id) ?? []), k]);
     const linksBy = new Map();
@@ -400,7 +429,7 @@ function ClientScreen({ clientId }) {
     const cardsByAccount = new Map();
     for (const c of data.wholesaleCustomers) cardsByAccount.set(c.account_id, [...(cardsByAccount.get(c.account_id) ?? []), c]);
     const wholesale = sumCards(data.wholesaleCustomers);
-    return { businessesById, accountsById, relsByAccount, servicesByRel, consentsByContact, linksBy, working, order, noNextStep, items, cardsByAccount, wholesale };
+    return { businessesById, accountsById, relsByAccount, servicesByRel, resoldByRel, consentsByContact, linksBy, working, order, noNextStep, items, cardsByAccount, wholesale };
   }, [data]);
 
   if (!data) return <Card><p style={{ ...muted, margin: 0 }}>{loading ? 'Loading…' : ' '}</p></Card>;
@@ -414,7 +443,7 @@ function ClientScreen({ clientId }) {
     );
   }
   const { client, accounts, contacts, businesses } = data;
-  const { businessesById, accountsById, relsByAccount, servicesByRel, consentsByContact, linksBy, working, order, noNextStep, items, cardsByAccount, wholesale } = maps;
+  const { businessesById, accountsById, relsByAccount, servicesByRel, resoldByRel, consentsByContact, linksBy, working, order, noNextStep, items, cardsByAccount, wholesale } = maps;
   const open = (s) => setSheet(s);
   const close = () => setSheet(null);
   const capture = (type) => open({
@@ -455,6 +484,7 @@ function ClientScreen({ clientId }) {
                     account={a}
                     rels={relsByAccount.get(a.id) ?? []}
                     servicesByRel={servicesByRel}
+                    resoldByRel={resoldByRel}
                     links={linksBy.get(a.id) ?? []}
                     businessesById={businessesById}
                     open={open}

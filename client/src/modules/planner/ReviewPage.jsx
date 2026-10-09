@@ -1,6 +1,6 @@
 // The Friday review (/plan/review): a checklist for the two people to go through together, built
-// from what the suite already has — overdue tasks (both people), services renewing in the next 30
-// days, active clients quiet for 60 days, this week's goals (marked done in one tap), tasks to
+// from what the suite already has — overdue tasks (both people), services and (D6) our recurring
+// costs renewing in the next 30 days, active clients quiet for 60 days, this week's goals (marked done in one tap), tasks to
 // hand to the other person (one tap), and relationships with no next step. "Duplicate matches" (D2)
 // counts the review list's suggestions on the server (needs a connection; says so offline) and links
 // to it; "this week's order entry" (the wholesale connection) isn't connected yet and says so.
@@ -23,8 +23,10 @@ import { GoalTick } from './goals.jsx';
 import { PlanTabs } from './planParts.jsx';
 import { useServerData } from '../../api/useServerData.js';
 import { matchesSummary } from '../wholesale/logic.js';
+import { costAmountText } from '@suite/shared/costs';
 
 const STEPS = ['overdue', 'renewals', 'quiet', 'goals', 'handoff', 'next-step', 'duplicates', 'orders'];
+const subHead = { fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', margin: 'var(--space-2) 0 var(--space-1)' };
 
 /** One step of the review: heading, count, a "reviewed" tick, and its list. */
 function Step({ id, title, count, checked, onCheck, children, hint }) {
@@ -71,7 +73,7 @@ export default function ReviewPage() {
 
   const lists = useMemo(() => (data ? reviewLists({
     tasks: data.tasks, today, goals: data.goals, services: data.services, clients: data.clients, accounts: data.accounts,
-    relationships: data.relationships, lastActivity: data.lastActivity, businesses: data.businesses,
+    relationships: data.relationships, lastActivity: data.lastActivity, businesses: data.businesses, costs: data.costs,
   }) : null), [data, today]);
   // Tasks ticked or handed over this session stay where they were (with undo) until the page reloads.
   const handoff = useMemo(() => (data ? handoffTasks(data.tasks, { who, today }) : []), [data, who, today]);
@@ -152,11 +154,12 @@ export default function ReviewPage() {
               />
             </Step>
 
-            <Step id="renewals" title={`Renewals in the next ${RENEWAL_DAYS} days`} count={lists.renewals.length} checked={checks.has('renewals')} onCheck={check}>
+            <Step id="renewals" title={`Renewals in the next ${RENEWAL_DAYS} days`} count={lists.renewals.length + lists.costRenewals.length} checked={checks.has('renewals')} onCheck={check}>
+              <h3 style={subHead}>Client services</h3>
               <Paged
                 rows={lists.renewals}
                 testId="review-renewals"
-                empty="No services renew in the next 30 days."
+                empty="No client services renew in the next 30 days."
                 render={(svc) => {
                   const { rel, account, client } = relLine(svc);
                   return (
@@ -173,6 +176,25 @@ export default function ReviewPage() {
                     </li>
                   );
                 }}
+              />
+              <h3 style={subHead}>Our costs</h3>
+              <Paged
+                rows={lists.costRenewals}
+                testId="review-cost-renewals"
+                empty={<>None of our costs renew in the next 30 days. <Link to="/costs">Costs</Link></>}
+                render={(cost) => (
+                  <li key={cost.id} data-cost-id={cost.id} className="planner-review-row">
+                    <span style={{ display: 'grid', gap: 2, minWidth: 0 }}>
+                      <Link to={`/costs?open=${cost.id}`} style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{cost.name}</Link>
+                      <span style={{ ...muted, display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
+                        <BusinessChip business={data.businessesById.get(cost.business_id)} short />
+                        {costAmountText(cost) ? <span>{costAmountText(cost)}</span> : null}
+                        {cost.auto_renews && cost.period !== 'once' ? <span>Renews on its own</span> : null}
+                      </span>
+                    </span>
+                    <Badge tone={cost.next_renewal <= today ? 'warn' : 'neutral'}>Renews {formatDate(cost.next_renewal)}</Badge>
+                  </li>
+                )}
               />
             </Step>
 

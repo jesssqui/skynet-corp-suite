@@ -261,6 +261,13 @@ export function createCrmService({ db, services, log }) {
       JOIN crm_clients c ON c.id = a.client_id AND c.deleted_at IS NULL
       WHERE s.deleted_at IS NULL AND s.renewal_date BETWEEN ? AND ? AND (s.status IS NULL OR s.status NOT IN ('done', 'cancelled'))
       ORDER BY s.renewal_date, s.id`),
+    // D6: one service with what its renewal reminder needs; null unless it and its relationship,
+    // account, client (and our business) are live.
+    service: db.prepare(`SELECT s.*, a.name AS account_name, a.client_id AS client_id, c.name AS client_name,
+        c.status AS client_status, r.business_id AS business_id, r.account_id AS account_id, r.status AS relationship_status
+      FROM crm_services s JOIN crm_relationships r ON r.id = s.relationship_id AND r.deleted_at IS NULL ${REL_PARENTS}
+      JOIN crm_clients c ON c.id = a.client_id AND c.deleted_at IS NULL
+      WHERE s.id = ? AND s.deleted_at IS NULL`),
     clientsActivity: db.prepare(`SELECT c.id, c.name, c.status, c.created_at,
         (SELECT max(t.at) FROM crm_activities t WHERE t.client_id = c.id AND t.deleted_at IS NULL) AS last_activity_at
       FROM crm_clients c WHERE c.deleted_at IS NULL AND c.status = 'active' ORDER BY c.name COLLATE NOCASE, c.id`),
@@ -424,8 +431,17 @@ export function createCrmService({ db, services, log }) {
      * rules like C4a's "no next step" (the planner's automations).
      */
     liveRelationships: () => live.relationships.all(),
-    /** Live services (not done or cancelled) whose renewal_date is from..to (YYYY-MM-DD, inclusive). */
+    /**
+     * Live services (not done or cancelled) whose renewal_date is from..to (YYYY-MM-DD, inclusive), as
+     * stored plus account_name, client_id and business_id (the relationship's).
+     */
     renewalsBetween: (from, to) => live.renewals.all(from, to),
+    /**
+     * D6 (renewal reminders): one service as stored plus account_name, account_id, client_id,
+     * client_name, client_status, relationship_status and business_id — any status — or null when it, its relationship,
+     * account or client is deleted.
+     */
+    liveService: (id) => (isId(id) ? live.service.get(id) ?? null : null),
     /** Live active clients with created_at and the time of their latest activity (null when none). */
     activeClientsWithLastActivity: () => live.clientsActivity.all(),
   };

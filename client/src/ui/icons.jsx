@@ -178,6 +178,13 @@ const paths = {
   ),
   bolt: <path d="M13 3 5.5 13.5H12L11 21l7.5-10.5H12z" />,
   play: <path d="M8 5.5v13l10.5-6.5z" />,
+  card: (
+    <>
+      <rect x="3.5" y="6" width="17" height="12" rx="2" />
+      <path d="M3.5 10h17M7 14.5h3" />
+    </>
+  ),
+  repeat: <path d="M17 3.5l3 3-3 3M20 6.5H8a4 4 0 0 0-4 4v1M7 20.5l-3-3 3-3M4 17.5h12a4 4 0 0 0 4-4v-1" />,
 };
 
 export function Icon({ name, size = 20, title, style, className }) {

@@ -33,6 +33,8 @@ const BELONGS_TO = {
   wholesale_order: ['account', 'client'],
   wholesale_entry: ['account', 'client'],
   wholesale_note: ['account', 'client'], // D5
+  // D6: a recurring cost belongs to one of our businesses; its (resold) relationship is a plain ref.
+  recurring_cost: ['business'],
 };
 
 const caches = new WeakMap(); // engine -> { entries: Map<entity, Promise<Entry>>, off }
@@ -127,7 +129,7 @@ export async function cachedList(engine, entity) {
 // D5: the Order Manager's notes are timeline items too, and count as activity on the list.
 const LIST_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'activity', 'wholesale_order', 'wholesale_customer', 'wholesale_note'];
 const PAGE_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'service', 'consent', 'activity', 'link', 'task',
-  'wholesale_customer', 'wholesale_order', 'wholesale_entry', 'wholesale_note'];
+  'wholesale_customer', 'wholesale_order', 'wholesale_entry', 'wholesale_note', 'recurring_cost'];
 
 /** Last activity per client: Map<client_id, at>. */
 export function lastActivityByClient(activities) {
@@ -177,7 +179,7 @@ const byName = (a, b) => String(a.name).localeCompare(String(b.name)) || (a.id <
 export function useClientPageData(clientId) {
   const { data, loading, error } = useSyncData(async (e) => {
     const [businesses, clients, accounts, contacts, relationships, services, consents, activities, links, tasks,
-      wholesaleCustomers, wholesaleOrders, wholesaleEntries, wholesaleNotes] = await cachedLists(e, PAGE_ENTITIES);
+      wholesaleCustomers, wholesaleOrders, wholesaleEntries, wholesaleNotes, costs] = await cachedLists(e, PAGE_ENTITIES);
     const client = clients.byId().get(clientId) ?? null;
     if (!client) return { client: null };
     const myAccounts = [...accounts.where('client_id', clientId)].sort(byName);
@@ -204,6 +206,8 @@ export function useClientPageData(clientId) {
       wholesaleOrders: myAccounts.flatMap((a) => wholesaleOrders.where('account_id', a.id)),
       wholesaleEntries: myAccounts.flatMap((a) => wholesaleEntries.where('account_id', a.id)),
       wholesaleNotes: myAccounts.flatMap((a) => wholesaleNotes.where('account_id', a.id)), // D5
+      // D6: our recurring costs resold on this client's relationships.
+      resoldCosts: myRelationships.flatMap((r) => costs.where('relationship_id', r.id)),
     };
   }, [clientId], { entities: PAGE_ENTITIES });
   return { data: data ?? null, loading, error };

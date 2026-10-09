@@ -17,8 +17,9 @@ import connections from './connections/index.jsx';
 import automations from './automations/index.jsx';
 import wholesale from './wholesale/index.jsx';
 import calendar from './calendar/index.jsx';
+import costs from './costs/index.jsx';
 
-export const modules = [planner, crm, health, connections, automations, wholesale, auth, calendar, sync];
+export const modules = [planner, crm, costs, health, connections, automations, wholesale, auth, calendar, sync];
 
 export const navItems = modules
   .flatMap((m) => (Array.isArray(m.nav) ? m.nav : m.nav ? [m.nav] : [])

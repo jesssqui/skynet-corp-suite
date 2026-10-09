@@ -10,6 +10,7 @@ import crm from './crm/index.js';
 import planner from './planner/index.js';
 import wholesale from './wholesale/index.js';
 import calendar from './calendar/index.js';
+import costs from './costs/index.js';
 
 // auth comes first: app.js puts its guard in front of every route.
 // sync comes before every module that registers synced entities with it (crm, planner, …);
@@ -18,5 +19,6 @@ import calendar from './calendar/index.js';
 // planner comes after crm (its tasks point at CRM records);
 // wholesale (D1) comes last: its records belong to CRM accounts, it registers the 'wom' connection
 // and emits the Order Manager's events to automations;
-// calendar (C6a) after the planner, whose tasks its feed reads (through the planner's service).
-export const modules = [auth, health, sync, connections, automations, crm, planner, wholesale, calendar];
+// calendar (C6a) after the planner, whose tasks its feed reads (through the planner's service);
+// costs (D6) after the crm and the planner: its costs belong to our businesses, its reminders are tasks.
+export const modules = [auth, health, sync, connections, automations, crm, planner, wholesale, calendar, costs];

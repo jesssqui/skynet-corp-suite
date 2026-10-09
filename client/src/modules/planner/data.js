@@ -39,17 +39,18 @@ export function usePlannerData() {
 
 // D1: Order Manager orders count as activity for quiet clients, as on the client list and the server;
 // D5: so do its notes.
-const REVIEW_ENTITIES = [...PLANNER_ENTITIES, 'service', 'activity', 'wholesale_order', 'wholesale_note'];
+// D6: our recurring costs renewing soon are listed beside the services' renewals.
+const REVIEW_ENTITIES = [...PLANNER_ENTITIES, 'service', 'activity', 'wholesale_order', 'wholesale_note', 'recurring_cost'];
 
 /**
- * The Friday review: the planner's records plus services (renewals) and the last activity per
+ * The Friday review: the planner's records plus services and (D6) recurring costs (renewals) and the last activity per
  * client (quiet clients), all from the cached lists.
  */
 export function useReviewData() {
   const { data, loading, error } = useSyncData(async (e) => {
     const entries = await cachedLists(e, REVIEW_ENTITIES);
-    const [services, activities, orders, notes] = entries.slice(PLANNER_ENTITIES.length);
-    return { ...maps(entries), services: services.records, lastActivity: reviewLastActivity(activities, orders, notes) };
+    const [services, activities, orders, notes, costs] = entries.slice(PLANNER_ENTITIES.length);
+    return { ...maps(entries), services: services.records, costs: costs.records, lastActivity: reviewLastActivity(activities, orders, notes) };
   }, [], { entities: REVIEW_ENTITIES });
   return { data: data ?? null, loading, error };
 }
