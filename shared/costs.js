@@ -40,26 +40,47 @@ export function daysFromTo(from, to) {
   return Math.round((ms(to) - ms(from)) / 86_400_000);
 }
 
-/** `date` plus `n` of the cost's periods, on the calendar (Jan 31 + 1 month = Feb 28/29); `once` stays put. */
-export function addPeriods(date, period, n = 1) {
+/** Days in a month (1–12). */
+const daysInMonth = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+
+/** The day of the month of a "YYYY-MM-DD" date. */
+export const dayOfMonth = (date) => Number(String(date).slice(8, 10));
+
+/**
+ * `date` plus `n` of the cost's periods, on the calendar; `once` stays put. The day is the cost's
+ * billing day (`anchor`, 1–31; default: `date`'s own day), clamped to the month's last day — so a
+ * cost billed on the 31st renews Jan 31 → Feb 28 → Mar 31, never sticking on the 28th.
+ */
+export function addPeriods(date, period, n = 1, anchor = null) {
   const months = PERIOD_MONTHS[period];
-  return months ? addMonths(date, months * n) : date;
+  if (!months) return date;
+  if (!anchor) return addMonths(date, months * n);
+  const [y, m] = date.split('-').map(Number);
+  const total = y * 12 + (m - 1) + months * n;
+  const year = Math.floor(total / 12);
+  const month = (total % 12) + 1;
+  const day = Math.min(anchor, daysInMonth(year, month));
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
+
+/** A valid billing day (1–31) or null. */
+export const isAnchorDay = (v) => Number.isInteger(v) && v >= 1 && v <= 31;
 
 /**
  * The next renewal of an auto-renewing cost whose date has passed: the first `next + k periods`
  * that is today or later (k counted from `next` in one go, so a run after weeks of downtime lands
- * on the right date). Unchanged when the date hasn't passed, or for `once`.
- * Day 29–31 clamp to a short month's last day, and the next roll starts from the clamped day
- * (Jan 31 → Feb 28 → Mar 28): edit the date when that matters.
+ * on the right date). Unchanged when the date hasn't passed, or for `once`. Each date falls on the
+ * billing day `anchor` (the cost's `anchor_day`; default `next`'s own day), clamped to short
+ * months — rolled daily or in one jump, the dates are the same (Jan 31 → Feb 28 → Mar 31).
  */
-export function rollForward(next, period, today) {
+export function rollForward(next, period, today, anchor = null) {
   if (!next || !PERIOD_MONTHS[period] || next >= today) return next;
+  const day = isAnchorDay(anchor) ? anchor : dayOfMonth(next);
   let k = 1;
-  let date = addPeriods(next, period, k);
+  let date = addPeriods(next, period, k, day);
   while (date < today) {
     k += 1;
-    date = addPeriods(next, period, k);
+    date = addPeriods(next, period, k, day);
   }
   return date;
 }
@@ -79,16 +100,18 @@ export const monthlyFromYearly = (cents) => Math.round(cents / 12);
  * business and overall, per currency — amounts in different currencies are never added together.
  * → { byBusiness: Map<business_id, Map<currency, Sum>>, overall: Map<currency, Sum> } where
  * Sum = { count, yearly_cents, monthly_cents, resold_yearly_cents, resold_monthly_cents }.
- * `count` counts the recurring ones that went in.
+ * `count` counts the recurring ones that went in. `resoldLive(cost)` says whether a resold cost's
+ * relationship (and its account and client) is still there: the resold side of one whose client is
+ * gone (deleted, or hidden under a deleted parent) is left out, as the page leaves out its line.
  */
-export function costTotals(costs) {
+export function costTotals(costs, { resoldLive = () => true } = {}) {
   const byBusiness = new Map();
   const overall = new Map();
   const add = (map, currency, cost) => {
     const s = map.get(currency) ?? { count: 0, yearly_cents: 0, monthly_cents: 0, resold_yearly_cents: 0, resold_monthly_cents: 0 };
     s.count += 1;
     s.yearly_cents += yearlyCents(cost);
-    s.resold_yearly_cents += cost.relationship_id ? yearlyCents(cost, 'resold_amount_cents') : 0;
+    s.resold_yearly_cents += cost.relationship_id && resoldLive(cost) ? yearlyCents(cost, 'resold_amount_cents') : 0;
     s.monthly_cents = monthlyFromYearly(s.yearly_cents);
     s.resold_monthly_cents = monthlyFromYearly(s.resold_yearly_cents);
     map.set(currency, s);

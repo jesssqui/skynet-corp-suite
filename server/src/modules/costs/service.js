@@ -4,13 +4,13 @@
 // It never writes its table itself: devices write through sync steps, the suite (rolling an
 // auto-renewing cost forward) through sync.applyLocal — the sync module's guard makes any other
 // write fail. It reads only its own table; CRM and planner records through their services.
-import { isCurrency, costTotals, costsRenewingBetween } from '@suite/shared/costs';
+import { isCurrency, isAnchorDay, costTotals, costsRenewingBetween } from '@suite/shared/costs';
 import { COST_ENTITY } from './entities.js';
 import { registerRenewalAutomations } from './reminders.js';
 
 /**
  * Rules for a cost step that are right in any arrival order (only the step's own values): the
- * currency is three capital letters (ISO 4217's shape), amounts are 0 or more.
+ * currency is three capital letters (ISO 4217's shape), amounts are 0 or more, the billing day 1–31.
  */
 export function checkCost({ op, fields }) {
   if (op === 'delete' || !fields) return null;
@@ -19,6 +19,7 @@ export function checkCost({ op, fields }) {
   for (const k of ['amount_cents', 'resold_amount_cents']) {
     if (has(k) && !(fields[k] >= 0)) return { code: 'invalid_value', reason: `${k}: 0 or more` };
   }
+  if (has('anchor_day') && !isAnchorDay(fields.anchor_day)) return { code: 'invalid_value', reason: 'anchor_day: a day of the month, 1 to 31' };
   return null;
 }
 
@@ -61,10 +62,16 @@ export function createCostsService({ db, services }) {
      * currencies). Businesses in their usual order (position), CAD first.
      * → { businesses: [{ business_id, name, currency, count, monthly_cents, yearly_cents,
      *       resold_monthly_cents, resold_yearly_cents }], overall: [{ currency, … }] }
-     * resold_* = what clients pay us for the resold ones among them (same periods).
+     * resold_* = what clients pay us for the resold ones among them (same periods), only while their
+     * relationship, account and client are live.
      */
     monthlyTotals() {
-      const { byBusiness, overall } = costTotals(service.liveCosts());
+      // A resold cost counts on the resold side only while its relationship, account and client are live.
+      const resoldLive = (c) => {
+        const rel = crm.liveRecord('relationship', c.relationship_id);
+        return Boolean(rel && crm.liveAccount(rel.account_id));
+      };
+      const { byBusiness, overall } = costTotals(service.liveCosts(), { resoldLive });
       const order = new Map(crm.listBusinesses().map((b, i) => [b.id, { i, name: b.name }]));
       const businesses = [...byBusiness.entries()]
         .sort(([a], [b]) => (order.get(a)?.i ?? 1e9) - (order.get(b)?.i ?? 1e9) || (a < b ? -1 : 1))

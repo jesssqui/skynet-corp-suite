@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   addPeriods, rollForward, yearlyCents, costTotals, costState, wantsCostReminder, costsRenewingBetween, moneyText, costAmountText,
-  daysFromTo, isCurrency, costCurrency, monthlyFromYearly,
+  daysFromTo, isCurrency, costCurrency, monthlyFromYearly, dayOfMonth, isAnchorDay,
 } from '../costs.js';
 
 test('periods: added on the calendar; once stays put', () => {
@@ -25,6 +25,38 @@ test('rollForward: the first renewal on or after today, counted from the old dat
   assert.equal(rollForward('2026-08-01', 'quarterly', '2026-11-01'), '2026-11-01');
   assert.equal(rollForward('2026-01-01', 'once', '2026-10-09'), '2026-01-01', 'a one-time cost never rolls');
   assert.equal(rollForward(null, 'yearly', '2026-10-09'), null);
+});
+
+test('rollForward with the billing day: daily rolls and one jump give the same dates (Feb, then Mar 31)', () => {
+  // Day by day, each roll starting from the date the last one wrote, with the billing day kept.
+  let date = '2027-01-31';
+  const seen = [];
+  for (const today of ['2027-02-01', '2027-03-01', '2027-04-01', '2027-05-01']) {
+    date = rollForward(date, 'monthly', today, 31);
+    seen.push(date);
+  }
+  assert.deepEqual(seen, ['2027-02-28', '2027-03-31', '2027-04-30', '2027-05-31']);
+  assert.equal(rollForward('2027-01-31', 'monthly', '2027-03-01', 31), '2027-03-31', 'one jump: the same');
+  assert.equal(rollForward('2027-01-31', 'monthly', '2027-05-01', 31), '2027-05-31');
+  assert.equal(rollForward('2028-01-30', 'monthly', '2028-02-02', 30), '2028-02-29', 'leap year');
+  assert.equal(rollForward('2026-11-30', 'quarterly', '2026-12-01', 31), '2027-02-28');
+  assert.equal(rollForward('2027-02-28', 'quarterly', '2027-03-01', 31), '2027-05-31');
+  assert.equal(addPeriods('2027-02-28', 'monthly', 1, 31), '2027-03-31');
+  assert.equal(addPeriods('2027-02-28', 'monthly', 1), '2027-03-28', 'no billing day: the date’s own');
+  assert.equal(rollForward('2027-02-28', 'monthly', '2027-03-01'), '2027-03-28', 'no billing day given: the date’s own (the suite passes it)');
+  assert.equal(dayOfMonth('2027-01-31'), 31);
+  assert.equal(isAnchorDay(31), true);
+  assert.equal(isAnchorDay(32), false);
+  assert.equal(isAnchorDay(null), false);
+});
+
+test('costTotals: the resold side only for costs whose relationship is still there', () => {
+  const costs = [
+    { id: 'a', business_id: 'b', amount_cents: 1200, period: 'yearly', relationship_id: 'r1', resold_amount_cents: 2400 },
+    { id: 'b', business_id: 'b', amount_cents: 1200, period: 'yearly', relationship_id: 'gone', resold_amount_cents: 9600 },
+  ];
+  const t = costTotals(costs, { resoldLive: (c) => c.relationship_id !== 'gone' });
+  assert.deepEqual([t.overall.get('CAD').yearly_cents, t.overall.get('CAD').resold_yearly_cents], [2400, 2400]);
 });
 
 test('totals: monthly equivalent = yearly ÷ 12, quarterly ÷ 3; once and cancelled left out; per business and currency', () => {

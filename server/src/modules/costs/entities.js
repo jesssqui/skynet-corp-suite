@@ -26,5 +26,8 @@ export const COST_ENTITY = {
     notes: { type: 'text', max: 20_000 },
     relationship_id: { type: 'id', ref: 'relationship' },
     resold_amount_cents: { type: 'integer' },
+    // D6 review: the billing day of the month (1–31; null = the next renewal's own day). Devices send
+    // it with the date whenever a person sets the date; the suite sets it on roll-forward when null.
+    anchor_day: { type: 'integer' },
   },
 };

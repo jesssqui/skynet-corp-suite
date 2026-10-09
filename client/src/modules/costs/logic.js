@@ -3,7 +3,7 @@
 // what changed is sent on an edit — the CRM's editChanges). Tested in client/test/costs.test.js.
 import {
   costTotals, costState, costAmountText, moneyText, costCurrency, costStatus, daysFromTo, costsRenewingBetween,
-  CURRENCIES, DEFAULT_CURRENCY,
+  CURRENCIES, DEFAULT_CURRENCY, dayOfMonth,
 } from '@suite/shared/costs';
 import { addDays } from '@suite/shared/planner';
 import { formatDate } from '../../ui/format.js';
@@ -37,14 +37,15 @@ export function compareCosts(a, b) {
 
 /**
  * The page's sections: one per business that has costs (in our businesses' order, Personal
- * included), each with its costs (soonest first) and its totals (active ones: costTotals).
+ * included), each with its costs (soonest first) and its totals (active ones: costTotals; `resoldLive(cost)`
+ * leaves out the resold side of a cost whose relationship, account or client isn't on the device).
  * → { groups: [{ business, costs, totals: Map<currency, Sum> }], overall: Map<currency, Sum> }
  */
-export function groupCosts(costs, businesses) {
+export function groupCosts(costs, businesses, { resoldLive } = {}) {
   const order = new Map(businesses.map((b, i) => [b.id, b.position ?? 1000 + i]));
   const byBusiness = new Map();
   for (const c of costs) byBusiness.set(c.business_id, [...(byBusiness.get(c.business_id) ?? []), c]);
-  const totals = costTotals(costs);
+  const totals = costTotals(costs, resoldLive ? { resoldLive } : {});
   const byId = new Map(businesses.map((b) => [b.id, b]));
   const groups = [...byBusiness.entries()]
     .sort(([a], [b]) => (order.get(a) ?? 1e9) - (order.get(b) ?? 1e9) || (a < b ? -1 : 1))
@@ -139,6 +140,9 @@ export const costForm = {
   defaults: {
     name: '', business_id: '', vendor: '', amount: '', currency: DEFAULT_CURRENCY, period: 'yearly', next_renewal: '', payment_method: '',
     auto_renews: false, status: 'active', notes: '', relationship_id: '', resold: '',
+    // The billing day (anchor_day) goes with the date: kept as stored while the date isn't changed,
+    // else the new date's day (date0 = the date the form opened with).
+    anchor_day: '', date0: '',
   },
   fromRecord: (v, record) => ({
     ...v,
@@ -147,6 +151,8 @@ export const costForm = {
     auto_renews: Boolean(record?.auto_renews ?? v.auto_renews),
     amount: centsToInput(record?.amount_cents),
     resold: centsToInput(record?.resold_amount_cents),
+    anchor_day: record?.anchor_day ?? '',
+    date0: record?.next_renewal ?? '',
   }),
   toFields(v) {
     const amount = parseDollars(v.amount);
@@ -164,6 +170,8 @@ export const costForm = {
         currency: v.currency || DEFAULT_CURRENCY, period: v.period, next_renewal: v.next_renewal || null,
         payment_method: textOrNull(v.payment_method), auto_renews: Boolean(v.auto_renews), status: v.status || 'active',
         notes: textOrNull(v.notes), relationship_id: v.relationship_id || null, resold_amount_cents: resold,
+        anchor_day: !v.next_renewal ? null
+          : v.next_renewal === v.date0 && v.anchor_day !== '' && v.anchor_day !== null ? Number(v.anchor_day) : dayOfMonth(v.next_renewal),
       },
     };
   },

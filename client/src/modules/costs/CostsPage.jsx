@@ -79,21 +79,22 @@ export default function CostsPage() {
     setParams(next, { replace: true });
   }, [openId, wantNew, data]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { groups, overall, shown } = useMemo(() => {
-    if (!data) return { groups: [], overall: new Map(), shown: 0 };
-    const rows = filterCosts(data.costs, { business, status, q });
-    // Totals always count every active cost of the business(es) shown, whatever the status/words filter.
-    const totalsOf = groupCosts(filterCosts(data.costs, { business, status: 'active' }), data.businesses);
-    const g = groupCosts(rows, data.businesses).groups.map((x) => ({ ...x, totals: totalsOf.groups.find((y) => y.business.id === x.business.id)?.totals ?? new Map() }));
-    return { groups: g, overall: totalsOf.overall, shown: rows.length };
-  }, [data, business, status, q]);
-
   const resoldTo = (cost) => {
     if (!cost.relationship_id || !data) return null;
     const rel = data.relationshipsById.get(cost.relationship_id);
     const account = rel ? data.accountsById.get(rel.account_id) : null;
     return account ? { name: account.name, clientId: account.client_id } : null;
   };
+  const { groups, overall, shown } = useMemo(() => {
+    if (!data) return { groups: [], overall: new Map(), shown: 0 };
+    const rows = filterCosts(data.costs, { business, status, q });
+    // Totals always count every active cost of the business(es) shown, whatever the status/words filter;
+    // the resold side only for costs whose relationship is still on the device (as their line).
+    const totalsOf = groupCosts(filterCosts(data.costs, { business, status: 'active' }), data.businesses, { resoldLive: (c) => Boolean(resoldTo(c)) });
+    const g = groupCosts(rows, data.businesses).groups.map((x) => ({ ...x, totals: totalsOf.groups.find((y) => y.business.id === x.business.id)?.totals ?? new Map() }));
+    return { groups: g, overall: totalsOf.overall, shown: rows.length };
+  }, [data, business, status, q]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const businessOptions = useMemo(() => pickableBusinesses(data?.businesses ?? [], business || null), [data, business]);
   const filtered = business || status !== 'active' || q;
   const close = () => setSheet(null);
