@@ -8,9 +8,17 @@
 //   POST /connection/secret                  make a new shared secret → { secret, connection } — the only time it is shown
 //   GET  /waiting?q=&limit=&offset=          customers waiting for a client
 //   GET  /linked?q=&limit=&offset=           customers linked to an account
-//   POST /customers/:uid/link { clientId, accountId? }   link to a client's account (or a new account under it)
+//   POST /customers/:uid/link { clientId, accountId?, reason? }   link to a client's account (or a new account under it)
 //   POST /customers/:uid/create-client       make a client (account, contact, link) from the customer
-//   POST /customers/:uid/unlink              undo its link: its records are detached (kept here)
+//   GET  /customers/:uid/undo                D2: what undoing its link would put back / leave (nothing changes)
+//   POST /customers/:uid/unlink              undo its link (D2: and what linking changed): records detached (kept here)
+// D2 (matching):
+//   GET  /matches/suggestions?limit=&offset= customers waiting for a client beside the clients they may be
+//   GET  /matches/duplicates?limit=&offset=  possible duplicate clients in the CRM
+//   GET  /matches/counts                     how many (Friday review, the tab)
+//   GET  /matches/dismissed                  "Not the same" decisions (Show dismissed)
+//   POST /matches/not-same { kind, a, b }    kind customer (a = customer uid, b = client id) | clients (two ids)
+//   POST /matches/suggest-again { kind, a, b }
 import express, { Router } from 'express';
 import { HttpError } from '../../lib/httpError.js';
 import { RECEIVER_PATH } from './service.js';
@@ -81,15 +89,30 @@ export function createWholesaleRouter(_ctx, service) {
   router.get('/linked', (req, res) => res.json(service.list('linked', page(req.query))));
 
   router.post('/customers/:uid/link', (req, res) => {
-    const { clientId, accountId = null } = req.body ?? {};
-    res.json({ customer: service.linkToClient(req.params.uid, { clientId, accountId }, who(req)) });
+    const { clientId, accountId = null, reason = null } = req.body ?? {};
+    res.json({ customer: service.linkToClient(req.params.uid, { clientId, accountId, reason }, who(req)) });
   });
   router.post('/customers/:uid/create-client', (req, res) => {
     res.json({ customer: service.createClient(req.params.uid, who(req)) });
   });
-  router.post('/customers/:uid/unlink', (req, res) => {
-    res.json({ customer: service.unlink(req.params.uid, who(req)) });
+  router.get('/customers/:uid/undo', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json(service.undoPreview(req.params.uid));
   });
+  router.post('/customers/:uid/unlink', (req, res) => {
+    const { undone, ...customer } = service.unlink(req.params.uid, who(req));
+    res.json({ customer, undone });
+  });
+
+  // ---- D2: matching ----
+  const m = service.matching;
+  const pair = (body) => ({ kind: body?.kind, a: body?.a, b: body?.b });
+  router.get('/matches/suggestions', (req, res) => res.json(m.suggestions(page(req.query))));
+  router.get('/matches/duplicates', (req, res) => res.json(m.duplicates(page(req.query))));
+  router.get('/matches/counts', (_req, res) => res.json(m.counts()));
+  router.get('/matches/dismissed', (_req, res) => res.json(m.dismissed()));
+  router.post('/matches/not-same', (req, res) => res.json({ pair: m.notSame(pair(req.body), who(req)), counts: m.counts() }));
+  router.post('/matches/suggest-again', (req, res) => res.json({ pair: m.clearNotSame(pair(req.body)), counts: m.counts() }));
 
   return router;
 }

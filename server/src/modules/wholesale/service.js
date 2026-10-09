@@ -28,6 +28,8 @@ import {
 import { customerFigures, orderMoney, orderRhythm, owingByOrder } from './figures.js';
 import { registerWholesaleAutomations } from './automations.js';
 import { registerFollowUpAutomation } from './followUps.js';
+import { createLinkChanges } from './linkChanges.js';
+import { createMatchService } from './matchService.js';
 import { loadKey, encryptSecret, decryptSecret, newSecret, signatureProblem, headerProblem } from './secret.js';
 
 export const RECEIVER_PATH = '/api/wom/events';
@@ -167,6 +169,8 @@ export function createWholesaleService(ctx) {
         (SELECT count(*) FROM wholesale_held_customers WHERE account_id IS NOT NULL) AS linked,
         (SELECT count(*) FROM wholesale_held_customers WHERE link_problem IS NOT NULL) AS problems`),
   };
+  // D2: what each link changed (for Undo), recorded in the same transaction as each change.
+  const linkChanges = createLinkChanges({ db, crm, planner: services.planner ?? null, sync, clock });
   const recordRow = Object.fromEntries(WHOLESALE_ENTITIES.map((d) => [d.entity, db.prepare(`SELECT * FROM ${d.table} WHERE id = ?`)]));
   // Each synced record names its Order Manager record by uid: the one to adopt (and any extras) after a restore.
   const UID_FIELD = { wholesale_order: 'order_uid', wholesale_entry: 'uid', wholesale_customer: 'customer_uid', wholesale_note: 'note_uid' };
@@ -618,6 +622,13 @@ export function createWholesaleService(ctx) {
       } catch (err) {
         log?.error?.('reconcile after events failed (retried within a minute):', err);
       }
+      // D2: a customer that arrived (or changed) waiting for a client with the same email or phone as
+      // one client's contact is linked now — before its events go to the automations, so they see it linked.
+      try {
+        matching.pass({ only: touched });
+      } catch (err) {
+        log?.error?.('matching after events failed (tried again within a minute):', err);
+      }
     }
     for (const { e, info } of applied) emit(e, info);
     return results;
@@ -751,7 +762,7 @@ export function createWholesaleService(ctx) {
         if (accountId === row.account_id && clientId === row.client_id && problem === row.link_problem) continue;
         q.attach.run({ uid: row.uid, account_id: accountId, client_id: clientId, at: accountId ? at : null, problem });
         for (const s of q.dirtyItemsOf) s.run(row.uid);
-        if (accountId && accountId !== row.account_id) attachRules(row.uid, accountId, actor);
+        if (accountId && accountId !== row.account_id) attachRules(row.uid, accountId, actor, target.id);
         if (accountId !== row.account_id || clientId !== row.client_id) {
           attachmentChanges.push({ customerUid: row.uid, accountId, clientId, previousAccountId: row.account_id ?? null });
         }
@@ -839,9 +850,11 @@ export function createWholesaleService(ctx) {
   /**
    * A customer attached to an account for the first time: the account is marked age-restricted
    * (wholesale is nicotine) when it isn't already, and gets an active wholesale relationship when
-   * it has no relationship with our wholesale business. Nothing else is ever changed.
+   * it has no relationship with our wholesale business. Nothing else is ever changed. (D2) Each
+   * change is recorded for its link (wholesale_link_changes), with an 'attached' row for the
+   * attachment itself, so undoing the link can put them back.
    */
-  function attachRules(uid, accountId, actor) {
+  function attachRules(uid, accountId, actor, linkId = null) {
     const account = crm.liveAccount(accountId);
     if (!account) return;
     const write = (args) => {
@@ -849,13 +862,19 @@ export function createWholesaleService(ctx) {
       if (!['applied', 'clash'].includes(r.status)) throw new Error(`${args.entity} ${args.op}: ${r.code} ${r.reason}`);
       return r;
     };
-    if (account.age_restricted !== true) write({ entity: 'account', op: 'update', recordId: accountId, fields: { age_restricted: true } });
+    const note = (change) => linkChanges.record({ customerUid: uid, linkId, accountId, actor, ...change });
+    note({ change: 'attached', entity: 'link', recordId: linkId ?? accountId });
+    if (account.age_restricted !== true) {
+      write({ entity: 'account', op: 'update', recordId: accountId, fields: { age_restricted: true } });
+      note({ change: 'age_restricted', entity: 'account', recordId: accountId, before: { age_restricted: account.age_restricted ?? null }, after: { age_restricted: true } });
+    }
     if (!crm.accountRelationships(accountId).some((r) => r.business_id === BUSINESS_IDS.wholesale)) {
       const first = customerFigures(q.ordersOf.all(uid), []).first_order_date;
-      write({
+      const made = write({
         entity: 'relationship', op: 'create',
         fields: { account_id: accountId, business_id: BUSINESS_IDS.wholesale, kind: 'wholesale', status: 'active', start_date: first ?? localDate(new Date(clock())) },
       });
+      note({ change: 'relationship_created', entity: 'relationship', recordId: made.recordId });
     }
   }
 
@@ -1086,6 +1105,8 @@ export function createWholesaleService(ctx) {
     }
     return r;
   };
+  /** D2: why a person's link was made, as given by the review page ("similar name"), or none. */
+  const reasonText = (r) => (typeof r === 'string' && r.trim() ? clip(r.trim(), 200) : null);
   function refuseIfLinked(c) {
     const links = crm.liveLinks(APP, c.uid).filter((l) => l.account_id);
     if (links.length) {
@@ -1126,10 +1147,11 @@ export function createWholesaleService(ctx) {
 
   /**
    * Link a waiting customer to an existing client: to one of its accounts (accountId), or to a new
-   * account under it named after the customer (no accountId). Makes the CRM link (approved), then
-   * attaches everything held. One transaction: all of it or nothing.
+   * account under it named after the customer (no accountId). Makes the CRM link (approved; D2:
+   * `reason` = the suggestion's, e.g. "similar name"), then attaches everything held. One
+   * transaction: all of it or nothing. (D2) A new account is recorded for Undo.
    */
-  function linkToClient(uid, { clientId, accountId = null }, { actor }) {
+  function linkToClient(uid, { clientId, accountId = null, reason = null }, { actor }) {
     const c = heldOr404(uid);
     if (!isId(clientId) || !crm.clientNames([clientId]).has(clientId)) throw new HttpError(400, 'Pick a client that is still here', undefined, { code: 'no_client' });
     if (accountId !== null && accountId !== undefined) {
@@ -1143,8 +1165,10 @@ export function createWholesaleService(ctx) {
       if (!account) {
         const f = crmFieldsOf(c);
         account = write({ entity: 'account', op: 'create', fields: { client_id: clientId, ...f.account } }).recordId;
+        linkChanges.record({ customerUid: uid, accountId: account, change: 'account_created', entity: 'account', recordId: account, actor });
       }
-      write({ entity: 'link', op: 'create', fields: { account_id: account, app: APP, external_id: uid, matched_by: 'approved' } });
+      const link = write({ entity: 'link', op: 'create', fields: { account_id: account, app: APP, external_id: uid, matched_by: 'approved', match_reason: reasonText(reason) } });
+      linkChanges.setLink(uid, link.recordId);
       reconcile({ only: [uid], actor });
     })();
     flushAttachments();
@@ -1158,10 +1182,14 @@ export function createWholesaleService(ctx) {
     const write = writeAs(actor);
     db.transaction(() => {
       refuseIfLinked(c);
+      const made = (change, entity, recordId) => linkChanges.record({ customerUid: uid, accountId, change, entity, recordId, actor });
       const clientId = write({ entity: 'client', op: 'create', fields: { name: f.name, status: 'active' } }).recordId;
       const accountId = write({ entity: 'account', op: 'create', fields: { client_id: clientId, ...f.account } }).recordId;
-      if (f.contact) write({ entity: 'contact', op: 'create', fields: { client_id: clientId, account_id: accountId, ...f.contact } });
-      write({ entity: 'link', op: 'create', fields: { account_id: accountId, app: APP, external_id: uid, matched_by: 'approved' } });
+      made('client_created', 'client', clientId);
+      made('account_created', 'account', accountId);
+      if (f.contact) made('contact_created', 'contact', write({ entity: 'contact', op: 'create', fields: { client_id: clientId, account_id: accountId, ...f.contact } }).recordId);
+      const link = write({ entity: 'link', op: 'create', fields: { account_id: accountId, app: APP, external_id: uid, matched_by: 'approved' } });
+      linkChanges.setLink(uid, link.recordId);
       reconcile({ only: [uid], actor });
     })();
     flushAttachments();
@@ -1169,21 +1197,41 @@ export function createWholesaleService(ctx) {
   }
 
   /**
-   * Undo a customer's account link(s): its records are detached (deleted from devices; kept here,
-   * so linking again brings them all back). The account's age-restricted mark and wholesale
-   * relationship made when it was linked stay (D2's undo may offer to take them back).
+   * D2: what undoing a customer's link(s) would put back and what would stay (nothing is changed):
+   * { restore: [text], keep: [text], tracked } — for the confirm sheet.
+   */
+  function undoPreview(uid) {
+    heldOr404(uid);
+    const links = crm.liveLinks(APP, uid).filter((l) => l.account_id);
+    if (!links.length) throw new HttpError(409, 'This customer isn’t linked', undefined, { code: 'not_linked' });
+    const p = linkChanges.plan(uid, links);
+    return { restore: p.restore, keep: p.keep, tracked: p.tracked, links: links.map((l) => ({ id: l.id, matchedBy: l.matched_by, reason: l.match_reason ?? null })) };
+  }
+
+  /**
+   * Undo a customer's account link(s) (D1's unlink; D2: a full undo). In one transaction: the links
+   * are deleted, the customer is detached (its records leave the timeline; the holding area keeps
+   * them, so linking again brings them all back), and what linking changed is put back — the
+   * age-restricted mark, the wholesale relationship, an account or client it made — when still as
+   * the link left it and nothing else uses it (linkChanges.plan says what stays and why). The pair is
+   * remembered (never linked automatically again; still suggested). → the customer, and what was done.
    */
   function unlink(uid, { actor }) {
     const c = heldOr404(uid);
     const links = crm.liveLinks(APP, uid).filter((l) => l.account_id);
     if (!links.length && !c.account_id) throw new HttpError(409, 'This customer isn’t linked', undefined, { code: 'not_linked' });
     const write = writeAs(actor);
+    const clientIds = new Set(links.map((l) => crm.liveAccount(l.account_id)?.client_id).filter(Boolean));
+    let planned = null;
     db.transaction(() => {
+      planned = linkChanges.plan(uid, links);
       for (const l of links) write({ entity: 'link', op: 'delete', recordId: l.id });
       reconcile({ only: [uid], actor });
+      linkChanges.apply(planned, { actor });
+      for (const clientId of clientIds) matching.markUndone(uid, clientId, actor);
     })();
     flushAttachments();
-    return waitingView(q.customer.get(uid));
+    return { ...waitingView(q.customer.get(uid)), undone: { restore: planned.restore, keep: planned.keep, tracked: planned.tracked } };
   }
 
   // ---- lists for the Wholesale page ---------------------------------------------------------------
@@ -1205,12 +1253,15 @@ export function createWholesaleService(ctx) {
       notes: q.notesWaitingOf.get(c.uid).n, followUpDate: c.gone ? null : (c.follow_up_date ?? null), // D5
     };
   }
-  function linkedView(c) {
+  function linkedView(c, linkOf = null) {
     const f = figuresOf(c.uid);
     const account = c.account_id ? crm.liveAccount(c.account_id) : null;
+    // D2: how it was linked — "Linked automatically (same email)", or by whom.
+    const l = linkOf ? linkOf(c.uid) : crm.liveLinks(APP, c.uid).find((x) => x.account_id === c.account_id);
     return {
       ...base(c), orders: f.order_count, lastOrderDate: f.last_order_date, spendCents: f.spend_cents,
       accountId: c.account_id, clientId: c.client_id, accountName: account?.name ?? null, clientName: account?.client_name ?? null,
+      link: l ? { id: l.id, matchedBy: l.matched_by, reason: l.match_reason ?? null, at: l.created_at ?? null, by: l.created_by ?? null } : null,
     };
   }
 
@@ -1239,7 +1290,11 @@ export function createWholesaleService(ctx) {
       limit, offset,
     };
     const { limit: _l, offset: _o, ...countParams } = params;
-    const view = which === 'linked' ? linkedView : waitingView;
+    let view = waitingView;
+    if (which === 'linked') {
+      const links = new Map(crm.liveAccountLinks(APP).map((l) => [l.external_id, l]));
+      view = (c) => linkedView(c, (uid) => links.get(uid) ?? null);
+    }
     return { customers: lists[which].rows.all(params).map(view), total: lists[which].count.get(countParams).n, limit, offset };
   }
 
@@ -1254,10 +1309,16 @@ export function createWholesaleService(ctx) {
     };
   }
 
-  /** Every minute (production, src/index.js): pick up links made elsewhere (D2, a device). → stop(). */
+  /**
+   * Every minute (production, src/index.js): pick up links made elsewhere (a device), then (D2) a
+   * matching pass — clients and contacts changed on devices may now match a waiting customer (it does
+   * nothing when nothing changed since the last pass). → stop().
+   */
   function startReconciler({ everyMs = RECONCILE_EVERY_MS } = {}) {
     const timer = setInterval(() => {
-      reconcileAll().catch((err) => log?.error?.('reconcile failed (tried again in a minute):', err));
+      reconcileAll()
+        .then(() => matching.pass())
+        .catch((err) => log?.error?.('reconcile failed (tried again in a minute):', err));
     }, everyMs);
     timer.unref?.();
     return () => clearInterval(timer);
@@ -1287,6 +1348,8 @@ export function createWholesaleService(ctx) {
     registerWholesaleAutomations({ automations: services.automations, planner: services.planner, crm, reads, log });
     registerFollowUpAutomation({ automations: services.automations, planner: services.planner, crm, reads });
   }
+  // D2: matching (the automatic links, suggestions, "Not the same"). See matchService.js.
+  const matching = createMatchService({ db, log, clock, crm, sync, services, figuresOf, reconcile, reconcileAll });
 
   /**
    * D5, at start (after the start's reconcile): every customer's follow-up task checked against the
@@ -1311,7 +1374,9 @@ export function createWholesaleService(ctx) {
     lastActivityAtByClient: () => new Map(lastOrdersAndNotes.all().map((r) => [r.client_id, r.at])),
     checkFollowUps,
     makeSecret, secretState, connectionInfo,
-    linkToClient, createClient, unlink, list, waitingCounts,
+    linkToClient, createClient, unlink, undoPreview, list, waitingCounts,
+    /** D2: matching — pass(), suggestions(), duplicates(), counts(), dismissed(), notSame(), clearNotSame(). */
+    matching,
     isPaused: () => handle.isPaused(),
   };
 }
