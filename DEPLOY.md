@@ -362,6 +362,29 @@ Tailscale must be on for the calendar to update; without it the calendar keeps i
 device within an hour lock that device out of every feed for an hour (an old subscription left after *Replace* never
 gets near that); a server restart lifts it.
 
+## 8. Renewals and recurring costs (D6)
+
+Nothing to set up. After this version starts:
+
+- **Client service renewals**: every morning at 7:50 the suite makes a task **30 days before** a client service's
+  *Renews* date (services that aren't Done or Cancelled), due that day on the business's default owner's Today. **At the
+  first start** (the first look is about 15 seconds after it, and it runs then if it is past 7:50), every service that
+  renews within the next 30 days gets its reminder at once, due today — at most 20 a day, the soonest first; the rest come
+  on the next mornings. Check the *Renews* dates on your services (client page → the service → Edit) if a reminder looks
+  wrong: fix the date and the open task moves with it; set a service to Done or Cancelled and the suite finishes its task.
+- **Our costs**: open **Costs** (a new tab, on the phone too) and add what the businesses and the home pay for — hosting,
+  domains, software, insurance, subscriptions — with *Paid by* (Personal for the home), the amount, how often and the
+  next renewal. Tick *Renews on its own* for automatic renewals. Every morning at 7:55 the suite makes a task **14 days
+  before** each renewal (none for monthly costs that renew on their own), and moves an automatic one's date forward by
+  its period once it has passed. One that doesn't renew on its own shows **Overdue — renewed?** after its date until you
+  set the next one. A cost billed to a client: pick the relationship under *Resold to a client* and what they pay; it
+  shows under that relationship on the client page.
+- Both are silent (the task on Today is the reminder). To get an in-app alert as well, or to switch either off: **System →
+  Automations → Client service renewals / Recurring cost renewals**. Finishing or deleting a reminder is final for that
+  renewal date; a new date brings a new one when its day comes.
+- The Friday review's *Renewals* step lists both. Devices need nothing (no *Download everything again*): costs are a new
+  record type and arrive with the next sync.
+
 ## Troubleshooting
 
 Offline:

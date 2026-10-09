@@ -26,7 +26,9 @@ module: its CRM notes on the linked client's timeline, and its follow-up dates a
 (same module: Order Manager customers linked automatically on a clean email or phone, suggestions for review with
 "Not the same", possible duplicate clients, and an undo that puts back what linking changed), and from **C6a** the task
 calendar feed (module `calendar`: each person's dated tasks as a read-only calendar Apple Calendar subscribes to, by a
-secret link per person).
+secret link per person), and from **D6** renewals and recurring costs (module `costs`: what our businesses and the home
+pay for, with monthly and yearly totals, reminder tasks 30 days before a client service renews and 14 days before one
+of our costs does, auto-renewing costs rolled forward, resold costs on the client page).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -65,7 +67,9 @@ shared/                    @suite/shared — ids.js (UUIDv7), time.js, hlc.js (s
                            addDays/weekStart/monthStart, WORKDAY_IDS + dayMinutesOf, isUnplannedTask);
                            C7: csv.js (CSV reader: quotes, BOM, ; and tab, line ends), intake.js (rows from a brain dump
                            or a CSV: cleanRow, nameKey/similarNames, buildMatchIndex/findMatch/flagRows, planRow,
-                           fingerprintText/rowKey, detectMapping/rowFromCells); tests in shared/test
+                           fingerprintText/rowKey, detectMapping/rowFromCells); D6: costs.js (COST_PERIODS, rollForward,
+                           costTotals, costState, wantsCostReminder, moneyText/costAmountText, the reminder lead days);
+                           tests in shared/test
 server/src/
   index.js                 start: open db, createApp, listen, heartbeat, backup schedule, shutdown
   app.js                   createApp({config, db, log}) — migrations, services, routes, static client, errors
@@ -90,7 +94,8 @@ server/src/
   modules/automations/     C8: service.js (registry, execute/runNow/tick/emit, startScheduler, alerts + onAlert),
                            schedule.js (triggers, triggerText, periodOf, isoWeekKey — local time, DST-safe),
                            routes.js (GET /, PUT /:id, POST /:id/run), migrations/001 (settings, changes, runs, made,
-                           the synced automations_alerts)
+                           the synced automations_alerts); taskBook.js (D3's "what the suite did to its own tasks":
+                           markWrote/suiteWrote/suiteFinished/finishTask — shared by D3, D5 and D6)
   modules/wholesale/        D1: index.js (signedRoutes, keepOnRestore), service.js (receive, hold, reconcile/attach,
                            project, link/create/unlink, lists, the 'wom' connection), events.js (A10 envelope + data
                            checks, pure), figures.js (spend/paid/credit rules, pure), secret.js (secret, AES-GCM with
@@ -107,6 +112,10 @@ server/src/
                            VTIMEZONE from Intl's zone data, events), service.js (links: make/replace/turn off, token
                            lookup, the feed, the per-address throttle, the 'calendar-feed' connection), routes.js
                            (public GET /feed/<token>.ics; signed-in /link), migrations/001 (calendar_feeds, _changes)
+  modules/costs/           D6: entities.js (the synced recurring_cost), service.js (registration + checkCost, reads:
+                           cost/renewingBetween/autoRenewingPassed/liveCosts, monthlyTotals for D15), reminders.js
+                           (the reminder engine reminderPlan/applyReminderPlan, rollCostsForward, the service-renewals
+                           and cost-renewals automations), migrations/001_create_costs.sql (costs_recurring); no routes
   backup/                  backup.js, restore.js (D5: runs this version's migrations on the restored copy, then
                            carryKeptTables: modules' keepOnRestore), schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file)
@@ -145,6 +154,10 @@ client/src/
                            shown once, how to subscribe), links.js (no React: the https link, "only works on
                            this Mac"; client/test/calendar.test.js)
   modules/sync/            /sync (Offline data), /sync/attention (Needs attention), /sync/data/:entity (plain records view)
+  modules/costs/           D6: CostsPage (/costs: by business, totals, filters in the URL, ?open= / ?new=&relationship=),
+                           CostForm.jsx (the add/edit sheet, the CRM's useForm), data.js (cached reads via crm/data.js),
+                           logic.js (no React: filters, groups, totals text, renewalLabel, resoldLine, relationshipOptions,
+                           costForm; client/test/costs.test.js), costs.css
   modules/wholesale/       D1: WholesalePage (/wholesale: waiting for a client / linked; lazy), ConnectionPanel.jsx (the
                            wom card's address + secret, via connections/panels.js; lazy), parts.jsx (timeline rows,
                            account and client figures on the client page; D3: QuietRegularBadge; D5: note rows, the
@@ -175,7 +188,7 @@ client/test/               node --test: the engine against a real server with sy
                            overlay, the CRM screens' logic (clients.test.js) and forms with two devices
                            (clients-forms.test.js), the planner's logic (planner.test.js, plan.test.js) and two
                            devices (planner-forms.test.js, planning-forms.test.js), automations on devices
-                           (automations.test.js); fake-indexeddb
+                           (automations.test.js), the Costs page's logic and two devices (costs.test.js); fake-indexeddb
 test/e2e/                  Playwright end-to-end tests (npm run test:e2e); proxy.js cuts the server off for real outages
 ```
 
@@ -1093,7 +1106,8 @@ Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (
 - **Monthly plan** `/plan/month?month=YYYY-MM`: carry-over, per business "N of 3 priorities" with progress bars and tasks,
   and that month's week goals grouped by week (tick from here).
 - **Friday review** `/plan/review` (this week): overdue (both people), this week's goals (one-tap done), renewals
-  (services not done/cancelled with `renewal_date` today…+30, `renewalsDue`), active clients quiet for 60 days
+  (services not done/cancelled with `renewal_date` today…+30, `renewalsDue`; D6: and our active recurring costs with
+  `next_renewal` in the same 30 days, `reviewLists().costRenewals`, listed under "Our costs"), active clients quiet for 60 days
   (`quietClients`: last activity — C3b's `lastActivityByClient`, shared via `lastActivityOf`, **and (D1) the client's
   latest Order Manager order, whichever is later** (`reviewLastActivity`; the server's review numbers read the same
   through `wholesale.lastOrderAtByClient()`) — or, with none, when the client was made, ≥ 60 days ago), hand work over (Yours / Partner's: open tasks due by the end of next week or
@@ -1237,7 +1251,8 @@ it uses.
 - **Friday review list** (`friday-review`; Fri 08:00; **alert** by default): one task "Friday review" on the **shared
   list** (always: it is done together, whatever Personal's default owner becomes), business **Personal** (the review
   spans every business; Personal is the planner's catch-all), due that Friday, 15 minutes, notes with the review's
-  numbers read on the server like `reviewLists`: overdue (both people + shared), renewals in 30 days, active clients
+  numbers read on the server like `reviewLists`: overdue (both people + shared), renewals in 30 days (D6: client
+  services + our costs, through `costs.renewingBetween`), active clients
   quiet 60 days, relationships with no next step (C4a's rule), this week's goals done, and the path `/plan/review`.
   If this week's task (made by it, not deleted) exists: Run now does nothing; **Friday's scheduled run refreshes
   its notes** with that morning's numbers (a review made by Run now early in the week isn't stale) and still alerts
@@ -1723,6 +1738,96 @@ business names through `crm.getBusiness`, display names through `auth.accounts`)
 - **For C6b**: meetings come in through the `calendar` connection (CalDAV pull) in this module; their minutes go into
   C4b's `dayLoad`. The feed could later show them too, but they already are in Apple Calendar.
 
+## Renewals and recurring costs (costs module, D6)
+Code `server/src/modules/costs/` (`entities.js`, `service.js`, `reminders.js`, migration `001_create_costs.sql`), shared
+facts `shared/costs.js`, the CRM read `crm.liveService(id)`, the task book `server/src/modules/automations/taskBook.js`
+(D3's helpers, moved so D6 shares them), client `client/src/modules/costs/` (+ the client page's relationship rows and
+the Friday review); tests `shared/test/costs.test.js`, `server/test/costs.test.js` (TZ Toronto), `client/test/costs.test.js`,
+`test/e2e/costs.e2e.test.js`. Registered last (after crm and planner: its costs belong to our businesses, its reminders
+are tasks; it throws at start without them). It reads and writes only `costs_recurring`; CRM records through
+`ctx.services.crm`, tasks through the automations framework (`create`/`update` = `sync.applyLocal` as `system`).
+**Module decision**: one module `costs` for both reminders — client services' renewals live in the CRM, but the CRM
+registers no automations (the planner hosts the CRM-reading ones, D3/D5 the wholesale module): keeping "everything that
+renews" and its single reminder engine together beat splitting it, and `ctx.services.costs` is what D15 reads.
+
+**The record type** `recurring_cost` (`costs_recurring`; synced, UUIDv7, `created_*`/`updated_*`, `flagged`; ops
+create/update/delete — delete is for mistakes, stopping one is `status: cancelled`): name* (≤ 200), business_id*⇧ (one
+of ours; **Personal for the home**), vendor, amount_cents (integer, ≥ 0, per period), currency (three capital letters,
+null = **CAD**; the form offers CAD/USD/EUR/GBP), period* (`monthly|quarterly|yearly|once`), next_renewal* (date; for
+`once` the day it is paid), payment_method (text: "Visa ••4242" — never a card number), auto_renews (boolean), status
+(`active|cancelled`, null = active), notes, and **resold**: relationship_id→ (plain ref: deleting a client never hides
+what we pay) + resold_amount_cents (what the client pays us, **per the same period**). `checkCost` (the sync `check`, the
+step's own values only): currency shape, amounts ≥ 0 — so a device may queue a negative amount and see it refused in
+Needs attention. New fields: nullable, never renamed.
+
+**Totals** (`costTotals`, shared — the page and `costs.monthlyTotals()` use the same rule): ACTIVE costs only; yearly =
+monthly × 12, quarterly × 4, yearly × 1; **monthly equivalent = yearly ÷ 12** (so quarterly ÷ 3), rounded to the cent;
+`once` and costs with no amount add nothing; **per currency, never added across currencies** (no exchange rates).
+Resold totals (what clients pay us) beside them.
+
+**Where a cost stands** (`costState(cost, today)`): cancelled · past (a `once` cost whose day has gone by) · **rolling**
+(auto-renews and its date has passed: the suite moves it at its next daily run) · **overdue** (doesn't renew on its own
+and its date has passed: the page says "Overdue — renewed?" until a person sets the next date) · today · soon (≤ 14 days)
+· upcoming.
+
+**Reminders** (`reminders.js`, one engine for both: `reminderPlan` (pure over reads + what it made) → `applyReminderPlan`):
+| automation | when | what | default |
+|---|---|---|---|
+| `service-renewals` | daily 07:50 | a client service (status not done/cancelled — paused counts; its relationship, account and client live, any status) whose `renewal_date` is **30 days** away: "Renewal in 30 days: <service> for <account> (<business>)", owner = the relationship's business's default owner, with client, account **and relationship** | on, silent |
+| `cost-renewals` | daily 07:55 | first **rolls forward** auto-renewing costs whose date has passed; then an active cost (not monthly + auto-renewing) whose `next_renewal` is **14 days** away: "Renews in 14 days: <name> ($X/yr)", owner = the cost's business's default owner (Personal → the shared list); a resold one also names the client and account (no relationship: it isn't a next step with them) | on, silent |
+- **Key** `<record id>:<renewal date>` (automations_made): **once per record and renewal date** — the scheduler again, Run
+  now, the next day and restarts never make a second. Made **on the day it is due** (renewal − 30 / − 14), or — when
+  that day has gone by and the renewal hasn't (the first run after deploying, a record added late, a server that was
+  off) — **due today**, its title counting the days left ("Renewal in 12 days"). A renewal date already passed gets
+  nothing. Titles count from the task's due date to the renewal ("in N days", "tomorrow", "today"), so they don't change
+  daily; notes hold no run dates (they change only with the record), the date and amount, what to do, and a path.
+- **Who finished it decides** (D3's rule, `taskBook.js`): a task a **person** finished or deleted is final for that date
+  ("N renewals already handled by a person"); a **new date** (renewed for another period) is a new key → a new task when
+  its day comes. The record **cancelled / done / deleted / its date cleared** (or a cost switched to monthly + automatic)
+  → the open task is **finished** with that reason; a task the **suite** finished is **reopened** (same date, not passed)
+  when the reason goes away.
+- **A date moved while the task is open moves it** (re-filed under the new key; never a second task): its due date
+  becomes max(new date − lead, today) **only while it is still the one the suite set** — a person's own day is kept and
+  one line says "The renewal date is now … (this task keeps the day you gave it)". The title and notes are refreshed only
+  while still the suite's (a person's rename is never put back). Which date an open task is for is remembered per move
+  (`for:<task>:<time>:<date>` keys), so a date moved and moved back is followed too.
+- **Cap**: at most **20 new tasks a run** per automation (`NEW_REMINDERS_CAP`), soonest renewal first; the rest are made
+  on the next days (they are still within their window, due that day). Moving, finishing and reopening aren't capped.
+- **Silent by default** (decision): the task lands on the default owner's Today 30 / 14 days ahead, which is the
+  reminder; an in-app alert would only repeat it. Switch either to alert on System → Automations.
+- **No reminders for monthly costs that renew on their own** (decision: a phone plan or a software seat would make a task
+  every month); they are rolled forward and listed on the page. Every other active cost gets one, auto-renewing or not.
+- Service reminders name the relationship, so while open they count as its dated next step (C4a's "No next step" rule),
+  like the C8 no-next-step tasks.
+- **Rolling forward** (`rollCostsForward`, inside the cost-renewals run, so it shares its switch and its one transaction):
+  an **active, auto-renewing, non-`once`** cost whose `next_renewal` is **before today** (the renewal day itself is not
+  passed) gets `next_renewal` = the first `date + k periods` ≥ today (`rollForward`, counted from the old date in one
+  jump: a week of downtime doesn't leave it behind), written through `applyLocal` (as `system`, so devices pull it and a
+  device's concurrent edit is a normal clash), and its open reminder is **finished** ("Renewed on its own on …; the next
+  renewal is …"). Not auto-renewing → it stays (Overdue — renewed?) and its reminder stays open. Days 29–31 clamp to a
+  short month's last day and the next roll starts from there (Jan 31 → Feb 28 → Mar 28): edit the date when it matters.
+  With the automation switched off nothing rolls (the page then shows "Renewed on its own … moves to the next date").
+- **Reads** (`ctx.services.costs`): `cost(id)`, `renewingBetween(from, to)` (active, soonest first — the Friday review's
+  server numbers), `autoRenewingPassed(today)`, `liveCosts()`, and **for D15** `monthlyTotals()` →
+  `{ businesses: [{ business_id, name, currency, count, monthly_cents, yearly_cents, resold_monthly_cents,
+  resold_yearly_cents }], overall: [{ currency, … }] }` (businesses in their order, CAD first; active costs only).
+
+**Screens** (offline: `useCostsData` reads cached lists; writes `store.create/update/remove`):
+- **`/costs`** (nav "Costs", phone tab bar too — eight tabs): an overall card (monthly · yearly, resold, how the monthly
+  equivalent is counted), filters in the URL (status Active / Cancelled / All, "Paid by" business, search over name,
+  vendor and payment method), one card per business in our order (two columns ≥ 1100 px) with its totals (active costs
+  of that business, whatever the other filters) and rows soonest first (cancelled last): name, vendor, "Renews on its
+  own", payment method, "Resold to <account>: they pay …", the state badge, the amount; tap → the sheet.
+  `?open=<id>` opens a cost; `?new=1&relationship=<id>` a new one resold on it (business preset).
+- **The sheet** (`CostForm`, the CRM's `useForm` + `FormSheet`): name, paid by (Personal included; archived hidden unless
+  it is the cost's), vendor, amount $, currency, how often, next renewal / "Paid on" for once, "Renews on its own", status
+  (edit only), resold to (relationships of live clients, grouped by client; closed clients and ended relationships only
+  when already chosen) + "They pay $", notes. **Edits send only what changed** (tested with two devices). Delete behind a
+  confirm (mistakes; Cancelled is the normal way).
+- **The client page**: under each relationship, its resold costs ("Hosting — we pay $300/yr, they pay $480/yr", → the
+  cost on /costs) and "Add resold cost" (not on wholesale relationships).
+- **The Friday review**'s renewals step: "Client services" then "Our costs" (active, renewing today…+30); the count is both.
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
@@ -1780,6 +1885,14 @@ business names through `crm.getBusiness`, display names through `auth.accounts`)
   out after 30 days); titles go as written (automated ones include account names and amounts), nothing else of the
   task's; the https link only (no webcal); the token is never logged; the links survive restores (`keepOnRestore`); its own Connections row
   (pausable). Next: C6b (meetings over CalDAV into Today and the day load).
+- **D6 (renewals and recurring costs)**: done — see "Renewals and recurring costs". One module `costs` for the synced
+  `recurring_cost` and both reminder automations (client services 30 days ahead, our costs 14 days), sharing one engine
+  keyed by record + renewal date; reminders are made on their day (or today when late), capped at 20 new a run, silent by
+  default; a person's finish is final for that date, a moved date moves the open task (a person's day kept), the suite
+  finishes and reopens only its own; monthly auto-renewing costs get no reminders; auto-renewing costs are rolled forward
+  by the daily run (applyLocal); totals per currency, monthly = yearly ÷ 12, once left out; `costs.monthlyTotals()` is
+  D15's read. D3's task book moved to `automations/taskBook.js`. Next: D15 (the overview) reads `monthlyTotals()`; D9
+  (projects) owns stages/checklists; exchange rates and per-weekday reminders are not modelled.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -1789,12 +1902,14 @@ business names through `crm.getBusiness`, display names through `auth.accounts`)
 (`createApp` + `listen(0)`) — no mocks of the database. Client tests (`client/test`) run the sync engine in Node with
 fake-indexeddb against such a server (helpers.js: `startServer`, `makeDevice` with an on/off connection switch); the
 client build must succeed. The sync engine tests (`server/test/sync.test.js`, `client/test/engine.test.js`) run without
-the crm module (nor the planner, which needs it, nor the automations with their synced alerts, nor wholesale, which needs the crm) so seeded records don't
+the crm module (nor the planner, which needs it, nor the automations with their synced alerts, nor wholesale, which needs the crm, nor costs) so seeded records don't
 shift their counts; `startServer(t, config, { crm: true })` includes them. A restore of a broken live database still
 works with `--force`: carrying the switches is best effort (a warning, then the backup's switches) and the restored
 copy must pass `integrity_check`. Tests that depend on local time set
-`process.env.TZ = 'America/Toronto'` at the top (automations.test.js, wholesale-automations.test.js, wholesale-notes.test.js). automations.test.js
-switches D3's two scheduled wholesale automations off in its setup (they're on by default) so its ticks stay about C8. The e2e `startServer(t, { extraModules })` adds
+`process.env.TZ = 'America/Toronto'` at the top (automations.test.js, wholesale-automations.test.js, wholesale-notes.test.js,
+costs.test.js). automations.test.js
+switches D3's two scheduled wholesale automations and D6's two renewal reminders off in its setup (they're on by default)
+so its ticks stay about C8; costs.test.js switches every other scheduled automation off. The e2e `startServer(t, { extraModules })` adds
 test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager checkout>` (D1) runs the real Order
 Manager (needs `npm ci` in its `server/`) against a real suite and checks the timeline and spend against its own;
 Step 8 (D2) checks an automatic link on a clean email, a similar name only suggested, and an undo.
