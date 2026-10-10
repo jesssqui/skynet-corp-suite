@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { newId } from '@suite/shared/ids';
-import { byHandAllowed } from '@suite/shared/sales';
+import { byHandAllowed, BY_HAND_WARNING } from '@suite/shared/sales';
 import { api } from '../../api/client.js';
 import { useServerData } from '../../api/useServerData.js';
 import { PageHeader, Card, Notice, EmptyState, Button, TextField, SelectField, TextAreaField, Segmented, Sheet, Badge } from '../../ui/index.js';
@@ -38,8 +38,8 @@ function EntrySheet({ entry, businesses, initialBusiness, offline, onClose, onSa
   const wrong = entryProblem(form, { today: null });
   const set = (k) => (v) => { setTouched(true); setForm((f) => ({ ...f, [k]: v })); };
   const errorFor = (field) => (touched && wrong?.field === field ? wrong.text : undefined);
-  // Review fix: only businesses whose sales come from no connection (not Wholesale, Save Point Shop, the retail stores
-  // or Personal: they would count twice), not archived — an entry already on one keeps it.
+  // Review fix: not Wholesale or Save Point Shop (their sales come from the Order Manager and eBay: they would count
+  // twice) nor Personal, not archived — an entry already on one keeps it; Retail stores with a warning (D11 follow-up).
   const options = businesses.filter((b) => byHandAllowed(b) || b.id === entry?.businessId).map((b) => ({ value: b.id, label: b.name }));
 
   async function save() {
@@ -109,7 +109,8 @@ function EntrySheet({ entry, businesses, initialBusiness, offline, onClose, onSa
         <span style={muted}>A {KIND_LABELS[form.kind].toLowerCase()} {sign}: type the amount as it is on the {form.kind === 'credit_note' ? 'credit note' : form.kind === 'refund' ? 'refund' : 'invoice'}.</span>
         <SelectField id="entry-business" label="Business" value={form.businessId} onChange={set('businessId')}
           options={[{ value: '', label: 'Pick one…' }, ...options]} error={errorFor('businessId')}
-          hint="Not Wholesale, Save Point Shop or the retail stores: their sales come from their connections (they would count twice)." />
+          hint="Not Wholesale or Save Point Shop: their sales come from the Order Manager and eBay (they would count twice)." />
+        {BY_HAND_WARNING[form.businessId] ? <div data-testid="entry-warning"><Notice tone="warn">{BY_HAND_WARNING[form.businessId]}.</Notice></div> : null}
         <TextField id="entry-day" label="Day" type="date" value={form.day} onChange={(e) => set('day')(e.target.value)} error={errorFor('day')} />
         <div className="sales-entry-money">
           <TextField id="entry-amount" label="Amount" inputMode="decimal" placeholder="1234.56" value={form.amount}

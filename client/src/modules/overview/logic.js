@@ -52,13 +52,29 @@ export function stateNote(section) {
  */
 export function unmatchedLine(u, fmt = { date: (d) => d }) {
   if (!u) return null;
-  if (!u.count) return { text: 'No e-Transfers waiting unmatched in the Order Manager', detail: '', tone: null };
+  const asOf = u.at ? ` · as of ${fmt.date(String(u.at).slice(0, 10))}` : '';
+  if (u.stopped) {
+    // Its switch was turned off there: the last count would go stale — shown as the last one, not counted.
+    return {
+      text: 'The Order Manager stopped sending its unmatched e-Transfer count (switched off there)',
+      detail: `Last count ${u.count}${u.at ? ` on ${fmt.date(String(u.at).slice(0, 10))}` : ''}`, tone: null,
+    };
+  }
+  if (!u.count) return { text: 'No e-Transfers waiting unmatched in the Order Manager', detail: asOf.replace(/^ · /, ''), tone: null };
   const oldest = u.oldestAt ? ` · the oldest from ${fmt.date(String(u.oldestAt).slice(0, 10))}` : '';
   return {
     text: `${plural(u.count, 'e-Transfer')} with no matching order in the Order Manager: ${money(u.totalCents)}`,
-    detail: `Record or dismiss ${u.count === 1 ? 'it' : 'them'} there: Customers → E-transfers${u.page ? ` (${u.page})` : ''}${oldest}`,
+    detail: `Record or dismiss ${u.count === 1 ? 'it' : 'them'} there: Customers → E-transfers${u.page ? ` (${u.page})` : ''}${oldest}${asOf}`,
     tone: 'danger',
   };
+}
+/**
+ * A19 review: e-Transfers waiting there **with** a suggested match (one tap from being recorded) — their own short line,
+ * not counted in the section or the headline (decision: money received and matched, only not recorded yet). '' when none.
+ */
+export function suggestedLine(u) {
+  if (!u || u.stopped || !u.suggestedCount) return '';
+  return `${plural(u.suggestedCount, 'more', 'more')} with a suggested match waiting to be recorded there${u.suggestedTotalCents ? ` (${money(u.suggestedTotalCents)})` : ''}`;
 }
 /** Under the payments section when the Order Manager hasn't sent its count (its switch is off, or an older version). */
 export const UNMATCHED_MISSING = 'E-transfers that matched no customer: the Order Manager hasn’t sent its count — turn on “Send unmatched e-Transfer count to the suite” there (Settings → Integrations → Suite connection).';

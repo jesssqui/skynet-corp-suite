@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { BUSINESS_IDS } from '@suite/shared/crm';
 import {
   SECTIONS, itemLine, stateNote, countText, summaryText, shownCount, moreText, restText, attentionTotal, totalOnlyNote, storesNote,
-  FIRST_ITEMS, MORE_ITEMS, UNMATCHED_MISSING, unmatchedLine, URGENT,
+  FIRST_ITEMS, MORE_ITEMS, UNMATCHED_MISSING, unmatchedLine, suggestedLine, URGENT,
 } from '../src/modules/overview/logic.js';
 import {
   newEntryForm, entryToForm, entryProblem, entryBody, entryAmountText, sumsText, KIND_OPTIONS, stateText,
@@ -44,11 +44,19 @@ test('item lines: overdue tasks, balances, renewals, low stock, payments, no nex
   assert.equal(pay.link, '/wholesale', 'not linked: the Wholesale page (its Waiting tab)');
   assert.match(pay.detail, /last paid \[2026-09-20\].*not linked to a client/);
   assert.equal(unmatchedLine(null), null);
-  assert.deepEqual(unmatchedLine({ count: 0 }), { text: 'No e-Transfers waiting unmatched in the Order Manager', detail: '', tone: null });
-  assert.deepEqual(unmatchedLine({ count: 3, totalCents: 45000, oldestAt: '2026-10-02T13:00:00.000Z', page: '/customers/etransfers' }, { date }), {
+  assert.deepEqual(unmatchedLine({ count: 0, at: '2026-10-09T12:00:00.000Z' }, { date }), { text: 'No e-Transfers waiting unmatched in the Order Manager', detail: 'as of [2026-10-09]', tone: null });
+  const u = { count: 3, totalCents: 45000, oldestAt: '2026-10-02T13:00:00.000Z', page: '/customers/etransfers', at: '2026-10-09T12:00:00.000Z', suggestedCount: 2, suggestedTotalCents: 7000 };
+  assert.deepEqual(unmatchedLine(u, { date }), {
     text: '3 e-Transfers with no matching order in the Order Manager: $450',
-    detail: 'Record or dismiss them there: Customers → E-transfers (/customers/etransfers) · the oldest from [2026-10-02]', tone: 'danger',
+    detail: 'Record or dismiss them there: Customers → E-transfers (/customers/etransfers) · the oldest from [2026-10-02] · as of [2026-10-09]', tone: 'danger',
   });
+  assert.equal(suggestedLine(u), '2 more with a suggested match waiting to be recorded there ($70)');
+  assert.equal(suggestedLine({ ...u, suggestedCount: 0 }), '');
+  assert.equal(suggestedLine({ ...u, suggestedCount: null }), '', 'an older Order Manager sends none');
+  assert.deepEqual(unmatchedLine({ ...u, stopped: true }, { date }), {
+    text: 'The Order Manager stopped sending its unmatched e-Transfer count (switched off there)', detail: 'Last count 3 on [2026-10-09]', tone: null,
+  });
+  assert.equal(suggestedLine({ ...u, stopped: true }), '');
   assert.deepEqual(itemLine('noNextStep', { kind: 'lead', id: 'l1', name: 'Maple Dental', stage: 'talking', business: 'GWND' }), { key: 'lead:l1', text: 'Lead: Maple Dental', link: '/crm/leads/l1', detail: 'GWND · Talking' });
   assert.deepEqual(itemLine('noNextStep', { kind: 'relationship', id: 'r1', accountName: 'Lefty’s Vape Shop', clientId: 'cl1', clientName: 'Lefty’s', business: 'GWND' }).detail, 'GWND · Lefty’s');
   assert.equal(itemLine('quiet', { id: 'cl1', name: 'Lefty’s', since: '2026-07-01' }, { date }).detail, 'Nothing since [2026-07-01]');
@@ -127,8 +135,10 @@ test('store states (D11): the Order Manager with nothing yet; "or enter a month 
 });
 
 test('sales by hand: not for businesses whose sales come from a connection, Personal or archived ones', async () => {
-  const { byHandAllowed, NOT_BY_HAND } = await import('@suite/shared/sales');
-  for (const id of [BUSINESS_IDS.wholesale, BUSINESS_IDS.save_point, BUSINESS_IDS.retail, BUSINESS_IDS.personal]) {
+  const { byHandAllowed, NOT_BY_HAND, BY_HAND_WARNING } = await import('@suite/shared/sales');
+  assert.equal(byHandAllowed({ id: BUSINESS_IDS.retail }), true, 'retail: allowed, with a warning');
+  assert.match(BY_HAND_WARNING[BUSINESS_IDS.retail], /not connected to WooCommerce/);
+  for (const id of [BUSINESS_IDS.wholesale, BUSINESS_IDS.save_point, BUSINESS_IDS.personal]) {
     assert.ok(NOT_BY_HAND[id]);
     assert.equal(byHandAllowed({ id }), false);
   }

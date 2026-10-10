@@ -76,7 +76,10 @@ async function walkThrough(page, server, label) {
   // The businesses whose sales come from a connection aren't offered.
   await page.getByTestId('entry-add').click();
   const offered = await page.getByTestId('entry-sheet').getByLabel('Business').locator('option').allTextContents();
-  for (const name of ['Wholesale', 'Save Point Shop', 'Retail stores', 'Personal']) assert.ok(!offered.includes(name), `${name} isn’t offered`);
+  for (const name of ['Wholesale', 'Save Point Shop', 'Personal']) assert.ok(!offered.includes(name), `${name} isn’t offered`);
+  // The retail stores are, with a warning (only for a store not connected to WooCommerce).
+  await page.getByTestId('entry-sheet').getByLabel('Business').selectOption({ label: 'Retail stores' });
+  await page.getByTestId('entry-warning').getByText(/not connected to WooCommerce/).waitFor(WAIT);
   await page.getByTestId('entry-sheet').getByRole('button', { name: 'Cancel' }).click();
 
   // Its card on Money → Sales.

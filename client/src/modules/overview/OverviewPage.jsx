@@ -16,7 +16,7 @@ import { businessColor } from '../crm/logic.js';
 import { periodText, ordersText } from '../sales/logic.js';
 import { Periods } from '../sales/parts.jsx';
 import {
-  SECTIONS, UNMATCHED_MISSING, unmatchedLine, itemLine, stateNote, countText, summaryText, shownCount, moreText, restText, attentionTotal,
+  SECTIONS, UNMATCHED_MISSING, unmatchedLine, suggestedLine, itemLine, stateNote, countText, summaryText, shownCount, moreText, restText, attentionTotal,
   totalOnlyNote, storesNote,
 } from './logic.js';
 import './overview.css';
@@ -87,6 +87,7 @@ function Unmatched({ u }) {
     <div className="overview-item" data-testid="unmatched">
       <span className="overview-item-text" style={line.tone === 'danger' ? { color: 'var(--danger)' } : undefined}>{line.text}</span>
       {line.detail ? <span style={muted}>{line.detail}</span> : null}
+      {suggestedLine(u) ? <span style={muted} data-testid="unmatched-suggested">{suggestedLine(u)}</span> : null}
     </div>
   );
 }

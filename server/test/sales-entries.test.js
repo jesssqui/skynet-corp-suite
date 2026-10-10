@@ -143,8 +143,10 @@ test('D13’s eBay months entered by hand still work beside the entries', async 
 
 test('never for a business whose sales come from a connection (counted twice), Personal, or an archived business', async (t) => {
   const { add, call, ctx } = await setup(t);
+  // The retail stores: allowed (a store not connected to WooCommerce, sales outside it) — the sheet warns.
+  assert.equal((await add({ businessId: BUSINESS_IDS.retail, day: '2026-10-14', kind: 'sale', amount: 1000 })).status, 201);
   for (const [id, words] of [
-    [BUSINESS_IDS.wholesale, /Order Manager/], [BUSINESS_IDS.save_point, /eBay/], [BUSINESS_IDS.retail, /WooCommerce/], [BUSINESS_IDS.personal, /Personal/],
+    [BUSINESS_IDS.wholesale, /Order Manager/], [BUSINESS_IDS.save_point, /eBay/], [BUSINESS_IDS.personal, /Personal/],
   ]) {
     const r = await add({ businessId: id, day: '2026-10-14', kind: 'sale', amount: 1000 });
     assert.deepEqual([r.status, r.body.code], [400, 'not_by_hand']);
