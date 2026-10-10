@@ -4,11 +4,12 @@
 // (server code) — the sync module's guard makes any other write fail. It reads only its own
 // tables; the CRM records a task points at are reached through sync refs (and ctx.services.crm).
 import {
-  isDueTime, ESTIMATE_MAX_MINUTES, automatedTaskOwner, isGoalPeriod, WORKDAY_IDS, DAY_MINUTES_MIN, DAY_MINUTES_MAX,
+  isDueTime, ESTIMATE_MAX_MINUTES, automatedTaskOwner, isGoalPeriod, WORKDAY_IDS, DAY_MINUTES_MIN, DAY_MINUTES_MAX, relationshipsWithoutNextStep,
 } from '@suite/shared/planner';
 import { ACTORS } from '@suite/shared/actors';
 import { PLANNER_ENTITIES } from './entities.js';
-import { registerPlannerAutomations } from './automations.js';
+import { registerPlannerAutomations, quietClients, QUIET_DAYS } from './automations.js';
+import { leadsWithoutNextStep } from '@suite/shared/leads';
 import { registerLeadAutomations } from './leadAutomations.js';
 
 /**
@@ -101,6 +102,10 @@ export function createPlannerService({ db, services, log }) {
       ORDER BY business_id, position IS NULL, position, id`),
     overdue: db.prepare(`SELECT count(*) AS n FROM planner_tasks
       WHERE deleted_at IS NULL AND done_at IS NULL AND due_date IS NOT NULL AND due_date < ?`),
+    // D11 (the overview): the overdue tasks themselves, oldest first.
+    overdueTasks: db.prepare(`SELECT id, title, owner, business_id, client_id, account_id, relationship_id, lead_id, due_date, due_time
+      FROM planner_tasks WHERE deleted_at IS NULL AND done_at IS NULL AND due_date IS NOT NULL AND due_date < ?
+      ORDER BY due_date, due_time IS NULL, due_time, id LIMIT ?`),
     relTasks: db.prepare(`SELECT id, relationship_id, due_date, done_at FROM planner_tasks
       WHERE deleted_at IS NULL AND done_at IS NULL AND relationship_id IS NOT NULL`),
     task: db.prepare('SELECT id, deleted_at, done_at, relationship_id, client_id, account_id, lead_id, title, due_date, notes FROM planner_tasks WHERE id = ?'),
@@ -151,6 +156,29 @@ export function createPlannerService({ db, services, log }) {
     // ---- reads for the planner's automations (C8) ----
     /** Open tasks (both people and the shared list) due before `today`. */
     overdueCount: (today) => q.overdue.get(today).n,
+    /**
+     * D11 (the overview) — "no next step" by the same rule as Today and the Friday review (C4a's
+     * relationshipsWithoutNextStep over every live relationship — wholesale exempt — and D8's leadsWithoutNextStep over
+     * open leads of businesses not archived), so the three show the same count. (The C8 automation's
+     * relationshipsToChase leaves out closed clients and archived businesses: it makes tasks, these only show.)
+     * → { relationships: [rows with account_name, client_id, client_name, business_name], leads: [lead rows] }
+     */
+    noNextStep() {
+      const { crm } = services;
+      const rels = crm.liveRelationships();
+      const accounts = [...new Map(rels.map((r) => [r.account_id, { id: r.account_id, client_id: r.client_id }])).values()];
+      const clients = [...new Set(rels.map((r) => r.client_id))].map((id) => ({ id }));
+      const relationships = relationshipsWithoutNextStep({ relationships: rels, accounts, clients, tasks: q.relTasks.all() });
+      const leads = crm.liveLeads
+        ? leadsWithoutNextStep({ leads: crm.liveLeads().filter((l) => !crm.getBusiness(l.business_id)?.archived), tasks: q.leadTasks.all() })
+        : [];
+      return { relationships, leads };
+    },
+    /** D11 (the overview): active clients quiet for 60 days — the Friday review's rule (automations.js quietClients). */
+    quietClients: (today) => quietClients({ crm: services.crm, services }, today),
+    quietDays: QUIET_DAYS,
+    /** D11 (the overview): open tasks (both people and the shared list) due before `today`, oldest first, at most `limit`. */
+    overdueTasks: (today, limit = 100) => q.overdueTasks.all(today, limit),
     /** Open tasks that name a relationship (for C4a's "no next step" rule on the server). */
     openRelationshipTasks: () => q.relTasks.all(),
     /** D8: open tasks that name a lead (for leadsWithoutNextStep on the server). */

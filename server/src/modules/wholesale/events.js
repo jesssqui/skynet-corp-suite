@@ -10,6 +10,8 @@ export const EVENT_NAMES = Object.freeze([
   'payment.recorded', 'return.received', 'refund.issued', 'credit_note.issued',
   // D5 (the Order Manager's A11, sent only while its "Send CRM notes to the suite" switch is on)
   'note.added', 'note.deleted', 'followup.changed',
+  // D11 review (the Order Manager's A19, sent only while its "Send unmatched e-Transfer count to the suite" is on)
+  'payments.unmatched',
 ]);
 /** D5: why a note was deleted there (none = deleted by hand). */
 export const NOTE_DELETE_REASONS = Object.freeze(['customer_deleted', 'gone', 'gone_after_restore']);
@@ -163,6 +165,20 @@ export function eventProblem(e) {
       if (typeof d.done !== 'boolean') return 'data.done must be true or false';
       if (d.done && d.follow_up_date !== null) return 'data.done can only be true when follow_up_date is null (the follow-up was marked done)';
       return null;
+    case 'payments.unmatched': {
+      // A state (latest wins): { count, total_cents, oldest_at, page } — nothing personal (no names, memos, amounts of one).
+      if (!isInt(d.count) || d.count < 0) return 'data.count must be a whole number, 0 or more';
+      if (!isInt(d.total_cents) || d.total_cents < 0) return 'data.total_cents must be whole cents, 0 or more';
+      if (d.oldest_at !== null && !isoTime(d.oldest_at)) return 'data.oldest_at must be an ISO date-time or null';
+      if (d.count > 0 && d.oldest_at === null) return 'data.oldest_at is needed when count is above 0';
+      if (typeof d.page !== 'string' || !d.page.startsWith('/') || d.page.length > 200) return 'data.page must be the Order Manager’s path to the list (starting with /)';
+      // A19 review (additive): notices waiting with a suggested match, and the one state sent when its switch is turned off.
+      for (const k of ['suggested_count', 'suggested_total_cents']) {
+        if (d[k] !== undefined && d[k] !== null && !(isInt(d[k]) && d[k] >= 0)) return `data.${k} must be a whole number, 0 or more (or left out)`;
+      }
+      if (d.stopped !== undefined && d.stopped !== null && typeof d.stopped !== 'boolean') return 'data.stopped must be true or false (or left out)';
+      return null;
+    }
     default: // the order events with a snapshot
       return orderProblem(d.order);
   }

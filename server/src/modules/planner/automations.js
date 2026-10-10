@@ -48,20 +48,32 @@ function momentText(date) {
  * activity, or when they were made), relationships with no next step (C4a's rule), and this
  * week's goals done.
  */
-export function reviewNumbers({ crm, planner, services = null }, today) {
-  const rels = crm.liveRelationships();
-  const accounts = [...new Map(rels.map((r) => [r.account_id, { id: r.account_id, client_id: r.client_id }])).values()];
-  const clients = [...new Set(rels.map((r) => r.client_id))].map((id) => ({ id }));
+/**
+ * Active clients quiet for QUIET_DAYS (the Friday review's rule, also D11's overview): their last activity — a
+ * timeline entry, (D1) an Order Manager order or (D5) a note logged there, whichever is latest — or, with none, when
+ * the client was made, is QUIET_DAYS or more ago. → [{ id, name, since ("YYYY-MM-DD" | null), lastActivityAt }],
+ * longest quiet first.
+ */
+export function quietClients({ crm, services = null }, today) {
   const cutoff = addDays(today, -QUIET_DAYS);
   // D1: an Order Manager order counts as activity (read through the wholesale service, like the devices do);
   // D5: so does a note logged there (a call, an email…).
   const lastOrders = services?.wholesale?.lastActivityAtByClient?.() ?? new Map();
-  const quiet = crm.activeClientsWithLastActivity().filter((c) => {
+  const out = [];
+  for (const c of crm.activeClientsWithLastActivity()) {
     const order = lastOrders.get(c.id) ?? null;
     const latest = c.last_activity_at && (!order || c.last_activity_at > order) ? c.last_activity_at : order;
     const since = dayOf(latest) ?? dayOf(c.created_at);
-    return since === null || since <= cutoff;
-  });
+    if (since === null || since <= cutoff) out.push({ id: c.id, name: c.name, since, lastActivityAt: latest ?? null });
+  }
+  return out.sort((a, b) => String(a.since ?? '').localeCompare(String(b.since ?? '')) || String(a.name).localeCompare(String(b.name)));
+}
+
+export function reviewNumbers({ crm, planner, services = null }, today) {
+  const rels = crm.liveRelationships();
+  const accounts = [...new Map(rels.map((r) => [r.account_id, { id: r.account_id, client_id: r.client_id }])).values()];
+  const clients = [...new Set(rels.map((r) => r.client_id))].map((id) => ({ id }));
+  const quiet = quietClients({ crm, services }, today);
   const goals = planner.goals('week', weekStart(today));
   return {
     overdue: planner.overdueCount(today),

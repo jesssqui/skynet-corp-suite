@@ -186,6 +186,15 @@ const paths = {
   ),
   repeat: <path d="M17 3.5l3 3-3 3M20 6.5H8a4 4 0 0 0-4 4v1M7 20.5l-3-3 3-3M4 17.5h12a4 4 0 0 0 4-4v-1" />,
   chart: <path d="M4 4v16h16M8 16v-4M12 16V8M16 16v-6" />,
+  // D11: the overview (a dashboard of tiles).
+  overview: (
+    <>
+      <rect x="4" y="4" width="7" height="7" rx="1.5" />
+      <rect x="13" y="4" width="7" height="4.5" rx="1.5" />
+      <rect x="13" y="11" width="7" height="9" rx="1.5" />
+      <rect x="4" y="13.5" width="7" height="6.5" rx="1.5" />
+    </>
+  ),
 };
 
 export function Icon({ name, size = 20, title, style, className }) {

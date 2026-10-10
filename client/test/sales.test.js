@@ -96,7 +96,7 @@ test('D13: months — their names, amounts typed, and which figure a month shows
   assert.match(monthLine({ shown: 'real', partial: true, real: [{ currency: 'CAD', total: 500 }] }).from, /Read in part.*enter the month by hand/);
   assert.match(monthLine({ shown: 'real', partial: true, replaced: true, real: [{ currency: 'CAD', total: 500 }] }).from, /replaced: save it again/);
   assert.match(monthLine({ shown: 'manual', partial: true, manual: { currency: 'CAD', total: 900, orders: null } }).from, /Entered by hand \(eBay read it only in part\)/);
-  assert.match(stateText({ state: 'not_set_up' }).text, /enter a month by hand/);
+  assert.match(stateText({ state: 'not_set_up', manualStore: 'ebay' }).text, /enter a month by hand/);
   assert.equal(stateText({ state: 'signed_out' }).tone, 'danger');
 });
 

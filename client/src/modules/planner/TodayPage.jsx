@@ -161,6 +161,10 @@ export default function TodayPage() {
         )}
       />
       <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
+        {/* D11: the overview has no tab on phones (the sidebar has it on a Mac): reached from here. */}
+        <Link to="/overview" className="planner-link-row today-overview-link" data-testid="today-overview">
+          <Icon name="overview" size={20} /> Overview: sales and what needs dealing with <Icon name="chevron" size={16} />
+        </Link>
         <CaptureBar inboxCount={inboxCount} />
         {!data ? (
           <Card><p style={{ ...muted, margin: 0 }}>{loading ? 'Loading…' : ' '}</p></Card>

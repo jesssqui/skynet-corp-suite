@@ -11,7 +11,7 @@ import { useServerData } from '../../api/useServerData.js';
 import { PageHeader, Card, Notice, Button, TextField, SelectField } from '../../ui/index.js';
 import { formatDateTime } from '../../ui/format.js';
 import MoneyTabs from '../costs/MoneyTabs.jsx';
-import { StateLine } from './SalesPage.jsx';
+import { StateLine } from './parts.jsx';
 import { periodText, ordersText, stateText, updatedText, monthText, monthLine, monthBreakdown, periodBreakdown, ebayCards, parseAmount } from './logic.js';
 import './sales.css';
 

@@ -1,0 +1,5159 @@
+{
+ "capturedAt": "2026-10-10T18:21:26.786Z",
+ "from": "scripts/wom-e2e.mjs",
+ "events": [
+  {
+   "name": "customer.created",
+   "version": 1,
+   "key": "01a1270b-7a26-735e-a3fb-1472039197c5",
+   "source": "wom",
+   "time": "2026-10-10T18:20:25.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "customer": {
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "number": 1,
+     "business_name": "Lefty’s Vape Shop",
+     "contact_name": "Lefty",
+     "email": "lefty@leftys.ca",
+     "phone": "5195550100",
+     "contact_problems": [],
+     "address": {
+      "line1": "12 Main St",
+      "line2": null,
+      "city": "Simcoe",
+      "province": "ON",
+      "postal_code": "N3Y 4K3",
+      "country": "CA"
+     },
+     "notes": null,
+     "tax_exempt": false,
+     "group": null,
+     "created_at": "2026-10-10T18:20:25.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-7a28-777d-8c78-93c988109438",
+   "source": "wom",
+   "time": "2026-10-10T18:20:25.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
+     "number": 1,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:25.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 10,
+       "unit_price_cents": 650,
+       "subtotal_cents": 6500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 6500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 6500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 845,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 7345,
+      "items_raw": 65,
+      "discount_raw": 0,
+      "tax_raw": 8.45
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-7a29-7506-a527-46677694709e",
+   "source": "wom",
+   "time": "2026-10-10T18:20:25.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-7a04-7438-949d-c32739327641",
+     "number": 1,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
+     "order_number": 1,
+     "amount_cents": 7345,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": "POS order #1",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:25.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-803d-76f3-9931-f4e317b905d2",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.581Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "number": 2,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 4,
+       "unit_price_cents": 650,
+       "subtotal_cents": 2600,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 2600
+      },
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 2,
+       "unit_price_cents": 700,
+       "subtotal_cents": 1400,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1400
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 4000,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 520,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 4520,
+      "items_raw": 40,
+      "discount_raw": 0,
+      "tax_raw": 5.2
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-8046-716e-9ee4-70642783e77c",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.590Z",
+   "data": {
+    "by": "admin",
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8046-716d-818f-fc5a36c4ca2b",
+     "number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "order_number": 2,
+     "amount_cents": 4520,
+     "method": "etransfer",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": null,
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.changed",
+   "version": 1,
+   "key": "01a1270b-8054-76ef-94d8-6054917bc226",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.604Z",
+   "data": {
+    "by": "admin",
+    "change": "edited",
+    "changes": [
+     {
+      "field": "item",
+      "product_id": 1,
+      "name": "Zyn Cool Mint 6mg",
+      "from": {
+       "quantity": 4,
+       "unit_price": 6.5,
+       "discount": null
+      },
+      "to": {
+       "quantity": 6,
+       "unit_price": 6.5,
+       "discount": null
+      }
+     },
+     {
+      "field": "total",
+      "from": 45.2,
+      "to": 59.89
+     },
+     {
+      "field": "notes",
+      "from": null,
+      "to": "Two more Zyn"
+     }
+    ],
+    "change_uid": "01a1270b-8053-7635-9771-f128f2038127",
+    "order": {
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "number": 2,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 6,
+       "unit_price_cents": 650,
+       "subtotal_cents": 3900,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3900
+      },
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 2,
+       "unit_price_cents": 700,
+       "subtotal_cents": 1400,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1400
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 5300,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 689,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 5989,
+      "items_raw": 53,
+      "discount_raw": 0,
+      "tax_raw": 6.89
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": "Two more Zyn",
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.packed",
+   "version": 1,
+   "key": "01a1270b-805e-7363-ba4a-f80cb48d6def",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.614Z",
+   "data": {
+    "by": "admin",
+    "change": "packed",
+    "note": null,
+    "order": {
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "number": 2,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 6,
+       "unit_price_cents": 650,
+       "subtotal_cents": 3900,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3900
+      },
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 2,
+       "unit_price_cents": 700,
+       "subtotal_cents": 1400,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1400
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 5300,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 689,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 5989,
+      "items_raw": 53,
+      "discount_raw": 0,
+      "tax_raw": 6.89
+     },
+     "packing": {
+      "state": "packed",
+      "packed_at": "2026-10-10T18:20:27.000Z",
+      "packed_by": "admin",
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": "Two more Zyn",
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.shipped",
+   "version": 1,
+   "key": "01a1270b-8064-720e-adfa-4b895de85b7c",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.620Z",
+   "data": {
+    "by": "admin",
+    "change": "shipped",
+    "via": "delivered",
+    "note": null,
+    "order": {
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "number": 2,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 6,
+       "unit_price_cents": 650,
+       "subtotal_cents": 3900,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3900
+      },
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 2,
+       "unit_price_cents": 700,
+       "subtotal_cents": 1400,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1400
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 5300,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 689,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 5989,
+      "items_raw": 53,
+      "discount_raw": 0,
+      "tax_raw": 6.89
+     },
+     "packing": {
+      "state": "shipped",
+      "packed_at": "2026-10-10T18:20:27.000Z",
+      "packed_by": "admin",
+      "shipped_at": "2026-10-10T18:20:27.000Z",
+      "shipped_by": "admin",
+      "shipped_via": "delivered",
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": "Two more Zyn",
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-8069-7094-bc6d-4fb9e2f6745a",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.625Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a1270b-8068-743f-9632-6cd177e511b9",
+     "number": 3,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "lines": [
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 3,
+       "unit_price_cents": 500,
+       "subtotal_cents": 1500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 1500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 195,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 1695,
+      "items_raw": 15,
+      "discount_raw": 0,
+      "tax_raw": 1.95
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.cancelled",
+   "version": 1,
+   "key": "01a1270b-806f-77c3-bb3c-c6f697675fcd",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.631Z",
+   "data": {
+    "by": "admin",
+    "changes": [
+     {
+      "field": "status",
+      "from": "active",
+      "to": "cancelled"
+     }
+    ],
+    "change_uid": "01a1270b-806e-7508-8e5c-1dd953e83ad7",
+    "order": {
+     "order_uid": "01a1270b-8068-743f-9632-6cd177e511b9",
+     "number": 3,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "cancelled",
+     "cancelled_at": "2026-10-10T18:20:27.000Z",
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "lines": [
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 3,
+       "unit_price_cents": 500,
+       "subtotal_cents": 1500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 1500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 195,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 1695,
+      "items_raw": 15,
+      "discount_raw": 0,
+      "tax_raw": 1.95
+     },
+     "packing": {
+      "state": "cancelled",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "return.received",
+   "version": 1,
+   "key": "01a1270b-807c-74df-86c9-96c45901bdf2",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "return": {
+     "return_uid": "01a1270b-8079-752f-8439-57a16e3e39e8",
+     "number": 1,
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "order_number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "received_at": "2026-10-10T18:20:27.000Z",
+     "items": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 1,
+       "restocked": true
+      },
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 1,
+       "restocked": false
+      }
+     ],
+     "note": "Crushed tins",
+     "reason": "Crushed tins",
+     "outcome": "credit_note",
+     "amount_cents": 1469,
+     "credit_note_uid": "01a1270b-807b-74ff-99ef-483782e55600",
+     "subtotal_cents": 1300,
+     "tax_cents": 169,
+     "shipping_cents": 0
+    }
+   }
+  },
+  {
+   "name": "credit_note.issued",
+   "version": 1,
+   "key": "01a1270b-807c-74e0-adde-d990dc5c0626",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "credit_note": {
+     "credit_note_uid": "01a1270b-807b-74ff-99ef-483782e55600",
+     "number": "CN-0001",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "order_number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "amount_cents": 1469,
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 2,
+       "amount_cents": 1469,
+       "subtotal_cents": 1300,
+       "tax_cents": 169
+      }
+     ],
+     "reason": "Crushed tins",
+     "issued_at": "2026-10-10T18:20:27.000Z",
+     "return_uid": "01a1270b-8079-752f-8439-57a16e3e39e8",
+     "subtotal_cents": 1300,
+     "tax_cents": 169,
+     "shipping_cents": 0
+    }
+   }
+  },
+  {
+   "name": "refund.issued",
+   "version": 1,
+   "key": "01a1270b-8082-7518-835d-3f7706bab40d",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.650Z",
+   "data": {
+    "by": "admin",
+    "change": "issued",
+    "refund": {
+     "refund_uid": "01a1270b-8082-7517-ace4-eb5978346128",
+     "number": 1,
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
+     "order_number": 1,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "kind": "refund",
+     "amount_cents": 735,
+     "amount_raw": 7.35,
+     "items": [],
+     "reason": "One tin short",
+     "issued_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "method": "etransfer",
+     "return_uid": null
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-8088-7678-9e06-353b54888265",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.656Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
+     "number": 4,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "lines": [
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 5,
+       "unit_price_cents": 700,
+       "subtotal_cents": 3500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 3500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 455,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 3955,
+      "items_raw": 35,
+      "discount_raw": 0,
+      "tax_raw": 4.55
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-8088-7679-9b0e-8cbf17b1f15a",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.656Z",
+   "data": {
+    "by": "admin",
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8087-700d-a7a1-b4f335fbf874",
+     "number": 3,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
+     "order_number": 4,
+     "amount_cents": 3955,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": "POS order #4",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z"
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-8093-72ec-96d7-343b53238b33",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.667Z",
+   "data": {
+    "by": "admin",
+    "change": "removed",
+    "removed": true,
+    "reason": "order_deleted",
+    "moved_to": "store_credit",
+    "payment": {
+     "payment_uid": "01a1270b-8087-700d-a7a1-b4f335fbf874",
+     "number": 3,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
+     "order_number": 4,
+     "amount_cents": 3955,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": "POS order #4",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.deleted",
+   "version": 1,
+   "key": "01a1270b-8094-729e-a065-925c0331e7fa",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.668Z",
+   "data": {
+    "by": "admin",
+    "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
+    "order": {
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
+     "number": 4,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "lines": [
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 5,
+       "unit_price_cents": 700,
+       "subtotal_cents": 3500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 3500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 455,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 3955,
+      "items_raw": 35,
+      "discount_raw": 0,
+      "tax_raw": 4.55
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.restored",
+   "version": 1,
+   "key": "01a1270b-8276-729c-baae-1d74da054603",
+   "source": "wom",
+   "time": "2026-10-10T18:20:28.150Z",
+   "data": {
+    "by": "admin",
+    "order": {
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
+     "number": 4,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "lines": [
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 5,
+       "unit_price_cents": 700,
+       "subtotal_cents": 3500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 3500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 455,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 3955,
+      "items_raw": 35,
+      "discount_raw": 0,
+      "tax_raw": 4.55
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-8276-729d-8075-fd340ad12ce4",
+   "source": "wom",
+   "time": "2026-10-10T18:20:28.150Z",
+   "data": {
+    "by": "admin",
+    "change": "recorded",
+    "reason": "order_restored",
+    "payment": {
+     "payment_uid": "01a1270b-8087-700d-a7a1-b4f335fbf874",
+     "number": 3,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
+     "order_number": 4,
+     "amount_cents": 3955,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": "POS order #4",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z"
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-8279-77ad-ac8c-b1184add10b4",
+   "source": "wom",
+   "time": "2026-10-10T18:20:28.153Z",
+   "data": {
+    "by": "admin",
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8279-77ac-ad71-4728c8fb1e70",
+     "number": 4,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": null,
+     "order_number": null,
+     "amount_cents": 2000,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": "On account",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:28.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-8456-7661-aa22-5b392793acc1",
+   "source": "wom",
+   "time": "2026-10-10T18:20:28.630Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a1270b-8455-7008-9b8e-c021e014dbb2",
+     "number": 5,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:28.000Z",
+     "lines": [
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 1,
+       "unit_price_cents": 500,
+       "subtotal_cents": 500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 65,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 565,
+      "items_raw": 5,
+      "discount_raw": 0,
+      "tax_raw": 0.65
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-8456-7662-bf93-1d9f292cb0a1",
+   "source": "wom",
+   "time": "2026-10-10T18:20:28.630Z",
+   "data": {
+    "by": "admin",
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8455-7009-b6bf-7724c9fddf0f",
+     "number": 5,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-8455-7008-9b8e-c021e014dbb2",
+     "order_number": 5,
+     "amount_cents": 565,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": "POS order #5",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:28.000Z"
+    }
+   }
+  },
+  {
+   "name": "customer.created",
+   "version": 1,
+   "key": "01a1270b-8a56-75ae-8f16-f98a1b779d7e",
+   "source": "wom",
+   "time": "2026-10-10T18:20:25.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "customer": {
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "number": 1,
+     "business_name": "Lefty’s Vape Shop",
+     "contact_name": "Lefty",
+     "email": "lefty@leftys.ca",
+     "phone": "5195550100",
+     "contact_problems": [],
+     "address": {
+      "line1": "12 Main St",
+      "line2": null,
+      "city": "Simcoe",
+      "province": "ON",
+      "postal_code": "N3Y 4K3",
+      "country": "CA"
+     },
+     "notes": null,
+     "tax_exempt": false,
+     "group": null,
+     "created_at": "2026-10-10T18:20:25.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-8a56-75af-a82f-7ca6d702351e",
+   "source": "wom",
+   "time": "2026-10-10T18:20:25.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
+     "number": 1,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:25.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 10,
+       "unit_price_cents": 650,
+       "subtotal_cents": 6500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 6500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 6500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 845,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 7345,
+      "items_raw": 65,
+      "discount_raw": 0,
+      "tax_raw": 8.45
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-8a56-75b0-82f8-6f0888345f9e",
+   "source": "wom",
+   "time": "2026-10-10T18:20:25.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-7a04-7438-949d-c32739327641",
+     "number": 1,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
+     "order_number": 1,
+     "amount_cents": 7345,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": "POS order #1",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:25.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-8a57-7292-8eac-b3e926db76ac",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "number": 2,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 6,
+       "unit_price_cents": 650,
+       "subtotal_cents": 3900,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3900
+      },
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 2,
+       "unit_price_cents": 700,
+       "subtotal_cents": 1400,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1400
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 5300,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 689,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 5989,
+      "items_raw": 53,
+      "discount_raw": 0,
+      "tax_raw": 6.89
+     },
+     "packing": {
+      "state": "shipped",
+      "packed_at": "2026-10-10T18:20:27.000Z",
+      "packed_by": "admin",
+      "shipped_at": "2026-10-10T18:20:27.000Z",
+      "shipped_by": "admin",
+      "shipped_via": "delivered",
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": "Two more Zyn",
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-8a57-7293-9921-5f402230660a",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a1270b-8068-743f-9632-6cd177e511b9",
+     "number": 3,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "cancelled",
+     "cancelled_at": "2026-10-10T18:20:27.000Z",
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "lines": [
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 3,
+       "unit_price_cents": 500,
+       "subtotal_cents": 1500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 1500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 195,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 1695,
+      "items_raw": 15,
+      "discount_raw": 0,
+      "tax_raw": 1.95
+     },
+     "packing": {
+      "state": "cancelled",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-8a57-7294-a1a1-ae51bb3444ad",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
+     "number": 4,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "lines": [
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 5,
+       "unit_price_cents": 700,
+       "subtotal_cents": 3500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 3500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 455,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 3955,
+      "items_raw": 35,
+      "discount_raw": 0,
+      "tax_raw": 4.55
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-8a57-7295-b8e9-5350d1f0c937",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8046-716d-818f-fc5a36c4ca2b",
+     "number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "order_number": 2,
+     "amount_cents": 4520,
+     "method": "etransfer",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": null,
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z"
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-8a57-7296-841c-b872c508c19a",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8087-700d-a7a1-b4f335fbf874",
+     "number": 3,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
+     "order_number": 4,
+     "amount_cents": 3955,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": "POS order #4",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z"
+    }
+   }
+  },
+  {
+   "name": "return.received",
+   "version": 1,
+   "key": "01a1270b-8a57-7297-8fd6-f50f13592c09",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "return": {
+     "return_uid": "01a1270b-8079-752f-8439-57a16e3e39e8",
+     "number": 1,
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "order_number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "received_at": "2026-10-10T18:20:27.000Z",
+     "items": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 1,
+       "restocked": true
+      },
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 1,
+       "restocked": false
+      }
+     ],
+     "note": "Crushed tins",
+     "reason": "Crushed tins",
+     "outcome": "credit_note",
+     "amount_cents": 1469,
+     "credit_note_uid": "01a1270b-807b-74ff-99ef-483782e55600",
+     "subtotal_cents": 1300,
+     "tax_cents": 169,
+     "shipping_cents": 0
+    }
+   }
+  },
+  {
+   "name": "refund.issued",
+   "version": 1,
+   "key": "01a1270b-8a57-7298-9a5f-c68a385246e3",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "issued",
+    "refund": {
+     "refund_uid": "01a1270b-8082-7517-ace4-eb5978346128",
+     "number": 1,
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
+     "order_number": 1,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "kind": "refund",
+     "amount_cents": 735,
+     "amount_raw": 7.35,
+     "items": [],
+     "reason": "One tin short",
+     "issued_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "method": "etransfer",
+     "return_uid": null
+    }
+   }
+  },
+  {
+   "name": "credit_note.issued",
+   "version": 1,
+   "key": "01a1270b-8a58-76c9-a220-0aab442f26de",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "credit_note": {
+     "credit_note_uid": "01a1270b-807b-74ff-99ef-483782e55600",
+     "number": "CN-0001",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "order_number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "amount_cents": 1469,
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 2,
+       "amount_cents": 1469,
+       "subtotal_cents": 1300,
+       "tax_cents": 169
+      }
+     ],
+     "reason": "Crushed tins",
+     "issued_at": "2026-10-10T18:20:27.000Z",
+     "return_uid": "01a1270b-8079-752f-8439-57a16e3e39e8",
+     "subtotal_cents": 1300,
+     "tax_cents": 169,
+     "shipping_cents": 0
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-8a58-76ca-852b-2d8755bd9cda",
+   "source": "wom",
+   "time": "2026-10-10T18:20:28.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a1270b-8455-7008-9b8e-c021e014dbb2",
+     "number": 5,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:28.000Z",
+     "lines": [
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 1,
+       "unit_price_cents": 500,
+       "subtotal_cents": 500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 65,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 565,
+      "items_raw": 5,
+      "discount_raw": 0,
+      "tax_raw": 0.65
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-8a58-76cb-bc10-b6c6546a3024",
+   "source": "wom",
+   "time": "2026-10-10T18:20:28.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8279-77ac-ad71-4728c8fb1e70",
+     "number": 4,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": null,
+     "order_number": null,
+     "amount_cents": 2000,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": "On account",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:28.000Z"
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-8a58-76cc-95b6-f72b2313acec",
+   "source": "wom",
+   "time": "2026-10-10T18:20:28.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8455-7009-b6bf-7724c9fddf0f",
+     "number": 5,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-8455-7008-9b8e-c021e014dbb2",
+     "order_number": 5,
+     "amount_cents": 565,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": "POS order #5",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:28.000Z"
+    }
+   }
+  },
+  {
+   "name": "customer.created",
+   "version": 1,
+   "key": "01a1270b-8b8e-7458-b8aa-ee998e0344e6",
+   "source": "wom",
+   "time": "2026-10-10T18:20:30.478Z",
+   "data": {
+    "by": "admin",
+    "customer": {
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+     "number": 2,
+     "business_name": "Northwind Corner Store",
+     "contact_name": "Robin",
+     "email": "robin@northwind.example",
+     "phone": null,
+     "contact_problems": [],
+     "address": {
+      "line1": null,
+      "line2": null,
+      "city": null,
+      "province": null,
+      "postal_code": null,
+      "country": "CA"
+     },
+     "notes": null,
+     "tax_exempt": false,
+     "group": null,
+     "created_at": "2026-10-10T18:20:30.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-8b93-72c2-8088-d5a3ec9e9078",
+   "source": "wom",
+   "time": "2026-10-10T18:20:30.483Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a1270b-8b93-72c1-bcc6-3bc7fee64e39",
+     "number": 6,
+     "reference_number": null,
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+     "customer": {
+      "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+      "number": 2,
+      "business_name": "Northwind Corner Store",
+      "contact_name": "Robin",
+      "email": "robin@northwind.example",
+      "phone": null
+     },
+     "order_date": "2026-08-26",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:30.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 10,
+       "unit_price_cents": 1000,
+       "subtotal_cents": 10000,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 10000
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 10000,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 1300,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 11300,
+      "items_raw": 100,
+      "discount_raw": 0,
+      "tax_raw": 13
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-8b98-76fc-930a-74bcfc271409",
+   "source": "wom",
+   "time": "2026-10-10T18:20:30.488Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a1270b-8b97-765e-ad9c-07a22a0c93e6",
+     "number": 7,
+     "reference_number": null,
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+     "customer": {
+      "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+      "number": 2,
+      "business_name": "Northwind Corner Store",
+      "contact_name": "Robin",
+      "email": "robin@northwind.example",
+      "phone": null
+     },
+     "order_date": "2026-08-31",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:30.000Z",
+     "lines": [
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 5,
+       "unit_price_cents": 1000,
+       "subtotal_cents": 5000,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 5000
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 5000,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 650,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 5650,
+      "items_raw": 50,
+      "discount_raw": 0,
+      "tax_raw": 6.5
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-8b9d-7164-8de7-23c232cd1604",
+   "source": "wom",
+   "time": "2026-10-10T18:20:30.493Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a1270b-8b9c-7671-ae5e-86158d6bc981",
+     "number": 8,
+     "reference_number": null,
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+     "customer": {
+      "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+      "number": 2,
+      "business_name": "Northwind Corner Store",
+      "contact_name": "Robin",
+      "email": "robin@northwind.example",
+      "phone": null
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:30.000Z",
+     "lines": [
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 2,
+       "unit_price_cents": 1000,
+       "subtotal_cents": 2000,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 2000
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 2000,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 260,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 2260,
+      "items_raw": 20,
+      "discount_raw": 0,
+      "tax_raw": 2.6
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-8ba1-7484-8dbb-ba958095af68",
+   "source": "wom",
+   "time": "2026-10-10T18:20:30.497Z",
+   "data": {
+    "by": "admin",
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8ba1-7483-8883-71036fbc9882",
+     "number": 6,
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+     "order_uid": "01a1270b-8b97-765e-ad9c-07a22a0c93e6",
+     "order_number": 7,
+     "amount_cents": 2000,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": null,
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:30.000Z"
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-8ba4-7142-abdc-3dbc51813622",
+   "source": "wom",
+   "time": "2026-10-10T18:20:30.500Z",
+   "data": {
+    "by": "admin",
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8ba4-7141-8402-467b33b28225",
+     "number": 7,
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+     "order_uid": "01a1270b-8b9c-7671-ae5e-86158d6bc981",
+     "order_number": 8,
+     "amount_cents": 2260,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": null,
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:30.000Z"
+    }
+   }
+  },
+  {
+   "name": "note.added",
+   "version": 1,
+   "key": "01a1270b-8d9d-7247-85aa-702ce720e24a",
+   "source": "wom",
+   "time": "2026-10-10T18:20:30.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "note": {
+     "note_uid": "01a1270b-8d96-76ff-b15b-d4e0f9aaef5e",
+     "number": 1,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "type": "call",
+     "body": "Asked about Zyn 3mg",
+     "at": "2026-10-10T18:20:30.000Z",
+     "written_by": "admin"
+    }
+   }
+  },
+  {
+   "name": "followup.changed",
+   "version": 1,
+   "key": "01a1270b-8d9e-732e-a6bf-faaf21b511f8",
+   "source": "wom",
+   "time": "2026-10-10T18:20:31.006Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+    "follow_up_date": "2026-10-15",
+    "done": false
+   }
+  },
+  {
+   "name": "note.added",
+   "version": 1,
+   "key": "01a1270b-8f73-7412-bb20-941191462d60",
+   "source": "wom",
+   "time": "2026-10-10T18:20:31.475Z",
+   "data": {
+    "by": "admin",
+    "note": {
+     "note_uid": "01a1270b-8f73-7411-8137-9fdb7c57f089",
+     "number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "type": "email",
+     "body": "Sent the October price list",
+     "at": "2026-10-10T18:20:31.000Z",
+     "written_by": "admin"
+    }
+   }
+  },
+  {
+   "name": "followup.changed",
+   "version": 1,
+   "key": "01a1270b-8f77-76ca-9fbd-ab11b0fcde6c",
+   "source": "wom",
+   "time": "2026-10-10T18:20:31.479Z",
+   "data": {
+    "by": "admin",
+    "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+    "follow_up_date": "2026-10-13",
+    "done": false
+   }
+  },
+  {
+   "name": "followup.changed",
+   "version": 1,
+   "key": "01a1270b-9145-76fa-af9f-c431a2dc456c",
+   "source": "wom",
+   "time": "2026-10-10T18:20:31.941Z",
+   "data": {
+    "by": "admin",
+    "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+    "follow_up_date": "2026-10-20",
+    "done": false
+   }
+  },
+  {
+   "name": "followup.changed",
+   "version": 1,
+   "key": "01a1270b-9314-7653-87ae-1e09f446f397",
+   "source": "wom",
+   "time": "2026-10-10T18:20:32.404Z",
+   "data": {
+    "by": "admin",
+    "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+    "follow_up_date": null,
+    "done": true
+   }
+  },
+  {
+   "name": "note.added",
+   "version": 1,
+   "key": "01a1270b-9314-7654-890d-ba0e22f56151",
+   "source": "wom",
+   "time": "2026-10-10T18:20:32.404Z",
+   "data": {
+    "by": "admin",
+    "note": {
+     "note_uid": "01a1270b-9314-7652-ac57-98d40355cb0c",
+     "number": 3,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "type": "follow_up",
+     "body": "Called, ordering Friday",
+     "at": "2026-10-10T18:20:32.000Z",
+     "written_by": "admin"
+    }
+   }
+  },
+  {
+   "name": "note.deleted",
+   "version": 1,
+   "key": "01a1270b-9317-7179-a916-9e45cb26e63d",
+   "source": "wom",
+   "time": "2026-10-10T18:20:32.407Z",
+   "data": {
+    "by": "admin",
+    "note": {
+     "note_uid": "01a1270b-8f73-7411-8137-9fdb7c57f089",
+     "number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de"
+    }
+   }
+  },
+  {
+   "name": "customer.created",
+   "version": 1,
+   "key": "01a1270b-9453-70b3-91c1-69f12be7bd90",
+   "source": "wom",
+   "time": "2026-10-10T18:20:32.723Z",
+   "data": {
+    "by": "admin",
+    "customer": {
+     "customer_uid": "01a1270b-9453-70b2-af64-64d4f7750a7a",
+     "number": 3,
+     "business_name": "Southside Convenience",
+     "contact_name": null,
+     "email": null,
+     "phone": null,
+     "contact_problems": [],
+     "address": {
+      "line1": null,
+      "line2": null,
+      "city": null,
+      "province": null,
+      "postal_code": null,
+      "country": "CA"
+     },
+     "notes": null,
+     "tax_exempt": false,
+     "group": null,
+     "created_at": "2026-10-10T18:20:32.000Z"
+    }
+   }
+  },
+  {
+   "name": "note.added",
+   "version": 1,
+   "key": "01a1270b-9456-72e8-972a-ddffc69134a8",
+   "source": "wom",
+   "time": "2026-10-10T18:20:32.726Z",
+   "data": {
+    "by": "admin",
+    "note": {
+     "note_uid": "01a1270b-9456-72e7-a6bf-2cc85e6c3727",
+     "number": 4,
+     "customer_uid": "01a1270b-9453-70b2-af64-64d4f7750a7a",
+     "type": "meeting",
+     "body": "Met at the trade show",
+     "at": "2026-10-10T18:20:32.000Z",
+     "written_by": "admin"
+    }
+   }
+  },
+  {
+   "name": "customer.created",
+   "version": 1,
+   "key": "01a1270b-9629-72fa-9f12-f98ff835b463",
+   "source": "wom",
+   "time": "2026-10-10T18:20:25.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "customer": {
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "number": 1,
+     "business_name": "Lefty’s Vape Shop",
+     "contact_name": "Lefty",
+     "email": "lefty@leftys.ca",
+     "phone": "5195550100",
+     "contact_problems": [],
+     "address": {
+      "line1": "12 Main St",
+      "line2": null,
+      "city": "Simcoe",
+      "province": "ON",
+      "postal_code": "N3Y 4K3",
+      "country": "CA"
+     },
+     "notes": null,
+     "tax_exempt": false,
+     "group": null,
+     "created_at": "2026-10-10T18:20:25.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-9629-72fb-a0bd-324aa5adfdd1",
+   "source": "wom",
+   "time": "2026-10-10T18:20:25.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
+     "number": 1,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:25.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 10,
+       "unit_price_cents": 650,
+       "subtotal_cents": 6500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 6500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 6500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 845,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 7345,
+      "items_raw": 65,
+      "discount_raw": 0,
+      "tax_raw": 8.45
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-9629-72fc-8dad-613b1a6bd674",
+   "source": "wom",
+   "time": "2026-10-10T18:20:25.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-7a04-7438-949d-c32739327641",
+     "number": 1,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
+     "order_number": 1,
+     "amount_cents": 7345,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": "POS order #1",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:25.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-962a-729a-8be8-3c3a5de45021",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "number": 2,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 6,
+       "unit_price_cents": 650,
+       "subtotal_cents": 3900,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3900
+      },
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 2,
+       "unit_price_cents": 700,
+       "subtotal_cents": 1400,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1400
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 5300,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 689,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 5989,
+      "items_raw": 53,
+      "discount_raw": 0,
+      "tax_raw": 6.89
+     },
+     "packing": {
+      "state": "shipped",
+      "packed_at": "2026-10-10T18:20:27.000Z",
+      "packed_by": "admin",
+      "shipped_at": "2026-10-10T18:20:27.000Z",
+      "shipped_by": "admin",
+      "shipped_via": "delivered",
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": "Two more Zyn",
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-962a-729b-aaf0-217d0ec55efc",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a1270b-8068-743f-9632-6cd177e511b9",
+     "number": 3,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "cancelled",
+     "cancelled_at": "2026-10-10T18:20:27.000Z",
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "lines": [
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 3,
+       "unit_price_cents": 500,
+       "subtotal_cents": 1500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 1500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 195,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 1695,
+      "items_raw": 15,
+      "discount_raw": 0,
+      "tax_raw": 1.95
+     },
+     "packing": {
+      "state": "cancelled",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-962a-729c-ada4-2fc6a8f4161e",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
+     "number": 4,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "lines": [
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 5,
+       "unit_price_cents": 700,
+       "subtotal_cents": 3500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 3500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 455,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 3955,
+      "items_raw": 35,
+      "discount_raw": 0,
+      "tax_raw": 4.55
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-962a-729d-a3d6-01a5214f6690",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8046-716d-818f-fc5a36c4ca2b",
+     "number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "order_number": 2,
+     "amount_cents": 4520,
+     "method": "etransfer",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": null,
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z"
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-962a-729e-8efd-ab6f7370a618",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8087-700d-a7a1-b4f335fbf874",
+     "number": 3,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
+     "order_number": 4,
+     "amount_cents": 3955,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": "POS order #4",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z"
+    }
+   }
+  },
+  {
+   "name": "return.received",
+   "version": 1,
+   "key": "01a1270b-962a-729f-8bfc-d66e392ec370",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "return": {
+     "return_uid": "01a1270b-8079-752f-8439-57a16e3e39e8",
+     "number": 1,
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "order_number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "received_at": "2026-10-10T18:20:27.000Z",
+     "items": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 1,
+       "restocked": true
+      },
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 1,
+       "restocked": false
+      }
+     ],
+     "note": "Crushed tins",
+     "reason": "Crushed tins",
+     "outcome": "credit_note",
+     "amount_cents": 1469,
+     "credit_note_uid": "01a1270b-807b-74ff-99ef-483782e55600",
+     "subtotal_cents": 1300,
+     "tax_cents": 169,
+     "shipping_cents": 0
+    }
+   }
+  },
+  {
+   "name": "refund.issued",
+   "version": 1,
+   "key": "01a1270b-962a-72a0-8b8b-5028cce7e6e5",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "issued",
+    "refund": {
+     "refund_uid": "01a1270b-8082-7517-ace4-eb5978346128",
+     "number": 1,
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
+     "order_number": 1,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "kind": "refund",
+     "amount_cents": 735,
+     "amount_raw": 7.35,
+     "items": [],
+     "reason": "One tin short",
+     "issued_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "method": "etransfer",
+     "return_uid": null
+    }
+   }
+  },
+  {
+   "name": "credit_note.issued",
+   "version": 1,
+   "key": "01a1270b-962a-72a1-8468-557f4e259d5f",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "credit_note": {
+     "credit_note_uid": "01a1270b-807b-74ff-99ef-483782e55600",
+     "number": "CN-0001",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "order_number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "amount_cents": 1469,
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 2,
+       "amount_cents": 1469,
+       "subtotal_cents": 1300,
+       "tax_cents": 169
+      }
+     ],
+     "reason": "Crushed tins",
+     "issued_at": "2026-10-10T18:20:27.000Z",
+     "return_uid": "01a1270b-8079-752f-8439-57a16e3e39e8",
+     "subtotal_cents": 1300,
+     "tax_cents": 169,
+     "shipping_cents": 0
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-962b-72e5-9828-12df96840eec",
+   "source": "wom",
+   "time": "2026-10-10T18:20:28.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a1270b-8455-7008-9b8e-c021e014dbb2",
+     "number": 5,
+     "reference_number": null,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "customer": {
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+      "number": 1,
+      "business_name": "Lefty’s Vape Shop",
+      "contact_name": "Lefty",
+      "email": "lefty@leftys.ca",
+      "phone": "5195550100"
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:28.000Z",
+     "lines": [
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 1,
+       "unit_price_cents": 500,
+       "subtotal_cents": 500,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 500
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 500,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 65,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 565,
+      "items_raw": 5,
+      "discount_raw": 0,
+      "tax_raw": 0.65
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-962b-72e6-8ebb-54926cf29022",
+   "source": "wom",
+   "time": "2026-10-10T18:20:28.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8279-77ac-ad71-4728c8fb1e70",
+     "number": 4,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": null,
+     "order_number": null,
+     "amount_cents": 2000,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": "On account",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:28.000Z"
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-962b-72e7-ac74-8f9b12b8f851",
+   "source": "wom",
+   "time": "2026-10-10T18:20:28.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8455-7009-b6bf-7724c9fddf0f",
+     "number": 5,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-8455-7008-9b8e-c021e014dbb2",
+     "order_number": 5,
+     "amount_cents": 565,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": "POS order #5",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:28.000Z"
+    }
+   }
+  },
+  {
+   "name": "customer.created",
+   "version": 1,
+   "key": "01a1270b-962b-72e8-9250-a58db8fd3b28",
+   "source": "wom",
+   "time": "2026-10-10T18:20:30.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "customer": {
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+     "number": 2,
+     "business_name": "Northwind Corner Store",
+     "contact_name": "Robin",
+     "email": "robin@northwind.example",
+     "phone": null,
+     "contact_problems": [],
+     "address": {
+      "line1": null,
+      "line2": null,
+      "city": null,
+      "province": null,
+      "postal_code": null,
+      "country": "CA"
+     },
+     "notes": null,
+     "tax_exempt": false,
+     "group": null,
+     "created_at": "2026-10-10T18:20:30.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-962b-72e9-bea7-c89cce18ac1b",
+   "source": "wom",
+   "time": "2026-10-10T18:20:30.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a1270b-8b93-72c1-bcc6-3bc7fee64e39",
+     "number": 6,
+     "reference_number": null,
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+     "customer": {
+      "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+      "number": 2,
+      "business_name": "Northwind Corner Store",
+      "contact_name": "Robin",
+      "email": "robin@northwind.example",
+      "phone": null
+     },
+     "order_date": "2026-08-26",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:30.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 10,
+       "unit_price_cents": 1000,
+       "subtotal_cents": 10000,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 10000
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 10000,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 1300,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 11300,
+      "items_raw": 100,
+      "discount_raw": 0,
+      "tax_raw": 13
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-962b-72ea-b694-fb0ef754eb70",
+   "source": "wom",
+   "time": "2026-10-10T18:20:30.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a1270b-8b97-765e-ad9c-07a22a0c93e6",
+     "number": 7,
+     "reference_number": null,
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+     "customer": {
+      "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+      "number": 2,
+      "business_name": "Northwind Corner Store",
+      "contact_name": "Robin",
+      "email": "robin@northwind.example",
+      "phone": null
+     },
+     "order_date": "2026-08-31",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:30.000Z",
+     "lines": [
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 5,
+       "unit_price_cents": 1000,
+       "subtotal_cents": 5000,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 5000
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 5000,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 650,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 5650,
+      "items_raw": 50,
+      "discount_raw": 0,
+      "tax_raw": 6.5
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-962b-72eb-b4b2-6177445001fa",
+   "source": "wom",
+   "time": "2026-10-10T18:20:30.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "source": "backfill",
+    "order": {
+     "order_uid": "01a1270b-8b9c-7671-ae5e-86158d6bc981",
+     "number": 8,
+     "reference_number": null,
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+     "customer": {
+      "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+      "number": 2,
+      "business_name": "Northwind Corner Store",
+      "contact_name": "Robin",
+      "email": "robin@northwind.example",
+      "phone": null
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:30.000Z",
+     "lines": [
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 2,
+       "unit_price_cents": 1000,
+       "subtotal_cents": 2000,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 2000
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 2000,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 260,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 2260,
+      "items_raw": 20,
+      "discount_raw": 0,
+      "tax_raw": 2.6
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-962b-72ec-ab0f-d1fa129aa6ee",
+   "source": "wom",
+   "time": "2026-10-10T18:20:30.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8ba1-7483-8883-71036fbc9882",
+     "number": 6,
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+     "order_uid": "01a1270b-8b97-765e-ad9c-07a22a0c93e6",
+     "order_number": 7,
+     "amount_cents": 2000,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": null,
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:30.000Z"
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-962b-72ed-85a1-b9c7b2c937d3",
+   "source": "wom",
+   "time": "2026-10-10T18:20:30.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8ba4-7141-8402-467b33b28225",
+     "number": 7,
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+     "order_uid": "01a1270b-8b9c-7671-ae5e-86158d6bc981",
+     "order_number": 8,
+     "amount_cents": 2260,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": null,
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:30.000Z"
+    }
+   }
+  },
+  {
+   "name": "customer.created",
+   "version": 1,
+   "key": "01a1270b-962b-72ee-b299-f4be4e7e10a7",
+   "source": "wom",
+   "time": "2026-10-10T18:20:32.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "customer": {
+     "customer_uid": "01a1270b-9453-70b2-af64-64d4f7750a7a",
+     "number": 3,
+     "business_name": "Southside Convenience",
+     "contact_name": null,
+     "email": null,
+     "phone": null,
+     "contact_problems": [],
+     "address": {
+      "line1": null,
+      "line2": null,
+      "city": null,
+      "province": null,
+      "postal_code": null,
+      "country": "CA"
+     },
+     "notes": null,
+     "tax_exempt": false,
+     "group": null,
+     "created_at": "2026-10-10T18:20:32.000Z"
+    }
+   }
+  },
+  {
+   "name": "note.added",
+   "version": 1,
+   "key": "01a1270b-962c-71d2-8d71-1258b0824c38",
+   "source": "wom",
+   "time": "2026-10-10T18:20:30.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "note": {
+     "note_uid": "01a1270b-8d96-76ff-b15b-d4e0f9aaef5e",
+     "number": 1,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "type": "call",
+     "body": "Asked about Zyn 3mg",
+     "at": "2026-10-10T18:20:30.000Z",
+     "written_by": "admin"
+    }
+   }
+  },
+  {
+   "name": "note.added",
+   "version": 1,
+   "key": "01a1270b-962c-71d3-917d-c261ba286e8a",
+   "source": "wom",
+   "time": "2026-10-10T18:20:32.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "note": {
+     "note_uid": "01a1270b-9314-7652-ac57-98d40355cb0c",
+     "number": 3,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "type": "follow_up",
+     "body": "Called, ordering Friday",
+     "at": "2026-10-10T18:20:32.000Z",
+     "written_by": "admin"
+    }
+   }
+  },
+  {
+   "name": "note.added",
+   "version": 1,
+   "key": "01a1270b-962c-71d4-943c-ab28ae062cbc",
+   "source": "wom",
+   "time": "2026-10-10T18:20:32.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "note": {
+     "note_uid": "01a1270b-9456-72e7-a6bf-2cc85e6c3727",
+     "number": 4,
+     "customer_uid": "01a1270b-9453-70b2-af64-64d4f7750a7a",
+     "type": "meeting",
+     "body": "Met at the trade show",
+     "at": "2026-10-10T18:20:32.000Z",
+     "written_by": "admin"
+    }
+   }
+  },
+  {
+   "name": "followup.changed",
+   "version": 1,
+   "key": "01a1270b-9632-7065-9296-f3bd0e4b39af",
+   "source": "wom",
+   "time": "2026-10-10T18:20:33.202Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+    "follow_up_date": "2026-10-15",
+    "done": false
+   }
+  },
+  {
+   "name": "customer.created",
+   "version": 1,
+   "key": "01a1270b-978a-723f-bc69-5cf4722c3453",
+   "source": "wom",
+   "time": "2026-10-10T18:20:33.546Z",
+   "data": {
+    "by": "admin",
+    "customer": {
+     "customer_uid": "01a1270b-978a-723e-9eac-d3ea6ea9d7ce",
+     "number": 4,
+     "business_name": "Harbour Smoke & Vape",
+     "contact_name": "Dana",
+     "email": "dana@harbour.example",
+     "phone": null,
+     "contact_problems": [],
+     "address": {
+      "line1": null,
+      "line2": null,
+      "city": null,
+      "province": null,
+      "postal_code": null,
+      "country": "CA"
+     },
+     "notes": null,
+     "tax_exempt": false,
+     "group": null,
+     "created_at": "2026-10-10T18:20:33.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-978d-7170-ab74-c233b73f1b82",
+   "source": "wom",
+   "time": "2026-10-10T18:20:33.549Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a1270b-978d-716f-becc-af6026846bec",
+     "number": 9,
+     "reference_number": null,
+     "customer_uid": "01a1270b-978a-723e-9eac-d3ea6ea9d7ce",
+     "customer": {
+      "customer_uid": "01a1270b-978a-723e-9eac-d3ea6ea9d7ce",
+      "number": 4,
+      "business_name": "Harbour Smoke & Vape",
+      "contact_name": "Dana",
+      "email": "dana@harbour.example",
+      "phone": null
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:33.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 6,
+       "unit_price_cents": 650,
+       "subtotal_cents": 3900,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 3900
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 3900,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 507,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 4407,
+      "items_raw": 39,
+      "discount_raw": 0,
+      "tax_raw": 5.07
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "customer.created",
+   "version": 1,
+   "key": "01a1270b-9964-7238-8df4-5981c852ab2a",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.019Z",
+   "data": {
+    "by": "admin",
+    "customer": {
+     "customer_uid": "01a1270b-9963-7040-9795-7b5c6445c5a6",
+     "number": 5,
+     "business_name": "Harbour Smoke Shop Ltd",
+     "contact_name": "Kai",
+     "email": null,
+     "phone": null,
+     "contact_problems": [],
+     "address": {
+      "line1": null,
+      "line2": null,
+      "city": null,
+      "province": null,
+      "postal_code": null,
+      "country": "CA"
+     },
+     "notes": null,
+     "tax_exempt": false,
+     "group": null,
+     "created_at": "2026-10-10T18:20:34.000Z"
+    }
+   }
+  },
+  {
+   "name": "customer.updated",
+   "version": 1,
+   "key": "01a1270b-9b3d-75aa-a8eb-019cbe78f9e4",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.493Z",
+   "data": {
+    "by": "admin",
+    "change": "edited",
+    "customer": {
+     "customer_uid": "01a1270b-978a-723e-9eac-d3ea6ea9d7ce",
+     "number": 4,
+     "business_name": "Harbour Smoke & Vape",
+     "contact_name": "Dana R.",
+     "email": "dana@harbour.example",
+     "phone": null,
+     "contact_problems": [],
+     "address": {
+      "line1": null,
+      "line2": null,
+      "city": null,
+      "province": null,
+      "postal_code": null,
+      "country": "CA"
+     },
+     "notes": null,
+     "tax_exempt": false,
+     "group": null,
+     "created_at": "2026-10-10T18:20:33.000Z"
+    }
+   }
+  },
+  {
+   "name": "customer.created",
+   "version": 1,
+   "key": "01a1270b-9c79-7629-949a-6dbc2ef57284",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.809Z",
+   "data": {
+    "by": "admin",
+    "customer": {
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "number": 6,
+     "business_name": "Bayview Variety",
+     "contact_name": "Sam",
+     "email": null,
+     "phone": null,
+     "contact_problems": [],
+     "address": {
+      "line1": null,
+      "line2": null,
+      "city": null,
+      "province": null,
+      "postal_code": null,
+      "country": "CA"
+     },
+     "notes": null,
+     "tax_exempt": false,
+     "group": null,
+     "created_at": "2026-10-10T18:20:34.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-9c7e-73df-8e8d-7093dcfee92a",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.814Z",
+   "data": {
+    "by": "admin",
+    "source": "history_only",
+    "order": {
+     "order_uid": "01a1270b-9c7d-74b0-9ddc-dad1e8db3d83",
+     "number": 10,
+     "reference_number": null,
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "customer": {
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+      "number": 6,
+      "business_name": "Bayview Variety",
+      "contact_name": "Sam",
+      "email": null,
+      "phone": null
+     },
+     "order_date": "2026-08-31",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": true,
+     "created_at": "2026-08-31T12:00:00.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 20,
+       "unit_price_cents": 650,
+       "subtotal_cents": 13000,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 13000
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 13000,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 1690,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 14690,
+      "items_raw": 130,
+      "discount_raw": 0,
+      "tax_raw": 16.9
+     },
+     "packing": {
+      "state": "history",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-9c7e-73e0-9dee-8dbf7ef1b2b2",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.814Z",
+   "data": {
+    "by": "admin",
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-9c7e-73de-ba0c-495f1afb0a32",
+     "number": 8,
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "order_uid": "01a1270b-9c7d-74b0-9ddc-dad1e8db3d83",
+     "order_number": 10,
+     "amount_cents": 14690,
+     "method": "cash",
+     "payment_date": "2026-08-31",
+     "reference_number": null,
+     "notes": "Paid in full (history-only order)",
+     "history_entry": true,
+     "recorded_by": "admin",
+     "created_at": "2026-08-31T12:00:00.000Z"
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-9c83-7461-8614-ddc63794000d",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.819Z",
+   "data": {
+    "by": "admin",
+    "source": "history_only",
+    "order": {
+     "order_uid": "01a1270b-9c82-7346-a89c-3df40e421025",
+     "number": 11,
+     "reference_number": null,
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "customer": {
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+      "number": 6,
+      "business_name": "Bayview Variety",
+      "contact_name": "Sam",
+      "email": null,
+      "phone": null
+     },
+     "order_date": "2026-09-28",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": true,
+     "created_at": "2026-09-28T12:00:00.000Z",
+     "lines": [
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 10,
+       "unit_price_cents": 700,
+       "subtotal_cents": 7000,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 7000
+      },
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 4,
+       "unit_price_cents": 500,
+       "subtotal_cents": 2000,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 2000
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 9000,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 1170,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 10170,
+      "items_raw": 90,
+      "discount_raw": 0,
+      "tax_raw": 11.7
+     },
+     "packing": {
+      "state": "history",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-9c87-722a-b7ae-1846416e1bdc",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.823Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a1270b-9c87-7229-af2f-4fd0e0fcf8c4",
+     "number": 12,
+     "reference_number": null,
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "customer": {
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+      "number": 6,
+      "business_name": "Bayview Variety",
+      "contact_name": "Sam",
+      "email": null,
+      "phone": null
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:34.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 3,
+       "unit_price_cents": 799,
+       "subtotal_cents": 2397,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 2397
+      }
+     ],
+     "discount": {
+      "type": "%",
+      "value": 15
+     },
+     "totals": {
+      "subtotal_cents": 2397,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 360,
+      "other_discount_cents": 0,
+      "discount_cents": 360,
+      "shipping_cents": 0,
+      "tax_cents": 265,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 2302,
+      "items_raw": 23.97,
+      "discount_raw": 3.5955,
+      "tax_raw": 2.65
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-9c8b-779e-a772-468dd3f1553d",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.827Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a1270b-9c8a-730a-9525-3a24b3b29152",
+     "number": 13,
+     "reference_number": null,
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "customer": {
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+      "number": 6,
+      "business_name": "Bayview Variety",
+      "contact_name": "Sam",
+      "email": null,
+      "phone": null
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:34.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 3,
+       "unit_price_cents": 799,
+       "subtotal_cents": 2397,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 2397
+      }
+     ],
+     "discount": {
+      "type": "%",
+      "value": 15
+     },
+     "totals": {
+      "subtotal_cents": 2397,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 360,
+      "other_discount_cents": 0,
+      "discount_cents": 360,
+      "shipping_cents": 0,
+      "tax_cents": 265,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 2302,
+      "items_raw": 23.97,
+      "discount_raw": 3.5955,
+      "tax_raw": 2.65
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-9c8e-725a-8514-5871061d2ddb",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.830Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a1270b-9c8d-71df-928d-0bf3ae0a7d6a",
+     "number": 14,
+     "reference_number": null,
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "customer": {
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+      "number": 6,
+      "business_name": "Bayview Variety",
+      "contact_name": "Sam",
+      "email": null,
+      "phone": null
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:34.000Z",
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "brand": "Zyn",
+       "quantity": 3,
+       "unit_price_cents": 799,
+       "subtotal_cents": 2397,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 2397
+      }
+     ],
+     "discount": {
+      "type": "%",
+      "value": 15
+     },
+     "totals": {
+      "subtotal_cents": 2397,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 360,
+      "other_discount_cents": 0,
+      "discount_cents": 360,
+      "shipping_cents": 0,
+      "tax_cents": 265,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 2302,
+      "items_raw": 23.97,
+      "discount_raw": 3.5955,
+      "tax_raw": 2.65
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-9c92-703e-bc67-7571251aeea9",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.834Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a1270b-9c92-703d-8a33-c790df2e41df",
+     "number": 15,
+     "reference_number": null,
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "customer": {
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+      "number": 6,
+      "business_name": "Bayview Variety",
+      "contact_name": "Sam",
+      "email": null,
+      "phone": null
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:34.000Z",
+     "lines": [
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 3,
+       "unit_price_cents": 700,
+       "subtotal_cents": 2100,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 2100
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 2100,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 273,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 2373,
+      "items_raw": 21,
+      "discount_raw": 0,
+      "tax_raw": 2.73
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.changed",
+   "version": 1,
+   "key": "01a1270b-9c97-7069-8ce7-23d7d59c50d2",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.839Z",
+   "data": {
+    "by": "admin",
+    "change": "tags",
+    "changes": [
+     {
+      "field": "tags",
+      "from": [],
+      "to": [
+       "evening"
+      ]
+     }
+    ],
+    "change_uid": "01a1270b-9c96-7739-b28c-80f120d88ec5",
+    "order": {
+     "order_uid": "01a1270b-9c92-703d-8a33-c790df2e41df",
+     "number": 15,
+     "reference_number": null,
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "customer": {
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+      "number": 6,
+      "business_name": "Bayview Variety",
+      "contact_name": "Sam",
+      "email": null,
+      "phone": null
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T01:30:00.000Z",
+     "lines": [
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 3,
+       "unit_price_cents": 700,
+       "subtotal_cents": 2100,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 2100
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 2100,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 273,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 2373,
+      "items_raw": 21,
+      "discount_raw": 0,
+      "tax_raw": 2.73
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": [
+      "evening"
+     ]
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-9c99-7550-88c9-6c5731ba3d57",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.841Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a1270b-9c99-754f-b6b1-ba6e7fa7a4cd",
+     "number": 16,
+     "reference_number": null,
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "customer": {
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+      "number": 6,
+      "business_name": "Bayview Variety",
+      "contact_name": "Sam",
+      "email": null,
+      "phone": null
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:34.000Z",
+     "lines": [
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 2,
+       "unit_price_cents": 500,
+       "subtotal_cents": 1000,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1000
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 1000,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 130,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 1130,
+      "items_raw": 10,
+      "discount_raw": 0,
+      "tax_raw": 1.3
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.cancelled",
+   "version": 1,
+   "key": "01a1270b-9c9c-7459-88b3-80a5388f91ac",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.844Z",
+   "data": {
+    "by": "admin",
+    "changes": [
+     {
+      "field": "status",
+      "from": "active",
+      "to": "cancelled"
+     }
+    ],
+    "change_uid": "01a1270b-9c9c-7458-95e9-31f06774d4ab",
+    "order": {
+     "order_uid": "01a1270b-9c99-754f-b6b1-ba6e7fa7a4cd",
+     "number": 16,
+     "reference_number": null,
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "customer": {
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+      "number": 6,
+      "business_name": "Bayview Variety",
+      "contact_name": "Sam",
+      "email": null,
+      "phone": null
+     },
+     "order_date": "2026-10-10",
+     "status": "cancelled",
+     "cancelled_at": "2026-10-10T18:20:34.000Z",
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:34.000Z",
+     "lines": [
+      {
+       "sku": "VELO-F10",
+       "name": "Velo Freeze 10mg",
+       "brand": "Velo",
+       "quantity": 2,
+       "unit_price_cents": 500,
+       "subtotal_cents": 1000,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 1000
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 1000,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 130,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 1130,
+      "items_raw": 10,
+      "discount_raw": 0,
+      "tax_raw": 1.3
+     },
+     "packing": {
+      "state": "cancelled",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "refund.issued",
+   "version": 1,
+   "key": "01a1270b-9c9f-72aa-a79b-1643f3e87684",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.847Z",
+   "data": {
+    "by": "admin",
+    "change": "issued",
+    "refund": {
+     "refund_uid": "01a1270b-9c9f-72a9-8ab8-bbb285cba257",
+     "number": 2,
+     "order_uid": "01a1270b-9c7d-74b0-9ddc-dad1e8db3d83",
+     "order_number": 10,
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "kind": "refund",
+     "amount_cents": 1000,
+     "amount_raw": 10,
+     "items": [],
+     "reason": "Two tins dented",
+     "issued_by": "admin",
+     "created_at": "2026-10-10T18:20:34.000Z",
+     "method": "cash",
+     "return_uid": null
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-9ca2-749a-8620-19d2ac6be902",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.850Z",
+   "data": {
+    "by": "admin",
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-9ca1-7362-a6e1-6fb4abd3e42c",
+     "number": 9,
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "order_uid": "01a1270b-9c87-7229-af2f-4fd0e0fcf8c4",
+     "order_number": 12,
+     "amount_cents": 1500,
+     "method": "etransfer",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": null,
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:34.000Z"
+    }
+   }
+  },
+  {
+   "name": "refund.issued",
+   "version": 1,
+   "key": "01a1270b-9ca4-714a-b8d3-d0c909c01b19",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.852Z",
+   "data": {
+    "by": "admin",
+    "change": "issued",
+    "refund": {
+     "refund_uid": "01a1270b-9ca4-7149-8a4a-a5a8e361e865",
+     "number": 3,
+     "order_uid": "01a1270b-9c87-7229-af2f-4fd0e0fcf8c4",
+     "order_number": 12,
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "kind": "store_credit",
+     "amount_cents": 500,
+     "amount_raw": 5,
+     "items": [],
+     "reason": "Goodwill",
+     "issued_by": "admin",
+     "created_at": "2026-10-10T18:20:34.000Z",
+     "method": null,
+     "return_uid": null
+    }
+   }
+  },
+  {
+   "name": "payments.unmatched",
+   "version": 1,
+   "key": "01a1270b-9ded-754c-a247-d19ec8877de6",
+   "source": "wom",
+   "time": "2026-10-10T18:20:35.181Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "count": 2,
+    "total_cents": 16500,
+    "oldest_at": "2026-10-01T14:00:00.000Z",
+    "suggested_count": 0,
+    "suggested_total_cents": 0,
+    "page": "/customers/etransfers"
+   }
+  },
+  {
+   "name": "payments.unmatched",
+   "version": 1,
+   "key": "01a1270b-9f23-701e-983a-22f6a0b7b370",
+   "source": "wom",
+   "time": "2026-10-10T18:20:35.491Z",
+   "data": {
+    "by": "admin",
+    "count": 1,
+    "total_cents": 12500,
+    "oldest_at": "2026-10-01T14:00:00.000Z",
+    "suggested_count": 0,
+    "suggested_total_cents": 0,
+    "page": "/customers/etransfers"
+   }
+  },
+  {
+   "name": "payments.unmatched",
+   "version": 1,
+   "key": "01a1270c-6647-730f-a3c8-9e87fa834d81",
+   "source": "wom",
+   "time": "2026-10-10T18:21:26.471Z",
+   "data": {
+    "by": "admin",
+    "count": 1,
+    "total_cents": 12500,
+    "oldest_at": "2026-10-01T14:00:00.000Z",
+    "suggested_count": 0,
+    "suggested_total_cents": 0,
+    "page": "/customers/etransfers",
+    "stopped": true
+   }
+  }
+ ],
+ "pnl": {
+  "days": {
+   "2026-08-26": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-08-27": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-08-28": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-08-29": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-08-30": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-08-31": {
+    "revenue": 130,
+    "cogs": 80,
+    "gross_profit": 50,
+    "gross_margin": 38.5,
+    "shipping_collected": 0,
+    "tax_collected": 16.9,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 130,
+    "net_profit": 50,
+    "net_margin": 38.5,
+    "total_orders": 1,
+    "avg_order_value": 130
+   },
+   "2026-09-01": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-02": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-03": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-04": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-05": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-06": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-07": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-08": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-09": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-10": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-11": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-12": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-13": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-14": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-15": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-16": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-17": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-18": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-19": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-20": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-21": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-22": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-23": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-24": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-25": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-26": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-27": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-28": {
+    "revenue": 90,
+    "cogs": 56,
+    "gross_profit": 34,
+    "gross_margin": 37.8,
+    "shipping_collected": 0,
+    "tax_collected": 11.7,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 90,
+    "net_profit": 34,
+    "net_margin": 37.8,
+    "total_orders": 1,
+    "avg_order_value": 90
+   },
+   "2026-09-29": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-09-30": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-10-01": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-10-02": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-10-03": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-10-04": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-10-05": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-10-06": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-10-07": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-10-08": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   },
+   "2026-10-09": {
+    "revenue": 21,
+    "cogs": 12,
+    "gross_profit": 9,
+    "gross_margin": 42.9,
+    "shipping_collected": 0,
+    "tax_collected": 2.73,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 21,
+    "net_profit": 9,
+    "net_margin": 42.9,
+    "total_orders": 1,
+    "avg_order_value": 21
+   },
+   "2026-10-10": {
+    "revenue": 438.91,
+    "cogs": 224,
+    "gross_profit": 214.91,
+    "gross_margin": 49,
+    "shipping_collected": 0,
+    "tax_collected": 55.66,
+    "discounts_given": 10.79,
+    "refunds_issued": 19.78,
+    "credit_notes_issued": 13,
+    "net_revenue": 395.34,
+    "net_profit": 171.34,
+    "net_margin": 43.3,
+    "total_orders": 11,
+    "avg_order_value": 39.9
+   },
+   "2026-10-11": {
+    "revenue": 0,
+    "cogs": 0,
+    "gross_profit": 0,
+    "gross_margin": 0,
+    "shipping_collected": 0,
+    "tax_collected": 0,
+    "discounts_given": 0,
+    "refunds_issued": 0,
+    "credit_notes_issued": 0,
+    "net_revenue": 0,
+    "net_profit": 0,
+    "net_margin": 0,
+    "total_orders": 0,
+    "avg_order_value": 0
+   }
+  },
+  "range": {
+   "from": "2026-08-26",
+   "to": "2026-10-11",
+   "summary": {
+    "revenue": 679.91,
+    "cogs": 372,
+    "gross_profit": 307.91,
+    "gross_margin": 45.3,
+    "shipping_collected": 0,
+    "tax_collected": 86.99,
+    "discounts_given": 10.79,
+    "refunds_issued": 19.78,
+    "credit_notes_issued": 13,
+    "net_revenue": 636.34,
+    "net_profit": 264.34,
+    "net_margin": 41.5,
+    "total_orders": 14,
+    "avg_order_value": 48.57
+   }
+  }
+ }
+}

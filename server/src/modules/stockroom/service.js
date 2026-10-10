@@ -395,6 +395,30 @@ export function createStockroomService(ctx) {
     };
   }
 
+  /**
+   * D11 (the overview's "low stock"): the products Stockroom's last order-soon answer says to reorder (a suggested
+   * quantity above 0), most urgent first — the same list the reorder tasks are made from. → { state, asOf, fetchedAt,
+   * items: [{ sku, name, brand, supplier, suggestedQty, daysLeft, runsOutOn, available, onOrder, status }] };
+   * state: not_connected | revoked | not_read (nothing read yet) | paused (the last answer, not read again while paused) | ok.
+   */
+  function lowStock() {
+    const row = q.connection.get();
+    if (!row) return { state: 'not_connected', asOf: null, fetchedAt: null, items: [] };
+    const o = snapshot('order-soon');
+    const paused = handle?.isPaused() ?? false;
+    const state = row.revoked_at ? 'revoked' : !o ? 'not_read' : paused ? 'paused' : 'ok';
+    if (!o) return { state, asOf: null, fetchedAt: null, items: [] };
+    const num = (v) => (Number.isFinite(v) ? v : null);
+    const items = [...reorderGroups(o.body).values()].flatMap((g) => g.items.map((i) => ({
+      sku: i.sku ?? null, name: i.name ?? null, brand: i.brand ?? null, supplier: g.supplier, suggestedQty: i.suggested_qty,
+      daysLeft: num(i.days_left), runsOutOn: typeof i.runs_out_on === 'string' ? i.runs_out_on : null,
+      available: num(i.available), onOrder: num(i.on_order), status: i.status ?? null,
+    })));
+    const days = (i) => (i.daysLeft === null ? Infinity : i.daysLeft);
+    items.sort((a, b) => days(a) - days(b) || String(a.name ?? a.sku).localeCompare(String(b.name ?? b.sku)));
+    return { state, asOf: o.asOf ?? null, fetchedAt: o.fetchedAt ?? null, items };
+  }
+
   // ---- the Connections row ----------------------------------------------------------------------
   function describe() {
     const row = q.connection.get();
@@ -454,5 +478,5 @@ export function createStockroomService(ctx) {
   };
   if (automations && planner) registerStockroomAutomations({ automations, planner, store, clock });
 
-  return { connect, forget, connectionInfo, pullRound, pullNow, startPuller, snapshot, lists, describe, store };
+  return { connect, forget, connectionInfo, pullRound, pullNow, startPuller, snapshot, lists, lowStock, describe, store };
 }

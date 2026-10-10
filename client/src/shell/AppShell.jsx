@@ -44,7 +44,8 @@ export default function AppShell({ children }) {
       </main>
 
       <nav className="shell-tabbar" aria-label="Main">
-        {navItems.map((item) => (
+        {/* D11: entries with phone: false (the overview) stay off the phone's tab bar — it has eight already. */}
+        {navItems.filter((item) => item.phone !== false).map((item) => (
           <NavLink key={item.id} to={item.path} end={item.path === '/'} className={linkClass('shell-tab')}>
             <span className="shell-tab-icon">
               <Icon name={item.icon} size={22} />

@@ -630,3 +630,16 @@
 .planner-focus-actions > button {
   flex: 1 1 90px;
 }
+/* D11: the overview's link on Today — phones only (on a Mac it is in the sidebar). */
+.today-overview-link {
+  display: none;
+}
+@media (max-width: 767px) {
+  .today-overview-link {
+    display: flex;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0 var(--space-3);
+  }
+}
