@@ -484,7 +484,9 @@ test('two devices win the same lead offline: "Won twice" is found on both; Remov
   const plan = extraWinPlan(extras[0], await fixData(mac.engine), leadId);
   assert.deepEqual(plan.remove.map((r) => [r.entity, r.id]), [['client', macClient]]);
   assert.deepEqual(plan.left, []);
-  const result = await removeExtraWins(mac.engine, lead, extras, await fixData(mac.engine));
+  const result = await removeExtraWins(mac.engine, leadId);
+  assert.deepEqual(result.removed.map((r) => r.id), [macClient]);
+  assert.deepEqual(result.kept, []);
   assert.ok(result.settled >= 2, 'the lead’s clashes (won_client_id, won_relationship_id…) were settled');
   assert.ok(row(server.db, 'crm_clients', macClient).deleted_at, 'the extra client is gone');
   assert.equal(row(server.db, 'crm_clients', phoneClient).deleted_at, null);
@@ -498,7 +500,7 @@ test('two devices win the same lead offline: "Won twice" is found on both; Remov
   assert.equal(after.extras.length, 0, 'no longer won twice, on the other device too');
 });
 
-test('won twice: an extra client someone added to since is left, with what was added, and a note on its timeline says so', async (t) => {
+test('won twice: an extra client someone added to since is left, with what was added; nothing is removed or noted, however often', async (t) => {
   const { server, mac, leadId, macClient } = await winTwice(t);
   await mac.engine.create('activity', { client_id: macClient, type: 'note', body: 'Booked the kickoff', at: NOW });
   await mac.engine.syncNow();
@@ -511,9 +513,56 @@ test('won twice: an extra client someone added to since is left, with what was a
   const plan = extraWinPlan(extras[0], await fixData(mac.engine), leadId);
   assert.deepEqual(plan.remove, []);
   assert.match(plan.left[0], /The client “Golf Garage” stays: 1 timeline entry/);
-  const result = await removeExtraWins(mac.engine, lead, extras, await fixData(mac.engine));
-  assert.deepEqual(result.removed, []);
+  // Nothing to take back: the page offers no button (only the reasons); if called anyway, nothing is removed and no
+  // note is written — pressing again repeats nothing.
+  for (let i = 0; i < 2; i += 1) {
+    const result = await removeExtraWins(mac.engine, leadId);
+    assert.deepEqual(result.removed, []);
+  }
   assert.equal(row(server.db, 'crm_clients', macClient).deleted_at, null, 'kept: something was added to it');
-  const note = server.db.prepare("SELECT body FROM crm_activities WHERE client_id = ? AND type = 'note' AND body LIKE 'The lead%'").get(macClient);
-  assert.match(note.body, /won on two devices at once; this is the extra win, left as it is: The client “Golf Garage” stays: 1 timeline entry\./);
+  assert.equal(count(server.db, "SELECT count(*) AS n FROM crm_activities WHERE client_id = ? AND body LIKE 'The lead%'", macClient), 0);
+});
+
+test('won twice: an unsent edit on this device counts — Remove the extra syncs and re-reads first, and the client stays', async (t) => {
+  const { server, mac, leadId, macClient } = await winTwice(t);
+  mac.online = false;
+  await mac.engine.update('client', macClient, { notes: 'Wants a quote for signage too' }); // offline, not sent
+  const lead = await mac.engine.get('lead', leadId);
+  const { extras } = leadWins(lead, await mac.engine.list('lead_activity'), {
+    clientsById: new Map((await mac.engine.list('client')).map((c) => [c.id, c])),
+    relationshipsById: new Map((await mac.engine.list('relationship')).map((r) => [r.id, r])),
+  });
+  const plan = extraWinPlan(extras[0], await fixData(mac.engine), leadId);
+  assert.deepEqual(plan.remove, [], 'the pending edit is an edit');
+  assert.match(plan.left[0], /the client “Golf Garage” was edited/);
+  mac.online = true;
+  const result = await removeExtraWins(mac.engine, leadId);
+  assert.deepEqual(result.removed, []);
+  const c = row(server.db, 'crm_clients', macClient);
+  assert.deepEqual([c.deleted_at, c.notes], [null, 'Wants a quote for signage too']);
+});
+
+test('won twice: a removal the server undoes (edited on the other device meanwhile) is reported "Kept" and noted', async (t) => {
+  const { server, mac, phone, leadId, macClient } = await winTwice(t);
+  // The phone edits the Mac's extra client while the Mac hasn't seen it: the Mac's delete then clashes and is kept.
+  phone.online = false;
+  await phone.engine.update('client', macClient, { notes: 'Called them about the logo' });
+  const engine = {
+    ...mac.engine,
+    get: mac.engine.get, list: mac.engine.list, listMany: mac.engine.listMany, remove: mac.engine.remove, create: mac.engine.create,
+    resolveClash: mac.engine.resolveClash,
+    // The phone's edit reaches the server between the Mac's first sync and its removal.
+    syncNow: async (reason) => {
+      const r = await mac.engine.syncNow(reason);
+      if (!phone.online) { phone.online = true; await phone.engine.syncNow(); }
+      return r;
+    },
+  };
+  const result = await removeExtraWins(engine, leadId);
+  assert.deepEqual(result.removed, []);
+  assert.deepEqual(result.kept.map((r) => r.id), [macClient]);
+  assert.match(result.left.join(' '), /Kept: Golf Garage was changed on the other device\./);
+  assert.equal(row(server.db, 'crm_clients', macClient).deleted_at, null);
+  const note = server.db.prepare("SELECT body FROM crm_activities WHERE client_id = ? AND body LIKE 'The lead%'").get(macClient);
+  assert.match(note.body, /kept, because it was changed on the other device: Golf Garage/);
 });

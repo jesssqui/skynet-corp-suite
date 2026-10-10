@@ -2112,14 +2112,20 @@ planner's Today, Tasks, task sheet and inbox. Tests `server/test/leads.test.js` 
 - **Won twice (review fix)**: two devices winning the same lead offline each make their win (two clients, or two
   relationships); the lead's own fields clash and the later win is the one it names. `leadWins` finds it from the win
   rows whose client (and relationship) are still on the device: more than one = **won twice**. Shown on the lead page and
-  on **both** clients' Leads cards (`WonTwice`, with links to each client): **Remove the extra** (needs a connection)
-  takes back each extra win (`extraWinPlan` → `removeExtraWins`, D2's undo in spirit, on the device): the client it made
-  is deleted (its account, contact, relationship and milestone go with it, hidden) only if none of them was edited and
-  nothing else was added — another account or contact, a timeline entry, a service, consent, a link, a task naming
-  them, a resold cost, an Order Manager customer, another lead; else the account it made, else the relationship (and a
-  contact it made). Whatever stays is listed with why and a note goes on that client's timeline (the milestone is
-  append-only). Then the removals are synced and the lead's clashes settled keep_winner (the win it names). A win
-  vs a lost (or another move) is a stage clash, settled with `StageClash`; its client then stays for a person to judge.
+  on **both** clients' Leads cards (`WonTwice`, with links to each client). **Remove the extra** (needs a connection)
+  takes back each extra win (`extraWinPlan` → `removeExtraWins(engine, leadId)`, D2's undo in spirit, on the device): the
+  client it made is deleted (its account, contact, relationship and milestone go with it, hidden) only if none of them
+  was edited and nothing else was added — another account or contact, a timeline entry, a service, consent, a link, a
+  task naming them, a resold cost, an Order Manager customer, another lead; else the account it made, else the
+  relationship (and a contact it made). **"Edited" includes this device's unsent changes** (`_sync.pending` / `local`),
+  and it **syncs and re-reads before planning** (re-review fix: an offline edit to the extra client keeps it). After the
+  removals it syncs again and **re-reads each removed record**: one the server kept (edited on the other device
+  meanwhile — a delete-vs-edit clash keeps it, flagged) is reported "Kept: … was changed on the other device". A note
+  goes on a client that stays only when something was removed from it or its removal was undone, saying which (the
+  milestone is append-only). The button is **offered only when the plan removes something**; otherwise the card just
+  lists what stays and why ("tidy it by hand") — no button, so no repeated note. Then the lead's clashes are settled
+  keep_winner (the win it names). A win vs a lost (or another move) is a stage clash, settled with `StageClash`, which
+  says that using the other stage over a win leaves the client it made (for a person to judge).
 - **Value**: an amount per period; the pipeline adds **first-year value** (`firstYearValue`: once × 1, monthly × 12,
   quarterly × 4, yearly × 1) **per currency** (never across currencies, as D6).
 

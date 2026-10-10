@@ -411,7 +411,10 @@ export function leadWins(lead, leadActivities, { clientsById = new Map(), relati
 }
 const sameWin = (a, b) => a.won_client_id === b.won_client_id && a.won_relationship_id === b.won_relationship_id;
 
-const changedSince = (r) => Boolean(r?._sync?.updatedAt && r?._sync?.createdAt && r._sync.updatedAt !== r._sync.createdAt);
+// Edited since it was made: on the server (pulled times differ), or with a change here not sent yet (review fix:
+// this device's own unsent edit counts; a record still `local` — made here, never sent — is waiting too).
+const changedSince = (r) => Boolean(r?._sync?.pending || r?._sync?.local
+  || (r?._sync?.updatedAt && r?._sync?.createdAt && r._sync.updatedAt !== r._sync.createdAt));
 
 /**
  * What taking back an extra win does, on the device's copy (D2's undo in spirit): remove what the win
@@ -504,18 +507,40 @@ export function extraWinPlan(row, d, leadId) {
   return { remove, left, noteOn: row.won_client_id };
 }
 
+const WIN_FIX_ENTITIES = ['client', 'account', 'contact', 'relationship', 'service', 'consent', 'activity', 'link', 'task',
+  'recurring_cost', 'wholesale_customer', 'lead'];
+
+/** What extraWinPlan reads, from the device's copy (unsent changes included). */
+export async function winFixData(engine) {
+  const l = await engine.listMany(WIN_FIX_ENTITIES);
+  return {
+    clients: l.client, accounts: l.account, contacts: l.contact, relationships: l.relationship, services: l.service, consents: l.consent,
+    activities: l.activity, links: l.link, tasks: l.task, costs: l.recurring_cost, wholesaleCustomers: l.wholesale_customer, leads: l.lead,
+  };
+}
+
 /**
- * Take back the extra wins of a lead won twice: for each, carry out extraWinPlan (removals; a note on a
- * client that stays, since its milestone can't be deleted), send that, then settle the lead's open clashes
- * keeping the win it names. Needs a connection (settling clashes does).
- * @param {{ remove, create, syncNow, resolveClash, get }} engine
- * @returns {Promise<{ removed: object[], left: string[], settled: number }>}
+ * Take back the extra wins of a lead won twice. First syncs and re-reads (so what the other device and this
+ * one did meanwhile counts), plans each extra (extraWinPlan) and removes what it may, syncs again and
+ * re-reads each removed record: one the server kept (changed on the other device: a delete-vs-edit clash
+ * keeps it) is reported "Kept". A note goes on a client that stays and lost something (or whose removal was
+ * undone) — never when nothing was removed, so pressing again repeats nothing. Then the lead's clashes are
+ * settled keep_winner (the win it names). Needs a connection (settling clashes does).
+ * @param {{ remove, create, get, list, listMany, syncNow, resolveClash }} engine
+ * @returns {Promise<{ removed: object[], kept: object[], left: string[], settled: number }>}
  */
-export async function removeExtraWins(engine, lead, extras, d, { now = nowIso() } = {}) {
-  const removed = [];
-  const left = [];
+export async function removeExtraWins(engine, leadId, { now = nowIso() } = {}) {
+  await engine.syncNow('won-twice');
+  const lead = await engine.get('lead', leadId);
+  if (!lead) return { removed: [], kept: [], left: [], settled: 0 };
+  const d = await winFixData(engine);
+  const { extras } = leadWins(lead, await engine.list('lead_activity'), {
+    clientsById: new Map(d.clients.map((c) => [c.id, c])), relationshipsById: new Map(d.relationships.map((r) => [r.id, r])),
+  });
+  const done = [];
   for (const row of extras) {
     const plan = extraWinPlan(row, d, lead.id);
+    const removed = [];
     for (const r of plan.remove) {
       try {
         await engine.remove(r.entity, r.id);
@@ -524,25 +549,37 @@ export async function removeExtraWins(engine, lead, extras, d, { now = nowIso() 
         if (err?.code !== 'not_found') throw err; // already gone
       }
     }
-    left.push(...plan.left);
-    if (plan.noteOn && (await engine.get('client', plan.noteOn))) {
+    done.push({ plan, removed });
+  }
+  await engine.syncNow('won-twice'); // the removals reach the server before anything is reported or settled
+  const out = { removed: [], kept: [], left: [], settled: 0 };
+  for (const { plan, removed } of done) {
+    const gone = [];
+    const back = [];
+    for (const r of removed) ((await engine.get(r.entity, r.id)) ? back : gone).push(r);
+    out.removed.push(...gone);
+    out.kept.push(...back);
+    out.left.push(...plan.left, ...back.map((r) => `Kept: ${r.name} was changed on the other device.`));
+    const noteOn = back.find((r) => r.entity === 'client')?.id ?? (gone.length || back.length ? plan.noteOn : null);
+    if (noteOn && (await engine.get('client', noteOn))) {
+      const parts = [];
+      if (gone.length) parts.push(`taken back: ${gone.map((r) => r.name).join(', ')}`);
+      if (back.length) parts.push(`kept, because it was changed on the other device: ${back.map((r) => r.name).join(', ')}`);
+      if (plan.left.length) parts.push(plan.left.join(' '));
       await engine.create('activity', {
-        client_id: plan.noteOn, business_id: lead.business_id, type: 'note', at: now,
-        body: plan.remove.length
-          ? `The lead “${lead.name}” was won on two devices at once; this second win was taken back${plan.left.length ? ` (${plan.left.join(' ')})` : ''}.`
-          : `The lead “${lead.name}” was won on two devices at once; this is the extra win, left as it is: ${plan.left.join(' ')} The lead names the other one.`,
+        client_id: noteOn, business_id: lead.business_id, type: 'note', at: now,
+        body: `The lead “${lead.name}” was won on two devices at once; its extra win here was ${parts.join('; ')}.`,
       });
     }
   }
-  await engine.syncNow('won-twice'); // the removals reach the server before the clashes are settled
+  await engine.syncNow('won-twice');
   const fresh = await engine.get('lead', lead.id);
-  let settled = 0;
   const leadClashes = (fresh?._sync?.clashes ?? []).filter((c) => c.kind === 'field' && !c.resolved && (LEAD_STAGE_FIELDS.includes(c.field) || c.field === 'kind'));
   for (const c of leadClashes) {
     await engine.resolveClash(c.id, 'keep_winner'); // the lead keeps the win it names
-    settled += 1;
+    out.settled += 1;
   }
-  return { removed, left, settled };
+  return out;
 }
 
 /**

@@ -8,7 +8,7 @@ import { Button, Notice } from '../../ui/index.js';
 import { useSyncEngine, useSyncStatus } from '../../sync/hooks.js';
 import { useAuth } from '../../auth/session.jsx';
 import { leadNeedsLook } from '@suite/shared/leads';
-import { leadWins, removeExtraWins, stageClashes, settleStageClashes, STAGE_LABELS } from './leads.js';
+import { leadWins, extraWinPlan, removeExtraWins, stageClashes, settleStageClashes, STAGE_LABELS } from './leads.js';
 import { useWinFixData } from './data.js';
 import { errorText } from './logic.js';
 
@@ -34,12 +34,15 @@ export function WonTwice({ lead, leadActivities, clientsById, relationshipsById,
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [done, setDone] = useState(null);
+  // What Remove the extra would do, on this device's copy (unsent edits count as edits): offered only when it
+  // removes something; otherwise what stays is just said (review fix: no button, so no repeated note).
+  const plans = useMemo(() => (fixData ? extras.map((row) => extraWinPlan(row, fixData, lead.id)) : []), [fixData, extras, lead.id]);
   if (extras.length === 0 && !done) return null;
   if (done) {
     return (
       <Notice tone="info">
         <span data-testid="won-twice-done">
-          {done.removed.length ? `Took back the extra win (${done.removed.map((r) => r.name).join(', ')}).` : 'Nothing could be taken back.'}
+          {done.removed.length ? `Took back the extra win (${done.removed.map((r) => r.name).join(', ')}).` : 'Nothing was taken back.'}
           {done.left.length ? ` ${done.left.join(' ')}` : ''}
         </span>
       </Notice>
@@ -53,7 +56,7 @@ export function WonTwice({ lead, leadActivities, clientsById, relationshipsById,
     setBusy(true);
     setError(null);
     try {
-      setDone(await removeExtraWins(engine, lead, extras, fixData));
+      setDone(await removeExtraWins(engine, lead.id));
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -68,12 +71,18 @@ export function WonTwice({ lead, leadActivities, clientsById, relationshipsById,
           It was won on two devices at once, so it was won into {wins.map((w, i) => <span key={w.id}>{i ? ' and ' : ''}{clientLink(w)}</span>)}.
           {kept ? <> The lead keeps {clientLink(kept)}{kept.won_relationship_id && extras.some((x) => x.won_client_id === kept.won_client_id) ? ' (one of its two relationships)' : ''}.</> : null}
         </span>
-        <span style={muted}>Remove the extra takes back what the other win made — only if nothing was added to it since; anything else stays and is listed.</span>
-        <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
-          <Button variant="primary" disabled={busy || offline || !fixData || !kept} onClick={fix}>Remove the extra</Button>
-          {offline ? <span style={muted}>Needs a connection.</span> : null}
-          {!kept && !offline ? <span style={muted}>Settle the lead’s stage first (which win it keeps).</span> : null}
-        </div>
+        {plans.some((p) => p.remove.length) ? (
+          <>
+            <span style={muted}>Remove the extra takes back what the other win made — only if nothing was added to it since; anything else stays and is listed.</span>
+            <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
+              <Button variant="primary" disabled={busy || offline || !kept} onClick={fix}>Remove the extra</Button>
+              {offline ? <span style={muted}>Needs a connection.</span> : null}
+              {!kept && !offline ? <span style={muted}>Settle the lead’s stage first (which win it keeps).</span> : null}
+            </div>
+          </>
+        ) : null}
+        {plans.flatMap((p) => p.left).map((text) => <span key={text} style={muted} data-testid="won-twice-stays">{text}</span>)}
+        {plans.length && !plans.some((p) => p.remove.length) ? <span style={muted}>Nothing here can be taken back automatically: tidy it by hand.</span> : null}
         {error ? <span role="alert" style={{ color: 'var(--danger)' }}>{error}</span> : null}
       </div>
     </Notice>
@@ -120,6 +129,9 @@ export function StageClash({ lead }) {
           <Button disabled={busy || offline} onClick={() => settle('keep_loser')}>Use {other} instead</Button>
           {offline ? <span style={muted}>Settling this needs a connection.</span> : null}
         </div>
+        {lead.stage === 'won' && stage.loser?.value !== 'won' ? (
+          <span style={muted} data-testid="stage-clash-win-stays">Using {other} instead: the client it made stays (tidy it by hand if it shouldn’t).</span>
+        ) : null}
         {error ? <span role="alert" style={{ color: 'var(--danger)' }}>{error}</span> : null}
       </div>
     </Notice>
