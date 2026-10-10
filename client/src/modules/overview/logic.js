@@ -19,11 +19,11 @@ const WHOSE = { mine: 'Yours', partner: 'Your partner’s', shared: 'Shared list
  */
 export const SECTIONS = Object.freeze({
   overdue: { title: 'Overdue tasks', link: '/tasks?due=overdue', linkText: 'All overdue tasks', empty: 'Nothing overdue.' },
-  balances: { title: 'Wholesale balances over 30 days', link: '/wholesale?tab=linked', linkText: 'Order Manager customers', empty: 'Nothing owed over 30 days.' },
+  balances: { title: 'Wholesale balances over 30 days', link: '/wholesale', linkText: 'Order Manager customers', empty: 'Nothing owed over 30 days.' },
   renewals: { title: 'Renewals and retainers in the next 30 days', link: '/costs', linkText: 'Costs', empty: 'Nothing renews in the next 30 days.' },
   lowStock: { title: 'Low stock', link: `/tasks?business=${BUSINESS_IDS.wholesale}`, linkText: 'Wholesale tasks (reorders)', empty: 'Nothing to reorder, as Stockroom last said.' },
   support: { title: 'Support emails unanswered after 24 hours', link: null, linkText: null, empty: '' },
-  payments: { title: 'Payments with no order to go against', link: '/wholesale?tab=linked', linkText: 'Order Manager customers', empty: 'None: every payment has an order to go against.' },
+  payments: { title: 'Payments with no matching order', link: '/wholesale', linkText: 'Order Manager customers', empty: 'None: every payment has an order to go against.' },
   noNextStep: { title: 'No next step', link: '/crm/pipeline', linkText: 'Pipeline', empty: 'Every active relationship and open lead has a dated next step.' },
   quiet: { title: 'Clients gone quiet', link: '/crm', linkText: 'Clients', empty: 'No active client has gone quiet.' },
 });
@@ -45,8 +45,23 @@ export function stateNote(section) {
   }
 }
 
-/** The extra line under the payments section: what the suite can't see. */
-export const PAYMENTS_NOTE = 'E-transfers that matched no customer wait in the Order Manager (Customers → E-transfers): it doesn’t send them to the suite.';
+/**
+ * The payments section's first line: the Order Manager's e-Transfers that matched no customer or order (its
+ * `payments.unmatched`, sent only while its switch is on) — dealt with there, on its page (the suite doesn't know the
+ * Order Manager's address, so the page is named, not linked). null → `unmatchedMissing`.
+ */
+export function unmatchedLine(u, fmt = { date: (d) => d }) {
+  if (!u) return null;
+  if (!u.count) return { text: 'No e-Transfers waiting unmatched in the Order Manager', detail: '', tone: null };
+  const oldest = u.oldestAt ? ` · the oldest from ${fmt.date(String(u.oldestAt).slice(0, 10))}` : '';
+  return {
+    text: `${plural(u.count, 'e-Transfer')} with no matching order in the Order Manager: ${money(u.totalCents)}`,
+    detail: `Record or dismiss ${u.count === 1 ? 'it' : 'them'} there: Customers → E-transfers${u.page ? ` (${u.page})` : ''}${oldest}`,
+    tone: 'danger',
+  };
+}
+/** Under the payments section when the Order Manager hasn't sent its count (its switch is off, or an older version). */
+export const UNMATCHED_MISSING = 'E-transfers that matched no customer: the Order Manager hasn’t sent its count — turn on “Send unmatched e-Transfer count to the suite” there (Settings → Integrations → Suite connection).';
 
 /**
  * One item of a section → { key, text, detail, link, tone? }. `fmt` = { date(ymd) } (the page passes formatDate).
@@ -84,7 +99,7 @@ export function itemLine(sectionId, item, fmt = { date: (d) => d }) {
     case 'payments':
       return {
         key: item.id, text: `${item.name}: ${money(item.unusedCents)} paid beyond every order`, link: item.clientId ? `/crm/clients/${item.clientId}` : '/wholesale',
-        detail: 'Paid on account before ordering, paid twice, or paid on an order since cancelled — refund it or apply it there',
+        detail: `No order for 30 days${item.lastPaymentAt ? `, last paid ${day(String(item.lastPaymentAt).slice(0, 10))}` : ''}: paid twice, ahead, or on an order since cancelled — refund it or apply it in the Order Manager${item.clientId ? '' : ' · not linked to a client'}`,
       };
     case 'noNextStep':
       if (item.kind === 'lead') return { key: `lead:${item.id}`, text: `Lead: ${item.name}`, link: `/crm/leads/${item.id}`, detail: [item.business, item.stage ? STAGES[item.stage] ?? item.stage : null].filter(Boolean).join(' · ') };
@@ -110,6 +125,7 @@ export function summaryText(section) {
     case 'renewals': return section.count ? `${plural(section.services ?? 0, 'client service')}, ${plural(section.costs ?? 0, 'of our costs', 'of our costs')}` : '';
     case 'noNextStep': return section.count ? `${plural(section.relationships ?? 0, 'relationship')}, ${plural(section.leads ?? 0, 'lead')}` : '';
     case 'quiet': return section.count ? `Active clients with nothing for ${section.days ?? 60} days (a note, a call, an order)` : '';
+    case 'payments': return section.count && section.customers ? `${plural(section.customers, 'customer')} paid beyond their orders (regular depositors left out)` : '';
     default: return '';
   }
 }
@@ -133,9 +149,14 @@ export function restText(section, shown) {
   return null;
 }
 
-/** The headline count: sections that can be read and have something, plus this device's changes it couldn't save. */
-export function attentionTotal(attention, syncAttention = 0) {
-  return (attention ?? []).reduce((a, s) => a + (s.state !== 'not_connected' && s.count ? s.count : 0), 0) + (syncAttention || 0);
+/**
+ * Review fix: the sections the headline adds up — the urgent ones. "No next step" and "Clients gone quiet" are standing
+ * lists (thousands with an imported client list) with their own counts, left out so the headline stays meaningful.
+ */
+export const URGENT = Object.freeze(['overdue', 'balances', 'renewals', 'lowStock', 'support', 'payments']);
+/** The headline count: urgent sections that can be read and have something, plus this device's changes it couldn't save. */
+export function attentionTotal(attention, syncAttention = 0, urgent = URGENT) {
+  return (attention ?? []).reduce((a, s) => a + (urgent.includes(s.id) && s.state !== 'not_connected' && s.count ? s.count : 0), 0) + (syncAttention || 0);
 }
 
 /** A business's line in the sales strip when a figure is entered by hand only ("incl. entered by hand"). */

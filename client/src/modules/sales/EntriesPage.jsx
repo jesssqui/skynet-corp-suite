@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { newId } from '@suite/shared/ids';
+import { byHandAllowed } from '@suite/shared/sales';
 import { api } from '../../api/client.js';
 import { useServerData } from '../../api/useServerData.js';
 import { PageHeader, Card, Notice, EmptyState, Button, TextField, SelectField, TextAreaField, Segmented, Sheet, Badge } from '../../ui/index.js';
@@ -37,7 +38,9 @@ function EntrySheet({ entry, businesses, initialBusiness, offline, onClose, onSa
   const wrong = entryProblem(form, { today: null });
   const set = (k) => (v) => { setTouched(true); setForm((f) => ({ ...f, [k]: v })); };
   const errorFor = (field) => (touched && wrong?.field === field ? wrong.text : undefined);
-  const options = businesses.filter((b) => !b.archived || b.id === form.businessId).map((b) => ({ value: b.id, label: b.name }));
+  // Review fix: only businesses whose sales come from no connection (not Wholesale, Save Point Shop, the retail stores
+  // or Personal: they would count twice), not archived — an entry already on one keeps it.
+  const options = businesses.filter((b) => byHandAllowed(b) || b.id === entry?.businessId).map((b) => ({ value: b.id, label: b.name }));
 
   async function save() {
     setTouched(true);
@@ -46,7 +49,18 @@ function EntrySheet({ entry, businesses, initialBusiness, offline, onClose, onSa
     setProblem(null);
     try {
       const body = entryBody(form);
-      const res = entry ? await api.put(`/api/sales/entries/${entry.id}`, body) : await api.post('/api/sales/entries', { id: id.current, ...body });
+      let res;
+      if (entry) res = await api.put(`/api/sales/entries/${entry.id}`, body);
+      else {
+        try {
+          res = await api.post('/api/sales/entries', { id: id.current, ...body });
+        } catch (err) {
+          // Review fix: a save whose reply was lost, then changed and saved again — the server has this entry under
+          // the id made when the sheet opened: it is the same entry, so change it.
+          if (err.status !== 409 || err.code !== 'exists') throw err;
+          res = await api.put(`/api/sales/entries/${id.current}`, body);
+        }
+      }
       remember(form.businessId);
       onSaved(res.entry);
     } catch (err) {
@@ -94,7 +108,8 @@ function EntrySheet({ entry, businesses, initialBusiness, offline, onClose, onSa
         </div>
         <span style={muted}>A {KIND_LABELS[form.kind].toLowerCase()} {sign}: type the amount as it is on the {form.kind === 'credit_note' ? 'credit note' : form.kind === 'refund' ? 'refund' : 'invoice'}.</span>
         <SelectField id="entry-business" label="Business" value={form.businessId} onChange={set('businessId')}
-          options={[{ value: '', label: 'Pick one…' }, ...options]} error={errorFor('businessId')} />
+          options={[{ value: '', label: 'Pick one…' }, ...options]} error={errorFor('businessId')}
+          hint="Not Wholesale, Save Point Shop or the retail stores: their sales come from their connections (they would count twice)." />
         <TextField id="entry-day" label="Day" type="date" value={form.day} onChange={(e) => set('day')(e.target.value)} error={errorFor('day')} />
         <div className="sales-entry-money">
           <TextField id="entry-amount" label="Amount" inputMode="decimal" placeholder="1234.56" value={form.amount}
@@ -123,6 +138,7 @@ export default function EntriesPage() {
   const bizData = useServerData('/api/crm/businesses', { everyMs: 0 });
   const businesses = useMemo(() => bizData.data?.businesses ?? [], [bizData.data]);
   const names = new Map(businesses.map((b) => [b.id, b.name]));
+  const pickable = businesses.filter(byHandAllowed);
   const [sheet, setSheet] = useState(null); // { entry } | { entry: null }
   const [done, setDone] = useState(null);
   const offline = list.offline || bizData.offline;
@@ -140,7 +156,7 @@ export default function EntriesPage() {
       <PageHeader
         title="Sales entered by hand"
         subtitle="Invoices and anything not connected: they count in Sales and the overview"
-        actions={<Button variant="primary" onClick={() => { setDone(null); setSheet({ entry: null }); }} disabled={offline || !businesses.length} data-testid="entry-add">Enter a sale</Button>}
+        actions={<Button variant="primary" onClick={() => { setDone(null); setSheet({ entry: null }); }} disabled={offline || !pickable.length} data-testid="entry-add">Enter a sale</Button>}
       />
       <p style={{ margin: '0 0 var(--space-4)' }}><Link to="/costs/sales">← All sales</Link></p>
       {offline ? (
@@ -203,7 +219,7 @@ export default function EntriesPage() {
         <EntrySheet
           entry={sheet.entry}
           businesses={businesses}
-          initialBusiness={business || remembered()}
+          initialBusiness={[business, remembered()].find((id) => pickable.some((b) => b.id === id)) ?? ''}
           offline={offline}
           onClose={() => setSheet(null)}
           onSaved={(e) => saved(e, !sheet.entry)}

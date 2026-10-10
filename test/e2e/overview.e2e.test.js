@@ -49,6 +49,36 @@ async function walkThrough(page, server, label) {
   if (phone) assert.ok((await noSideways(page)) <= 0, 'no sideways scrolling on the entries page');
   await shot(page, `d11-entries-${label.toLowerCase()}`);
 
+  // A save whose reply is lost, then changed and saved again: the same entry (409 for the id → changed with PUT).
+  let lost = true;
+  await page.route('**/api/sales/entries', async (route) => {
+    if (route.request().method() === 'POST' && lost) {
+      lost = false;
+      await route.fetch(); // the server saves it …
+      await route.abort('connectionreset'); // … and the reply never comes back
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByTestId('entry-add').click();
+  const sheet = page.getByTestId('entry-sheet');
+  await sheet.getByLabel('Business').selectOption({ label: 'Great White North Design' });
+  await sheet.getByLabel('Amount').fill('300');
+  await sheet.getByRole('button', { name: 'Save' }).click();
+  await sheet.getByRole('alert').filter({ hasText: 'Can’t reach the suite server' }).waitFor(WAIT);
+  await sheet.getByLabel('Amount').fill('350');
+  await sheet.getByRole('button', { name: 'Save' }).click();
+  await sheet.waitFor({ state: 'detached', ...WAIT });
+  await page.unroute('**/api/sales/entries');
+  await rows.filter({ hasText: '$350' }).waitFor(WAIT);
+  assert.equal(await rows.count(), 3, 'one entry, changed — not two');
+  assert.equal(await page.getByTestId('entry-add').isDisabled(), false);
+  // The businesses whose sales come from a connection aren't offered.
+  await page.getByTestId('entry-add').click();
+  const offered = await page.getByTestId('entry-sheet').getByLabel('Business').locator('option').allTextContents();
+  for (const name of ['Wholesale', 'Save Point Shop', 'Retail stores', 'Personal']) assert.ok(!offered.includes(name), `${name} isn’t offered`);
+  await page.getByTestId('entry-sheet').getByRole('button', { name: 'Cancel' }).click();
+
   // Its card on Money → Sales.
   await page.getByRole('link', { name: '← All sales' }).click();
   const card = page.getByTestId('sales-store').filter({ hasText: 'Business consulting' });
@@ -67,7 +97,7 @@ async function walkThrough(page, server, label) {
   const tile = page.getByTestId('overview-business').filter({ hasText: 'Business consulting' });
   await tile.locator('[data-period="today"]').filter({ hasText: '$1,300' }).waitFor(WAIT);
   await tile.getByText('Includes sales entered by hand').waitFor(WAIT);
-  await page.getByTestId('overview-overall').locator('[data-period="today"]').filter({ hasText: '$1,300' }).waitFor(WAIT);
+  await page.getByTestId('overview-overall').locator('[data-period="today"]').filter({ hasText: '$1,650' }).waitFor(WAIT);
   const overdue = page.locator('[data-section="overdue"]');
   await overdue.getByRole('link', { name: /Send the October invoices/ }).waitFor(WAIT);
   assert.equal(await overdue.getAttribute('data-count'), '1');

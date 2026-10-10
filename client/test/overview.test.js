@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { BUSINESS_IDS } from '@suite/shared/crm';
 import {
   SECTIONS, itemLine, stateNote, countText, summaryText, shownCount, moreText, restText, attentionTotal, totalOnlyNote, storesNote,
-  FIRST_ITEMS, MORE_ITEMS, PAYMENTS_NOTE,
+  FIRST_ITEMS, MORE_ITEMS, UNMATCHED_MISSING, unmatchedLine, URGENT,
 } from '../src/modules/overview/logic.js';
 import {
   newEntryForm, entryToForm, entryProblem, entryBody, entryAmountText, sumsText, KIND_OPTIONS, stateText,
@@ -39,7 +39,16 @@ test('item lines: overdue tasks, balances, renewals, low stock, payments, no nex
   const low = itemLine('lowStock', { id: 'ZYN', sku: 'ZYN', name: 'Zyn Cool Mint', suggestedQty: 50, daysLeft: 3.4, runsOutOn: '2026-10-17', supplier: 'Swedish Match' }, { date });
   assert.deepEqual([low.text, low.detail, low.tone, low.link], ['Zyn Cool Mint (ZYN)', 'Order 50 tins · 3 days left (runs out [2026-10-17]) · Swedish Match', 'danger', null]);
   assert.equal(itemLine('lowStock', { id: 'x', name: 'Out', suggestedQty: 1, daysLeft: null, status: 'out' }, { date }).detail, 'Order 1 tin · out of stock');
-  assert.match(itemLine('payments', { id: 'c3', name: 'Bayview', unusedCents: 5000, clientId: null }).text, /^Bayview: \$50 paid beyond every order$/);
+  const pay = itemLine('payments', { id: 'c3', name: 'Bayview', unusedCents: 5000, clientId: null, lastPaymentAt: '2026-09-20T15:00:00.000Z' }, { date });
+  assert.equal(pay.text, 'Bayview: $50 paid beyond every order');
+  assert.equal(pay.link, '/wholesale', 'not linked: the Wholesale page (its Waiting tab)');
+  assert.match(pay.detail, /last paid \[2026-09-20\].*not linked to a client/);
+  assert.equal(unmatchedLine(null), null);
+  assert.deepEqual(unmatchedLine({ count: 0 }), { text: 'No e-Transfers waiting unmatched in the Order Manager', detail: '', tone: null });
+  assert.deepEqual(unmatchedLine({ count: 3, totalCents: 45000, oldestAt: '2026-10-02T13:00:00.000Z', page: '/customers/etransfers' }, { date }), {
+    text: '3 e-Transfers with no matching order in the Order Manager: $450',
+    detail: 'Record or dismiss them there: Customers → E-transfers (/customers/etransfers) · the oldest from [2026-10-02]', tone: 'danger',
+  });
   assert.deepEqual(itemLine('noNextStep', { kind: 'lead', id: 'l1', name: 'Maple Dental', stage: 'talking', business: 'GWND' }), { key: 'lead:l1', text: 'Lead: Maple Dental', link: '/crm/leads/l1', detail: 'GWND · Talking' });
   assert.deepEqual(itemLine('noNextStep', { kind: 'relationship', id: 'r1', accountName: 'Lefty’s Vape Shop', clientId: 'cl1', clientName: 'Lefty’s', business: 'GWND' }).detail, 'GWND · Lefty’s');
   assert.equal(itemLine('quiet', { id: 'cl1', name: 'Lefty’s', since: '2026-07-01' }, { date }).detail, 'Nothing since [2026-07-01]');
@@ -56,7 +65,7 @@ test('states: not connected (the helpdesk names D14), paused, not read, revoked,
   assert.match(stateNote({ id: 'lowStock', state: 'not_read' }), /hasn’t been read/);
   assert.match(stateNote({ id: 'lowStock', state: 'revoked' }), /new code/);
   assert.match(stateNote({ id: 'quiet', state: 'error' }), /try again/);
-  assert.match(PAYMENTS_NOTE, /E-transfers/);
+  assert.match(UNMATCHED_MISSING, /Send unmatched e-Transfer count to the suite/);
 });
 
 test('counts, summaries, paging and the headline total', () => {
@@ -73,9 +82,13 @@ test('counts, summaries, paging and the headline total', () => {
   assert.equal(moreText({ items: items.slice(0, 5), count: 5 }, 5), null);
   assert.equal(restText({ items, count: 130 }, 5), null, 'not before what was sent is shown');
   assert.equal(restText({ items, count: 130 }, 105), 'and 30 more');
-  const attention = [{ id: 'overdue', state: 'ok', count: 3 }, { id: 'support', state: 'not_connected', count: null }, { id: 'quiet', state: 'ok', count: 2 }, { id: 'balances', state: 'paused', count: 1 }];
-  assert.equal(attentionTotal(attention), 6);
-  assert.equal(attentionTotal(attention, 2), 8, 'with this device’s changes it couldn’t save');
+  const attention = [
+    { id: 'overdue', state: 'ok', count: 3 }, { id: 'support', state: 'not_connected', count: null }, { id: 'quiet', state: 'ok', count: 9300 },
+    { id: 'noNextStep', state: 'ok', count: 4100 }, { id: 'balances', state: 'paused', count: 1 },
+  ];
+  assert.equal(attentionTotal(attention), 4, 'quiet clients and no next step have their own counts, not in the headline');
+  assert.equal(attentionTotal(attention, 2), 6, 'with this device’s changes it couldn’t save');
+  assert.ok(!URGENT.includes('quiet') && !URGENT.includes('noNextStep'));
 });
 
 test('sales tiles: entered by hand, stores that can’t be read', () => {
@@ -91,6 +104,7 @@ test('sales entered by hand: the form, its checks, the body, amounts that count 
   assert.deepEqual(f, { kind: 'sale', day: '2026-10-14', businessId: 'b1', amount: '', currency: 'CAD', orders: '', note: '' });
   assert.deepEqual(entryProblem(f), { field: 'amount', text: 'The amount' });
   assert.deepEqual(entryProblem({ ...f, amount: '12.505' }), { field: 'amount', text: 'Type the amount like 1234.56' });
+  assert.equal(summaryText({ id: 'payments', count: 4, customers: 1 }), '1 customer paid beyond their orders (regular depositors left out)');
   assert.deepEqual(entryProblem({ ...f, businessId: '' }), { field: 'businessId', text: 'Pick the business' });
   assert.deepEqual(entryProblem({ ...f, amount: '0' }), { field: 'amount', text: 'Type the amount like 1234.56' });
   assert.deepEqual(entryProblem({ ...f, amount: '1500', orders: '1.5' }), { field: 'orders', text: 'Orders is a whole number' });
@@ -110,4 +124,14 @@ test('store states (D11): the Order Manager with nothing yet; "or enter a month 
   assert.equal(stateText({ state: 'by_hand' }), null);
   assert.doesNotMatch(stateText({ state: 'not_set_up' }).text, /by hand/);
   assert.match(stateText({ state: 'not_set_up', manualStore: 'ebay' }).text, /or enter a month by hand/);
+});
+
+test('sales by hand: not for businesses whose sales come from a connection, Personal or archived ones', async () => {
+  const { byHandAllowed, NOT_BY_HAND } = await import('@suite/shared/sales');
+  for (const id of [BUSINESS_IDS.wholesale, BUSINESS_IDS.save_point, BUSINESS_IDS.retail, BUSINESS_IDS.personal]) {
+    assert.ok(NOT_BY_HAND[id]);
+    assert.equal(byHandAllowed({ id }), false);
+  }
+  assert.equal(byHandAllowed({ id: BUSINESS_IDS.consulting }), true);
+  assert.equal(byHandAllowed({ id: BUSINESS_IDS.agency, archived: true }), false);
 });

@@ -16,7 +16,7 @@ import { businessColor } from '../crm/logic.js';
 import { periodText, ordersText } from '../sales/logic.js';
 import { Periods } from '../sales/parts.jsx';
 import {
-  SECTIONS, PAYMENTS_NOTE, itemLine, stateNote, countText, summaryText, shownCount, moreText, restText, attentionTotal,
+  SECTIONS, UNMATCHED_MISSING, unmatchedLine, itemLine, stateNote, countText, summaryText, shownCount, moreText, restText, attentionTotal,
   totalOnlyNote, storesNote,
 } from './logic.js';
 import './overview.css';
@@ -80,6 +80,17 @@ function SalesStrip({ sales }) {
   );
 }
 
+function Unmatched({ u }) {
+  const line = unmatchedLine(u, { date: (d) => formatDate(d) });
+  if (!line) return <span style={{ ...muted, fontSize: 'var(--text-xs)' }} data-testid="unmatched-missing">{UNMATCHED_MISSING}</span>;
+  return (
+    <div className="overview-item" data-testid="unmatched">
+      <span className="overview-item-text" style={line.tone === 'danger' ? { color: 'var(--danger)' } : undefined}>{line.text}</span>
+      {line.detail ? <span style={muted}>{line.detail}</span> : null}
+    </div>
+  );
+}
+
 function AttentionSection({ section }) {
   const meta = SECTIONS[section.id] ?? { title: section.id };
   const [taps, setTaps] = useState(0);
@@ -89,13 +100,14 @@ function AttentionSection({ section }) {
   const more = moreText(section, shown);
   const rest = restText(section, shown);
   const summary = summaryText(section);
-  const quiet = !section.count && !note;
+  const quiet = !section.count && !note && !(section.id === 'payments' && section.unmatched);
   return (
     <section className="overview-section" data-testid="attention-section" data-section={section.id} data-count={section.count ?? ''} aria-labelledby={`att-${section.id}`}>
       <div className="overview-section-head">
         <h3 id={`att-${section.id}`}>{meta.title}</h3>
         <Badge tone={section.count ? (section.id === 'overdue' || section.id === 'balances' ? 'danger' : 'warn') : 'neutral'}>{countText(section)}</Badge>
       </div>
+      {section.id === 'payments' && section.state !== 'not_connected' ? <Unmatched u={section.unmatched} /> : null}
       {summary ? <span style={muted}>{summary}</span> : null}
       {note ? <span style={muted} data-testid="section-state">{note}</span> : null}
       {quiet ? <span style={muted}>{meta.empty}</span> : null}
@@ -125,7 +137,6 @@ function AttentionSection({ section }) {
           {meta.link && section.count ? <Link to={meta.link} style={{ fontSize: 'var(--text-sm)' }}>{meta.linkText} ›</Link> : null}
         </div>
       ) : null}
-      {section.id === 'payments' && section.state !== 'not_connected' ? <span style={{ ...muted, fontSize: 'var(--text-xs)' }}>{PAYMENTS_NOTE}</span> : null}
     </section>
   );
 }
@@ -135,7 +146,7 @@ export default function OverviewPage() {
   const { data, error, loading, offline, checking, checkAgain } = useServerData(`/api/overview?today=${today}`, { everyMs: 60_000 });
   const sync = useSyncStatus();
   const syncAttention = sync?.attention ?? 0;
-  const total = attentionTotal(data?.attention, syncAttention);
+  const total = attentionTotal(data?.attention, syncAttention, data?.urgent);
   return (
     <>
       <PageHeader
@@ -159,7 +170,7 @@ export default function OverviewPage() {
             <div style={{ display: 'grid', gap: 'var(--space-3)' }} data-testid="attention">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
                 <h2 style={{ fontSize: 'var(--text-md)', fontWeight: 650, margin: 0 }}>To deal with</h2>
-                <span style={muted} data-testid="attention-total">{total ? `${total.toLocaleString('en-CA')} things` : 'Nothing urgent'}</span>
+                <span style={muted} data-testid="attention-total">{total ? `${total.toLocaleString('en-CA')} urgent` : 'Nothing urgent'}</span>
               </div>
               {syncAttention ? (
                 <Link to="/sync/attention" className="overview-sync" data-testid="attention-sync">
