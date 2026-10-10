@@ -81,7 +81,7 @@ export default function EbayConnectionPanel({ offline, onChanged }) {
       {data.ruNameProblem && !showKeys ? (
         <Notice tone="danger">
           <div style={{ display: 'grid', gap: 'var(--space-2)' }} data-testid="ebay-runame-problem">
-            <span>The saved RuName can’t be used to sign in. {data.ruNameProblem} Then save the keyset again: the App ID and Cert ID are needed with it.</span>
+            <span>The saved RuName can’t be used to sign in. {data.ruNameProblem} Then choose “Enter the keyset again” (the App ID and Cert ID are needed with it).</span>
             <div><Button onClick={() => setEditKeys(true)} disabled={offline}>Enter the keyset again</Button></div>
           </div>
         </Notice>

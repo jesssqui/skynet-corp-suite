@@ -30,7 +30,7 @@ export function pastedProblem(text) {
 /** What the card says about the connection. */
 export function stateLine(info, formatDate) {
   // D13b: a keyset saved with the App ID in the RuName box can't sign in (eBay says only invalid_request).
-  if (info?.ruNameProblem && ['not_signed_in', 'signed_out'].includes(info.state)) return 'Keyset saved, but its RuName isn’t right: save the keyset again (New keyset…) before signing in.';
+  if (info?.ruNameProblem && ['not_signed_in', 'signed_out'].includes(info.state)) return 'Keyset saved, but its RuName isn’t right: choose “Enter the keyset again” before signing in.';
   switch (info?.state) {
     case 'not_set_up': return 'Not set up: enter the keyset from eBay’s developer site.';
     case 'not_signed_in': return 'Keyset saved. Next: sign in to eBay (as Save Point Shop).';

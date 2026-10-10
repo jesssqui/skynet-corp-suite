@@ -117,11 +117,12 @@ export function monthLine(m) {
 
 // ---- D13b: what eBay's total is made of -----------------------------------------------------------------------
 /**
- * The breakdown's lines, in order (each from one store's own figures; sales_daily keeps total = net + shipping + tax):
- * Items (= net: item prices after discounts and refunds), Shipping, Before tax (= Items + Shipping = total − tax), Tax
- * (the tax eBay collected) and Total (after tax) — Seller Hub's "Total sales", the headline.
+ * The breakdown under each total, in order (from one store's own figures; sales_daily keeps total = net + shipping +
+ * tax): Items (= net: item prices after discounts and refunds, and anything else in eBay's total that isn't shipping or
+ * tax), Shipping, Before tax (= Items + Shipping = total − tax) and Tax (the tax eBay collected). The total after tax —
+ * Seller Hub's "Total sales" — is the headline above them.
  */
-export const BREAKDOWN_LINES = Object.freeze([['items', 'Items'], ['shipping', 'Shipping'], ['beforeTax', 'Before tax'], ['tax', 'Tax'], ['total', 'Total (after tax)']]);
+export const BREAKDOWN_LINES = Object.freeze([['items', 'Items'], ['shipping', 'Shipping'], ['beforeTax', 'Before tax'], ['tax', 'Tax']]);
 
 /** One currency's figures → { items, shipping, beforeTax, tax, total } (cents). */
 export function breakdownOf(f) {
@@ -131,34 +132,45 @@ export function breakdownOf(f) {
 }
 
 /**
- * A period's figures (a list per currency, as the summary gives them) → null when the period was filled by a month
- * entered by hand (`totalOnly`: only its total is known — never mixed with eBay's breakdown), else one entry per
- * currency (never added across): [{ currency, lines: [[label, "$12.50"], …] }]. An empty period → CAD zeros.
+ * A period's figures (a list per currency, as the summary gives them) → null when its figure came from a month entered
+ * by hand (`totalOnly`: only the total is known — never mixed with eBay's breakdown), else one entry per currency (never
+ * added across): [{ currency, total: "$101.50", lines: [[label, "$85"], …] }]. An empty period → zeros in `currency`
+ * (the store's own).
  */
-export function periodBreakdown(list) {
+export function periodBreakdown(list, currency = 'CAD') {
   if (list?.some((f) => f.totalOnly)) return null;
-  const rows = list?.length ? list : [{ currency: 'CAD' }];
+  const rows = list?.length ? list : [{ currency }];
   return rows.map((f) => {
-    const cur = f.currency || 'CAD';
+    const cur = f.currency || currency;
     const b = breakdownOf(f);
-    return { currency: cur, lines: BREAKDOWN_LINES.map(([k, label]) => [label, salesMoney(b[k], cur)]) };
+    return { currency: cur, total: salesMoney(b.total, cur), lines: BREAKDOWN_LINES.map(([k, label]) => [label, salesMoney(b[k], cur)]) };
   });
 }
 
 /**
  * The months list's second line for one month — what the shown figure is made of, from the same source as the
- * figure: eBay's own days ("Items $85 · Shipping $10 · Before tax $95 · Tax $6.50", each currency on its own), or for a
- * month entered by hand "Entered by hand: total only". '' when nothing counts or eBay's month is all zeros.
+ * figure: eBay's own days ("Items $85 · Shipping $10 · Before tax $95 · Tax $6.50", each currency on its own), or "Total
+ * only" for a month entered by hand (the line above already says so). '' when nothing counts or eBay's month is all
+ * zeros.
  */
 export function monthBreakdown(m) {
-  if (m?.shown === 'manual') return 'Entered by hand: total only';
+  if (m?.shown === 'manual') return 'Total only';
   if (m?.shown !== 'real' || !m.real?.length) return '';
   // A month with no sales at all: nothing to break down (no row of $0s).
   if (m.real.every((f) => Object.values(breakdownOf(f)).every((v) => v === 0))) return '';
   return m.real.map((f) => {
     const cur = f.currency || 'CAD';
     const b = breakdownOf(f);
-    const parts = BREAKDOWN_LINES.filter(([k]) => k !== 'total').map(([k, label]) => `${label} ${salesMoney(b[k], cur)}`).join(' · ');
+    const parts = BREAKDOWN_LINES.map(([k, label]) => `${label} ${salesMoney(b[k], cur)}`).join(' · ');
     return m.real.length > 1 || cur !== 'CAD' ? `${cur}: ${parts}` : parts;
   }).join(' — ');
+}
+
+/**
+ * Every eBay card the summary lists (D13b review: an order in another currency makes its own card, "ebay USD", which
+ * links to the same page): the main one — the one months entered by hand fill — first, then the others by name.
+ */
+export function ebayCards(stores) {
+  return (stores ?? []).filter((s) => s.source === 'ebay')
+    .sort((a, b) => (a.manualStore ? -1 : b.manualStore ? 1 : String(a.name).localeCompare(String(b.name))));
 }

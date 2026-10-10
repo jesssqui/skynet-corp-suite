@@ -2280,7 +2280,8 @@ one table — D12's WooCommerce stores now, **D13's eBay next** (source `ebay`),
   manualStore }] })`). A month = { total cents, currency, orders?, note? } (Seller Hub's Total sales); store `ebay`,
   source `manual`. It **fills the same card**: `summary()`'s `month` for that store is the hand-entered month whenever
   the connection's own days don't count for it (`monthFromManual: true`, `manualEntry`), and it adds into per-business
-  and all-stores totals the same way (its figures marked `totalOnly: true` — D13b: only total and orders are known);
+  and all-stores totals the same way (D13b: those figures — the card's, per business and overall, per currency — and
+  `monthly()`'s manual rows are marked `totalOnly: true`: only total and orders are known, the rest are 0 placeholders);
   today / this week stay real only. **When the connection's days count**
   (`realWins`): it has days in that month **and** either it is reading now (the store's `delivering`: eBay on, not read
   yet, or **failing for a while — that still counts as reading**, so a month doesn't flip to the hand entry during an
@@ -2401,10 +2402,11 @@ store "thesavepointshop").
   Keysets → Production → User Tokens, copy the value in the “RuName (eBay Redirect URL name)” column." (eBay answers a
   sign-in with the App ID as `redirect_uri` only `invalid_request`). A real RuName (`Jessy_Rho-JessyRho-GWNLIS-abcdefgh`,
   even with "PRD" as a word in it) is accepted. A keyset **saved before the guard** with such a RuName: `info().ruNameProblem`
-  says so, `POST /sign-in` refuses it (409 `bad_runame`, the same words + "save the keyset again") without making a
-  state or the consent address, the card shows a red notice with *Enter the keyset again* and disables Sign in, its
-  state line says "its RuName isn’t right", and the Connections row's queue reads "Save the keyset again: the RuName
-  isn’t right" (while not signed in / signed out). A refresh already held keeps working (the refresh grant doesn't send
+  says so, `POST /sign-in` refuses it (409 `bad_runame`, the same words + "Then choose “Enter the keyset again” on the
+  eBay card") without making a state or the consent address — a Cert-ID-shaped one too —, the card shows a red notice
+  with the button *Enter the keyset again* (the one name everywhere) and disables Sign in, its state line says "its
+  RuName isn’t right: choose “Enter the keyset again”", and the Connections row's queue reads "RuName isn’t right:
+  enter the keyset again" (while not signed in / signed out). A refresh already held keeps working (the refresh grant doesn't send
   the RuName). A new keyset ends the sign-in (a refresh token belongs to its App ID). `ebay_connection` and
   `ebay_changes` are **keepOnRestore**.
 - **Scopes (decision: the minimum)**: only `https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly` — getOrders
@@ -2504,19 +2506,27 @@ store "thesavepointshop").
   *Time zone…*, *New keyset…*, *Forget…* (keyset and sign-in go; totals and tasks stay). Money → Sales: the eBay card
   (always listed: "Not connected: set it up …, or enter a month by hand"), with "Months, and entering one by hand" →
   `/costs/sales/ebay`: the card, the last 13 months (eBay's figure / entered by hand / replaced) and the entry form.
-- **The breakdown (D13b; the owner asked for before- and after-tax amounts and shipping)**: the eBay page shows, for
-  today, this week and this month (`Breakdown`, three side by side, stacked under 640 px) — **Items** (= `net`: item
-  prices after discounts and refunds), **Shipping**, **Before tax** (= Items + Shipping = `total − tax`), **Tax** (the
-  tax eBay collected) and **Total (after tax)** (the headline, Seller Hub's Total sales) — and under each of the 13
-  months one muted line "Items · Shipping · Before tax · Tax" (no line for a month of zeros). Logic `BREAKDOWN_LINES`,
-  `breakdownOf`, `periodBreakdown`, `monthBreakdown` in `client/src/modules/sales/logic.js`; each currency on its own,
-  never added. **Same source as the figure shown**: a period or month whose figure is a hand entry shows "Entered by
-  hand: total only" — `summary()` marks a period filled by a hand-entered month `totalOnly: true` on its figures (its
-  other figures are 0, not known; today and this week are always eBay's own days), and `months()`'s `shown: 'manual'`
-  uses the entry; when eBay's figure is shown (`realWins`, or a replaced entry), its breakdown is shown — never a hand
-  total beside eBay's lines. A muted note on the card: refunds come off Items (eBay doesn't say what part of a refund
-  was shipping) and the tax refunded with a refund is estimated in proportion; tax is the tax eBay collected. No new
-  read was needed: `summary()` and `months()` already returned every `SALES_FIGURES` column per currency.
+- **The breakdown (D13b; the owner asked for before- and after-tax amounts and shipping)**: on the eBay page each period
+  (today, this week, this month; `EbayPeriods`, three side by side, stacked under 640 px) is shown **once**: its
+  **total after tax** as the headline (Seller Hub's Total sales) with its orders, then a `<dl>` (labelled per period) of
+  **Items** (= `net`: item prices after discounts and refunds, and anything else in eBay's total that isn't shipping or
+  tax), **Shipping**, **Before tax** (= Items + Shipping = `total − tax`; a subtotal rule above it) and **Tax** (the tax
+  eBay collected). Under each of the 13 months, one muted line "Items · Shipping · Before tax · Tax" (no line for a month
+  of zeros). Logic `BREAKDOWN_LINES`, `breakdownOf`, `periodBreakdown` (an empty period in the card's own currency),
+  `monthBreakdown`, `ebayCards` in `client/src/modules/sales/logic.js`; each currency on its own, never added.
+  **Same source as the figure shown**: a period or month whose figure is a hand entry shows its total only ("Entered by
+  hand · N orders", "Total only"; the months list's second line "Total only") — never a hand total beside eBay's lines;
+  when eBay's figure is shown (`realWins`, or a replaced entry), its breakdown is. **`totalOnly`** (sales service): a
+  hand-entered month's row is `totalOnly: true` (`manualRow`), and every sum the summary makes (`marked`: the store's
+  periods, per business, overall) marks a currency's figures `totalOnly: true` when such a row is among them — their
+  net, tax and shipping are then 0 placeholders, not known (D15: don't read a breakdown from them); `monthly()`'s
+  manual rows carry it too (and, review fix, their `business_id`, which manualRow's null used to overwrite). Today and
+  this week are always the store's own days. **Every eBay card** is on the page (review fix): the main one (CAD, the one
+  months entered by hand fill) first, then one per other currency (`ebay USD`, "Save Point Shop (eBay, USD)" — it links
+  here too), each with its breakdown; the months list is the main card's ("Months · Save Point Shop (eBay)" when there
+  are several). A muted note (once): refunds come off Items (eBay doesn't say what part of a refund was shipping) and
+  the tax refunded with a refund is estimated in proportion; tax is the tax eBay collected. No new read was needed:
+  `summary()` and `months()` already returned every `SALES_FIGURES` column per currency.
 - **Not exercised here (no real eBay account)**: real tokens and consent pages, the real RuName redirect, Seller Hub's
   figure itself and the unconfirmed points above, eBay's rate limits (getOrders: thousands a day; the suite makes a few
   an hour), `offset` beyond 10,000 orders, multi-currency accounts.

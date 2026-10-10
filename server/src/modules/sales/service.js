@@ -117,6 +117,13 @@ export function createSalesService(ctx) {
   };
   const figures = (m) => [...m].map(([currency, f]) => ({ currency, ...f }))
     .sort((a, b) => (a.currency === 'CAD' ? -1 : b.currency === 'CAD' ? 1 : a.currency.localeCompare(b.currency)));
+  /**
+   * D13b: figures per currency, each marked `totalOnly: true` when a month entered by hand is among its rows — then
+   * only its total and orders mean anything (a hand entry's net, tax, shipping… are 0 placeholders, not known), so
+   * nobody reads a breakdown from it: the store's card, per business and overall alike.
+   */
+  const marked = (rows) => figures(sumByCurrency(rows))
+    .map((f) => (rows.some((r) => r.totalOnly && r.currency === f.currency) ? { ...f, totalOnly: true } : f));
   const group = (rows, keyOf) => {
     const g = new Map();
     for (const r of rows) {
@@ -173,7 +180,6 @@ export function createSalesService(ctx) {
       const out = { ...s, date: today, lastFetchedAt: fetched.get(`${s.source}|${s.store}`)?.fetched_at ?? null, firstDay: fetched.get(`${s.source}|${s.store}`)?.first_day ?? null };
       for (const [p, { from, to }] of Object.entries(periods)) {
         let rows = filtered({ from, to, store: s.store, source: s.source });
-        let totalOnly = false;
         // D13: a month the connection has no days for is filled by a month entered by hand (its manual target).
         if (p === 'month' && s.manualStore) {
           const m = q.manual.get(s.manualStore, today.slice(0, 7));
@@ -181,23 +187,20 @@ export function createSalesService(ctx) {
             rows = [manualRow(m, s.businessId)];
             out.monthFromManual = true;
             out.manualEntry = manualView(m);
-            totalOnly = true;
           }
         }
         periodRows[p].push(...rows);
-        // D13b: a period filled by a month entered by hand knows only its total and orders (its other figures are 0,
-        // not known): `totalOnly` says so, so no breakdown is shown for it. Otherwise every figure is the store's own.
-        out[p] = figures(sumByCurrency(rows)).map((f) => (totalOnly ? { ...f, totalOnly: true } : f));
+        out[p] = marked(rows);
       }
       return out;
     });
     const businessIds = [...new Set(stores.map((s) => s.businessId ?? null))];
     const businesses = businessIds.map((id) => {
       const b = id ? services.crm?.getBusiness?.(id) : null;
-      const pick = (rows) => figures(sumByCurrency(rows.filter((r) => (r.business_id ?? null) === id)));
+      const pick = (rows) => marked(rows.filter((r) => (r.business_id ?? null) === id));
       return { businessId: id, name: b?.name ?? (id ? 'Unknown business' : 'No business'), today: pick(periodRows.today), week: pick(periodRows.week), month: pick(periodRows.month) };
     });
-    const overall = { today: figures(sumByCurrency(periodRows.today)), week: figures(sumByCurrency(periodRows.week)), month: figures(sumByCurrency(periodRows.month)) };
+    const overall = { today: marked(periodRows.today), week: marked(periodRows.week), month: marked(periodRows.month) };
     return { at: nowIso(now), stores, businesses, overall, sources: [...sources.values()].map((s) => ({ source: s.source, label: s.label })) };
   }
 
@@ -242,7 +245,8 @@ export function createSalesService(ctx) {
   }
   /** Does this hand-entered month count? Not once replaced (for good), nor while the connection's days count. */
   const manualCounts = (m, st, month) => Boolean(m && !m.replaced_at && !realWins(st, month));
-  const manualRow = (m, businessId = null) => ({ ...zeroFigures(), currency: m.currency, total: m.total, orders: m.orders ?? 0, business_id: businessId });
+  // Only total and orders are known (D13b: `totalOnly`, carried into summary()'s sums and monthly()'s rows).
+  const manualRow = (m, businessId = null) => ({ ...zeroFigures(), currency: m.currency, total: m.total, orders: m.orders ?? 0, business_id: businessId, totalOnly: true });
   const manualView = (m) => ({
     store: m.store, month: m.month, currency: m.currency, total: m.total, orders: m.orders, note: m.note,
     enteredAt: m.entered_at, enteredBy: m.entered_by, replacedAt: m.replaced_at ?? null,
@@ -340,7 +344,8 @@ export function createSalesService(ctx) {
         const st = t.store ? { ...t.store, source: t.source } : null;
         if (!manualCounts(m, st, month)) continue;
         if (st) replacedByHand.add(`${st.source}|${st.store}`);
-        out.push({ month, source: 'manual', store: t.target, business_id: t.store?.businessId ?? null, from: 'manual', ...manualRow(m), days: 0 });
+        // (D13b review: manualRow's own business_id came after and always wrote null here.)
+        out.push({ month, source: 'manual', store: t.target, from: 'manual', ...manualRow(m, t.store?.businessId ?? null), days: 0 });
       }
       for (const [key, rs] of group(rows, (r) => `${r.source}|${r.store}`)) {
         if (replacedByHand.has(key)) continue;

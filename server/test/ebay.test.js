@@ -526,11 +526,24 @@ test('review fix: a month eBay stopped reading part way (signed out) may be ente
   assert.equal(c.month[0].total, 25000);
   let monthly = (await s.call('GET', '/api/sales/monthly?from=2026-10&to=2026-10')).body.months;
   assert.deepEqual(monthly.map((x) => [x.source, x.total]), [['manual', 25000]], 'never both');
+  // D13b review: the month shown is the hand entry, so it is total only — on the card, per business, overall and in
+  // D15's monthly rows — and none of eBay's part-read lines go with it.
+  assert.equal(c.month[0].totalOnly, true);
+  assert.equal(monthly[0].totalOnly, true);
+  assert.equal(monthly[0].business_id, SAVE_POINT, 'review fix: the hand row keeps its business');
+  let sum = (await s.call('GET', '/api/sales/summary')).body;
+  assert.equal(sum.businesses.find((b) => b.businessId === SAVE_POINT).month[0].totalOnly, true);
+  assert.deepEqual([sum.overall.month[0].total, sum.overall.month[0].totalOnly], [25000, true]);
+  assert.ok(sum.overall.today.every((f) => !f.totalOnly) && sum.overall.week.every((f) => !f.totalOnly));
+  assert.equal((await s.call('GET', '/api/sales/manual/ebay')).body.months.find((m) => m.month === '2026-10').shown, 'manual');
   // Signed in again: eBay reads the whole month, its figure wins, the entry is kept as replaced.
   await s.signInNow();
   c = await card();
   assert.ok(!c.monthFromManual);
   assert.equal(c.month[0].total, 7000);
+  assert.ok(!c.month[0].totalOnly, 'eBay’s figure again: its breakdown with it');
+  sum = (await s.call('GET', '/api/sales/summary')).body;
+  assert.ok(sum.overall.month.every((f) => !f.totalOnly));
   oct = (await s.call('GET', '/api/sales/manual/ebay')).body.months.find((m) => m.month === '2026-10');
   assert.deepEqual([oct.shown, oct.replaced, oct.partial], ['real', true, false]);
   monthly = (await s.call('GET', '/api/sales/monthly?from=2026-10&to=2026-10')).body.months;
@@ -607,14 +620,70 @@ test('D13b: the App ID in the RuName box is refused (saving, and starting a sign
   assert.match(info.ruNameProblem, /That’s the App ID, not the RuName/);
   const start = await s.call('POST', '/api/ebay/sign-in', { body: {} });
   assert.deepEqual([start.status, start.body.code], [409, 'bad_runame']);
-  assert.match(start.text, /That’s the App ID, not the RuName.*save the keyset again/);
+  assert.match(start.text, /That’s the App ID, not the RuName.*“Enter the keyset again”/);
   assert.ok(!start.text.includes('oauth2/authorize'));
   assert.equal(s.db.prepare('SELECT COUNT(*) AS n FROM ebay_sign_ins').get().n, 0, 'no sign-in started');
   const row = (await s.call('GET', '/api/connections')).body.connections.find((x) => x.id === 'ebay');
-  assert.equal(row.queueLabel, 'Save the keyset again: the RuName isn’t right');
+  assert.equal(row.queueLabel, 'RuName isn’t right: enter the keyset again');
+  // The Cert ID (or its shape) saved as the RuName: refused the same way.
+  s.db.prepare('UPDATE ebay_connection SET ru_name = ?').run('PRD-9f8e7d6c5b4a-3a2b-1c0d');
+  const cert = await s.call('POST', '/api/ebay/sign-in', { body: {} });
+  assert.deepEqual([cert.status, cert.body.code], [409, 'bad_runame']);
+  assert.match(cert.text, /That’s the Cert ID, not the RuName/);
+  assert.equal(s.db.prepare('SELECT COUNT(*) AS n FROM ebay_sign_ins').get().n, 0);
   // Saved again with the real RuName: the sign-in works.
   assert.equal((await s.keyset()).status, 200);
   assert.equal((await s.call('GET', '/api/ebay/connection')).body.ruNameProblem, null);
   await s.signInNow();
   assert.equal(s.svc.info().state, 'on');
+});
+
+test('D13b review: an order and its refund on the same day — the breakdown still adds up (Items + Shipping + Tax = Total)', async (t) => {
+  const s = await setup(t, { orders: [
+    // Today: $60 + $10 shipping + $9.10 tax = $79.10; $30 refunded today (its tax: 9.10 × 30 ÷ 70 = $3.90).
+    ebayOrder({ id: '70-A', created: '2026-10-14T13:00:00.000Z', items: [{ title: 'F-Zero', sku: 'SNES-FZ', qty: 1, price: 60 }], shipping: 10, tax: 9.1, refunds: [{ at: '2026-10-14T15:00:00.000Z', amount: 30 }] }),
+  ] });
+  const c = (await s.call('GET', '/api/sales/summary')).body.stores.find((x) => x.store === 'ebay');
+  for (const p of ['today', 'week', 'month']) {
+    const f = c[p][0];
+    assert.deepEqual({ net: f.net, shipping: f.shipping, tax: f.tax, total: f.total, refunds: f.refunds, orders: f.orders }, { net: 3000, shipping: 1000, tax: 520, total: 4520, refunds: 3000, orders: 1 }, p);
+    assert.equal(f.net + f.shipping + f.tax, f.total, `${p}: Items + Shipping + Tax = Total`);
+    assert.ok(!f.totalOnly);
+  }
+  const oct = (await s.call('GET', '/api/sales/manual/ebay')).body.months.find((m) => m.month === '2026-10');
+  assert.deepEqual([oct.real[0].net, oct.real[0].shipping, oct.real[0].total - oct.real[0].tax, oct.real[0].tax], [3000, 1000, 4000, 520]);
+});
+
+test('D13b review: two currencies — each eBay card has its own breakdown, never added across; the months list is the main card’s', async (t) => {
+  const s = await setup(t, { orders: [
+    ebayOrder({ id: '80-A', created: '2026-10-14T13:00:00.000Z', items: [{ title: 'Pokémon Red', sku: 'GB-RED', qty: 2, price: 20 }], shipping: 10, tax: 6.5 }),
+    ebayOrder({ id: '81-B', created: '2026-10-14T14:00:00.000Z', currency: 'USD', items: [{ title: 'Earthbound', sku: 'SNES-EB', qty: 1, price: 100 }], shipping: 15, tax: 5 }),
+  ] });
+  const sum = (await s.call('GET', '/api/sales/summary')).body;
+  const ebay = sum.stores.filter((x) => x.source === 'ebay');
+  assert.deepEqual(ebay.map((x) => [x.store, x.name, x.currency, x.link, Boolean(x.manualStore)]).sort((a, b) => a[0].localeCompare(b[0])), [
+    ['ebay', 'Save Point Shop (eBay)', 'CAD', '/costs/sales/ebay', true],
+    ['ebay USD', 'Save Point Shop (eBay, USD)', 'USD', '/costs/sales/ebay', false],
+  ]);
+  const parts = (f) => [f.currency, f.net, f.shipping, f.total - f.tax, f.tax, f.total];
+  assert.deepEqual(ebay.find((x) => x.store === 'ebay').today.map(parts), [['CAD', 4000, 1000, 5000, 650, 5650]]);
+  assert.deepEqual(ebay.find((x) => x.store === 'ebay USD').today.map(parts), [['USD', 10000, 1500, 11500, 500, 12000]]);
+  assert.deepEqual(sum.overall.today.map(parts), [['CAD', 4000, 1000, 5000, 650, 5650], ['USD', 10000, 1500, 11500, 500, 12000]], 'per currency, never added');
+  const oct = (await s.call('GET', '/api/sales/manual/ebay')).body.months.find((m) => m.month === '2026-10');
+  assert.deepEqual(oct.real.map((f) => f.currency), ['CAD'], 'the months list is the main (CAD) card’s');
+});
+
+test('D13b review: beside a WooCommerce store, a hand-entered eBay month makes the CAD sums total only (part has no breakdown); the store keeps its own', async (t) => {
+  const s = await setup(t, { signIn: false });
+  await s.call('PUT', '/api/sales/manual/ebay/2026-10', { body: { total: 25000 } });
+  s.sales.putDays({ source: 'woo', store: 'tinsxpress.com', name: 'TinsXpress', businessId: BUSINESS_IDS.retail, currency: 'CAD', timeZone: 'America/Toronto',
+    days: [{ day: '2026-10-14', orders: 1, items: 1, gross: 1000, net: 1000, tax: 130, shipping: 0, total: 1130 }] });
+  const sum = (await s.call('GET', '/api/sales/summary')).body;
+  assert.equal(sum.businesses.find((b) => b.businessId === SAVE_POINT).month[0].totalOnly, true);
+  assert.ok(!sum.businesses.find((b) => b.businessId === BUSINESS_IDS.retail).month[0].totalOnly, 'the store’s own days keep their breakdown');
+  assert.ok(!sum.stores.find((x) => x.store === 'tinsxpress.com').month[0].totalOnly);
+  assert.deepEqual([sum.overall.month[0].total, sum.overall.month[0].totalOnly], [25000 + 1130, true]);
+  assert.ok(!sum.overall.today[0].totalOnly, 'today is the store’s own day only');
+  const monthly = (await s.call('GET', '/api/sales/monthly?from=2026-10&to=2026-10')).body.months;
+  assert.deepEqual(monthly.map((x) => [x.source, x.total, Boolean(x.totalOnly)]).sort(), [['manual', 25000, true], ['woo', 1130, false]]);
 });

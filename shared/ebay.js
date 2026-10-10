@@ -2,8 +2,8 @@
 // card and the server refuse the same mistakes. D13b: the RuName box holding the App ID (or the Cert ID) is refused
 // with a plain message: eBay answers such a sign-in with `invalid_request` and no hint why.
 
-/** Any of the three as eBay writes them (letters, digits, `.`, `_`, `-`). */
-export const KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{9,99}$/; // App ID and Cert ID
+/** The App ID and the Cert ID as eBay writes them (letters, digits, `.`, `_`, `-`). Matches any RuName too. */
+export const KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{9,99}$/;
 export const RUNAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{4,99}$/; // e.g. Save_Point_Shop-SavePoin-suite-abcdefgh
 
 /**

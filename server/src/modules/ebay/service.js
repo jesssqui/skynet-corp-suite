@@ -212,9 +212,9 @@ export function createEbayService(ctx) {
     if (!row) throw refused(409, 'not_set_up', 'Enter the App ID, Cert ID and RuName first');
     if (isPaused()) throw refused(409, 'paused', 'eBay is switched off on Connections: switch it on to sign in');
     // D13b: a keyset saved before the RuName guard with the App ID in the RuName box would only get invalid_request
-    // from eBay: refuse here with the same words, so the card says what to fix (save the keyset again).
+    // from eBay: refuse here with the same words, so the card says what to fix (“Enter the keyset again”).
     const mixUp = ruNameMixUp({ ruName: row.ru_name, appId: row.app_id });
-    if (mixUp) throw refused(409, 'bad_runame', `${mixUp} Then save the keyset again (New keyset…).`);
+    if (mixUp) throw refused(409, 'bad_runame', `${mixUp} Then choose “Enter the keyset again” on the eBay card.`);
     const state = crypto.randomBytes(32).toString('base64url');
     const now = clock();
     q.pruneStates.run(nowIso(new Date(now)));
@@ -466,7 +466,7 @@ export function createEbayService(ctx) {
     description: 'Save Point Shop’s sales totals and orders waiting to ship, read with the seller’s own eBay sign-in (read-only: orders only). Nothing is changed on eBay; no buyer details are kept.',
     describe: () => {
       const s = info();
-      const label = s.ruNameProblem && ['not_signed_in', 'signed_out'].includes(s.state) ? 'Save the keyset again: the RuName isn’t right' : {
+      const label = s.ruNameProblem && ['not_signed_in', 'signed_out'].includes(s.state) ? 'RuName isn’t right: enter the keyset again' : {
         not_set_up: 'Not set up', not_signed_in: 'Sign in to eBay', signed_out: 'Signed out by eBay: sign in again', paused: null, unreadable: 'Keys can’t be read here',
       }[s.state];
       return {

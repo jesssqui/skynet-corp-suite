@@ -100,26 +100,35 @@ test('D13: months — their names, amounts typed, and which figure a month shows
   assert.equal(stateText({ state: 'signed_out' }).tone, 'danger');
 });
 
-test('D13b: the eBay breakdown — Items, Shipping, Before tax, Tax, Total after tax; a hand-entered period or month has its total only', async () => {
-  const { BREAKDOWN_LINES, breakdownOf, periodBreakdown, monthBreakdown } = await import('../src/modules/sales/logic.js');
-  assert.deepEqual(BREAKDOWN_LINES.map(([, l]) => l), ['Items', 'Shipping', 'Before tax', 'Tax', 'Total (after tax)']);
-  // Sept's eBay days (server/test/ebay.test.js): net = total − tax − shipping, so Before tax = Items + Shipping = total − tax.
+test('D13b: the eBay breakdown — Items, Shipping, Before tax, Tax under the total after tax; a hand-entered period or month has its total only', async () => {
+  const { BREAKDOWN_LINES, breakdownOf, periodBreakdown, monthBreakdown, ebayCards } = await import('../src/modules/sales/logic.js');
+  assert.deepEqual(BREAKDOWN_LINES.map(([, l]) => l), ['Items', 'Shipping', 'Before tax', 'Tax'], 'the total is the headline, not a line');
+  // net = total − tax − shipping, so Before tax = Items + Shipping = total − tax.
   const f = { currency: 'CAD', total: 9214, tax: 1014, shipping: 1000, net: 7200, orders: 1 };
   assert.deepEqual(breakdownOf(f), { items: 7200, shipping: 1000, beforeTax: 8200, tax: 1014, total: 9214 });
-  assert.deepEqual(periodBreakdown([f]), [{ currency: 'CAD', lines: [['Items', '$72'], ['Shipping', '$10'], ['Before tax', '$82'], ['Tax', '$10.14'], ['Total (after tax)', '$92.14']] }]);
+  assert.deepEqual(periodBreakdown([f]), [{ currency: 'CAD', total: '$92.14', lines: [['Items', '$72'], ['Shipping', '$10'], ['Before tax', '$82'], ['Tax', '$10.14']] }]);
   // A refund-only day: negative, refunds off Items and their estimated tax.
-  assert.deepEqual(periodBreakdown([{ currency: 'CAD', total: -3390, tax: -390, shipping: 0, net: -3000 }])[0].lines.map(([, v]) => v), ['-$30', '$0', '-$30', '-$3.90', '-$33.90']);
-  // Nothing yet: zeros in CAD. Two currencies: each on its own, never added.
-  assert.equal(periodBreakdown([])[0].lines.at(-1)[1], '$0');
+  assert.deepEqual(periodBreakdown([{ currency: 'CAD', total: -3390, tax: -390, shipping: 0, net: -3000 }])[0].lines.map(([, v]) => v), ['-$30', '$0', '-$30', '-$3.90']);
+  // Nothing yet: zeros in the store's own currency (review nit: not always CAD). Two currencies: each on its own.
+  assert.deepEqual(periodBreakdown([], 'USD').map((p) => [p.currency, p.total]), [['USD', 'US$0']]);
+  assert.equal(periodBreakdown(undefined)[0].currency, 'CAD');
   const two = periodBreakdown([f, { currency: 'USD', total: 1000, tax: 0, shipping: 0, net: 1000 }]);
   assert.deepEqual(two.map((p) => p.currency), ['CAD', 'USD']);
   // This month filled by a month entered by hand: total only, no breakdown (never eBay's lines beside a hand total).
   assert.equal(periodBreakdown([{ currency: 'CAD', total: 123456, tax: 0, shipping: 0, net: 0, orders: 31, totalOnly: true }]), null);
-  // The months list: eBay's own month → its lines; a hand-entered month → total only; a replaced one → eBay's lines.
+  // The months list: eBay's own month → its lines; a hand-entered month → "Total only"; a replaced one → eBay's lines.
   assert.equal(monthBreakdown({ shown: 'real', real: [f] }), 'Items $72 · Shipping $10 · Before tax $82 · Tax $10.14');
   assert.equal(monthBreakdown({ shown: 'real', replaced: true, real: [f], manual: { total: 5, currency: 'CAD' } }), 'Items $72 · Shipping $10 · Before tax $82 · Tax $10.14');
-  assert.equal(monthBreakdown({ shown: 'manual', real: [f], manual: { total: 99900, currency: 'CAD' }, partial: true }), 'Entered by hand: total only', 'eBay’s part-read days never lend their breakdown to a hand total');
+  assert.equal(monthBreakdown({ shown: 'manual', real: [f], manual: { total: 99900, currency: 'CAD' }, partial: true }), 'Total only', 'eBay’s part-read days never lend their breakdown to a hand total');
   assert.equal(monthBreakdown({ shown: null, real: null }), '');
   assert.equal(monthBreakdown({ shown: 'real', real: [{ currency: 'CAD', total: 0, tax: 0, shipping: 0, net: 0 }] }), '', 'a month with no sales: no row of $0s');
   assert.match(monthBreakdown({ shown: 'real', real: [f, { currency: 'USD', total: 1000, tax: 0, shipping: 0, net: 1000 }] }), /^CAD: Items \$72 .* — USD: Items US\$10/);
+  // Every eBay card (review fix: the USD one links here too), the main one first; other sources left out.
+  const cards = ebayCards([
+    { source: 'woo', store: 'tinsxpress.com', name: 'TinsXpress' },
+    { source: 'ebay', store: 'ebay USD', name: 'Save Point Shop (eBay, USD)', currency: 'USD' },
+    { source: 'ebay', store: 'ebay', name: 'Save Point Shop (eBay)', currency: 'CAD', manualStore: 'ebay' },
+  ]);
+  assert.deepEqual(cards.map((c) => c.store), ['ebay', 'ebay USD']);
+  assert.deepEqual(ebayCards(undefined), []);
 });

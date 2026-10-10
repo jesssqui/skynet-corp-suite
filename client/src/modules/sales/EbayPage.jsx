@@ -11,46 +11,73 @@ import { useServerData } from '../../api/useServerData.js';
 import { PageHeader, Card, Notice, Button, TextField, SelectField } from '../../ui/index.js';
 import { formatDateTime } from '../../ui/format.js';
 import MoneyTabs from '../costs/MoneyTabs.jsx';
-import { Periods, StateLine } from './SalesPage.jsx';
-import { stateText, updatedText, monthText, monthLine, monthBreakdown, periodBreakdown, parseAmount } from './logic.js';
+import { StateLine } from './SalesPage.jsx';
+import { periodText, ordersText, stateText, updatedText, monthText, monthLine, monthBreakdown, periodBreakdown, ebayCards, parseAmount } from './logic.js';
 import './sales.css';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
 const PERIODS = [['today', 'Today'], ['week', 'This week'], ['month', 'This month']];
 
-/** D13b: each period's breakdown (Items, Shipping, Before tax, Tax, Total after tax), side by side on wide screens. */
-function Breakdown({ card }) {
+/**
+ * D13b: each period once — its total after tax as the headline, its orders, then what the total is made of (Items,
+ * Shipping, Before tax, Tax) in the same block; three side by side on wide screens, stacked on phones. A period whose
+ * figure is a month entered by hand shows its total only.
+ */
+function EbayPeriods({ card }) {
   return (
     <div className="sales-breakdown" data-testid="ebay-breakdown">
       {PERIODS.map(([k, label]) => {
-        const parts = periodBreakdown(card[k]);
+        const parts = periodBreakdown(card[k], card.currency || 'CAD');
+        const id = `ebay-${String(card.store).replace(/[^a-z0-9]+/gi, '-')}-${k}`;
         return (
-          <div key={k} data-breakdown={k} style={{ display: 'grid', gap: 'var(--space-1)', minWidth: 0 }}>
-            <span style={{ ...muted, fontSize: 'var(--text-xs)', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 600 }}>{label}</span>
-            {parts === null ? <span style={muted} data-testid="breakdown-total-only">Entered by hand: total only</span> : parts.map((part) => (
-              <div key={part.currency} className="sales-lines">
-                {parts.length > 1 ? <span style={{ ...muted, gridColumn: '1 / -1', fontWeight: 600 }}>{part.currency}</span> : null}
-                {part.lines.map(([name, value], i) => {
-                  const last = i === part.lines.length - 1;
-                  const strong = last ? { fontWeight: 650, borderTop: '1px solid var(--border)', paddingTop: 2 } : null;
-                  return [
-                    <span key={`${name}k`} style={{ ...muted, ...strong, color: last ? 'var(--text)' : muted.color }}>{name}</span>,
-                    <span key={`${name}v`} style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', ...strong }}>{value}</span>,
-                  ];
-                })}
-              </div>
+          <section key={k} data-period={k} aria-labelledby={id} style={{ display: 'grid', gap: 'var(--space-1)', minWidth: 0, alignContent: 'start' }}>
+            <h3 id={id} style={{ ...muted, margin: 0, fontSize: 'var(--text-xs)', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 600 }}>{label}</h3>
+            <span className="sales-figure">{periodText(card[k])}</span>
+            <span style={muted}>{parts === null ? 'Entered by hand' : 'Total after tax'} · {ordersText(card[k])}</span>
+            {parts === null ? <span style={muted} data-testid="breakdown-total-only">Total only</span> : parts.map((part) => (
+              <dl key={part.currency} className="sales-dl" aria-label={`${label}${parts.length > 1 ? ` (${part.currency})` : ''}: what the total is made of`}>
+                {part.lines.map(([name, value]) => (
+                  <div key={name} className={name === 'Before tax' ? 'sales-dl-row sales-dl-sub' : 'sales-dl-row'}>
+                    <dt>{parts.length > 1 && name === 'Items' ? `${part.currency} · ${name}` : name}</dt>
+                    <dd>{value}</dd>
+                  </div>
+                ))}
+              </dl>
             ))}
-          </div>
+          </section>
         );
       })}
     </div>
   );
 }
 
+function EbayCard({ card, many, note }) {
+  const st = stateText(card);
+  return (
+    <Card>
+      <div style={{ display: 'grid', gap: 'var(--space-3)' }} data-testid="ebay-card" data-store={card.store}>
+        {many ? <h2 style={{ fontSize: 'var(--text-md)', fontWeight: 650, margin: 0, overflowWrap: 'anywhere' }}>{card.name}</h2> : null}
+        <EbayPeriods card={card} />
+        {note ? <span style={muted} data-testid="ebay-breakdown-note">
+          Items are item prices after discounts and refunds (and anything else in eBay’s total that isn’t shipping or
+          tax). eBay doesn’t say what part of a refund was shipping, so refunds come off Items, and the tax refunded with
+          a refund is worked out in proportion. Tax is the tax eBay collected. Before tax = Items + Shipping.
+        </span> : null}
+        <span style={muted}>
+          {card.monthFromManual ? 'This month entered by hand · ' : ''}{updatedText(card, formatDateTime)} · its day is {card.date}{card.timeZone ? ` (${card.timeZone})` : ''}
+        </span>
+        {st ? <StateLine st={st} /> : null}
+        <span style={muted}>The eBay sign-in, its switch and the time zone are on <Link to="/system/connections">System → Connections</Link>.</span>
+      </div>
+    </Card>
+  );
+}
+
 export default function EbayPage() {
   const months = useServerData('/api/sales/manual/ebay', { everyMs: 60_000 });
   const summary = useServerData('/api/sales/summary', { everyMs: 60_000 });
-  const card = summary.data?.stores.find((s) => s.source === 'ebay' && s.manualStore === 'ebay') ?? null;
+  // Every eBay card: the main one (CAD) and one per other currency eBay sold in (D13b review).
+  const cards = ebayCards(summary.data?.stores);
   const open = (months.data?.months ?? []).filter((m) => m.canEnter ?? m.shown !== 'real');
   const [form, setForm] = useState({ month: '', total: '', orders: '', note: '' });
   const [busy, setBusy] = useState(false);
@@ -90,7 +117,6 @@ export default function EbayPage() {
     }
   }
 
-  const st = card ? stateText(card) : null;
   return (
     <>
       <MoneyTabs />
@@ -98,25 +124,8 @@ export default function EbayPage() {
       <p style={{ margin: '0 0 var(--space-4)' }}><Link to="/costs/sales">← All sales</Link></p>
       {offline ? <Notice tone="warn" style={{ marginBottom: 'var(--space-4)' }}>Can’t reach the suite server: sales and months entered by hand need a connection.</Notice> : null}
       <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
-        {card ? (
-          <Card>
-            <div style={{ display: 'grid', gap: 'var(--space-3)' }} data-testid="ebay-card">
-              <Periods figures={card} />
-              <Breakdown card={card} />
-              <span style={muted} data-testid="ebay-breakdown-note">
-                Items are item prices after discounts and refunds. eBay doesn’t say what part of a refund was shipping, so
-                refunds come off Items, and the tax refunded with a refund is worked out in proportion. Tax is the tax
-                eBay collected. Before tax = Items + Shipping.
-              </span>
-              <span style={muted}>
-                {card.monthFromManual ? 'This month entered by hand · ' : ''}{updatedText(card, formatDateTime)} · its day is {card.date}{card.timeZone ? ` (${card.timeZone})` : ''}
-              </span>
-              {st ? <StateLine st={st} /> : null}
-              <span style={muted}>The eBay sign-in, its switch and the time zone are on <Link to="/system/connections">System → Connections</Link>.</span>
-            </div>
-          </Card>
-        ) : null}
-        <Card title="Months">
+        {cards.map((c, i) => <EbayCard key={c.store} card={c} many={cards.length > 1} note={i === 0} />)}
+        <Card title={cards.length > 1 ? `Months · ${cards[0].name}` : 'Months'}>
           <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 'var(--space-2)' }} data-testid="ebay-months">
             {(months.data?.months ?? []).map((m) => {
               const line = monthLine(m);

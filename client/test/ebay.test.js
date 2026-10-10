@@ -58,6 +58,6 @@ test('D13b: the App ID (or Cert ID) in the RuName box is refused with where to f
     assert.equal(keysetProblem({ appId, certId, ruName }), null, ruName);
   }
   // A keyset saved before the guard: the card says to save it again.
-  assert.match(stateLine({ state: 'not_signed_in', ruNameProblem: 'That’s the App ID…' }, String), /RuName isn’t right: save the keyset again/);
+  assert.match(stateLine({ state: 'not_signed_in', ruNameProblem: 'That’s the App ID…' }, String), /RuName isn’t right: choose “Enter the keyset again”/);
   assert.match(stateLine({ state: 'not_signed_in' }, String), /Next: sign in/);
 });
