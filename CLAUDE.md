@@ -2594,14 +2594,22 @@ net of refunds.
   days written before that now have nothing: that is the backfill on the first start after deploying, the move from the
   first D11 build's days, and the repair after a restore (the holding area is kept across restores, `sales_daily`
   isn't). **Unlinked customers' and guest sales count** (sales are sales; linking is the CRM's business).
+  **Speed** (follow-up): `localDateIn` keeps one `Intl.DateTimeFormat` per zone and remembers each day per UTC quarter
+  hour (as the Order Manager's `localDay.js`), and each held row's snapshot is parsed once (`snapshotOf`, a WeakMap per
+  row): 20,000 orders with 2,000 refunds are worked out in about 0.23 s (1.4 s before; JSON.parse is most of it).
 - **Listed** on Money → Sales once the connection has a secret or anything was received (state `nothing_yet` before
   the first event, `paused` with its switch). Link: `/wholesale`.
 - **`payments.unmatched`** (the Order Manager's A19 event, sent only while its "Send unmatched e-Transfer count to the
   suite" switch is on): a **state** — `{ count (int ≥ 0), total_cents (int ≥ 0), oldest_at (ISO | null; needed when count
-  > 0), page (its path, '/customers/etransfers') }`, nothing personal. `eventProblem` checks that shape (refused
-  otherwise); applied in arrival order, the latest wins, held in `wholesale_status` (`unmatched_*`, keepOnRestore with
-  the holding area: the Order Manager sends it again only when it changes) — `wholesale.unmatchedState()`. Shown on the
-  overview's payments section and in the `wom` Connections row's detail ("N e-Transfers with no matching order there").
+  > 0), page (its path, '/customers/etransfers') }` plus, optional (A19 review, additive), `suggested_count` /
+  `suggested_total_cents` (ints ≥ 0: notices waiting **with** a suggested match, not in `count`) and `stopped: true`
+  (sent once when its switch is turned off) — nothing personal. `eventProblem` checks that shape (refused otherwise);
+  applied in arrival order, the latest wins, held in `wholesale_status` (`unmatched_*`, keepOnRestore with the holding
+  area: the Order Manager sends it again only when it changes) — `wholesale.unmatchedState()` → `{ count, totalCents,
+  oldestAt, suggestedCount, suggestedTotalCents (null when not sent), stopped, page, at, receivedAt }`. Shown on the
+  overview's payments section and in the `wom` Connections row's detail ("N e-Transfers with no matching order there (as
+  of …)", or while stopped "The Order Manager stopped sending its unmatched e-Transfer count (switched off there) — last
+  count N on …").
 - **Deploy order** (the Order Manager's A19 says the same): the suite first (it accepts the new event and reads the raw
   fields; an older suite would refuse `payments.unmatched`), then the Order Manager with A19, then its "Check the suite is
   up to date" (re-sends every order with its raw totals: their days are rewritten), then its new switch. DEPLOY.md step 13.
@@ -2621,10 +2629,13 @@ migration `004_entries.sql`; shared `NOT_BY_HAND` / `byHandAllowed` (shared/sale
   up to tomorrow (a device in another zone), from 2000 on, a real calendar day. **Server data, not synced** (like D13's
   months): entering one needs a connection to the suite; not kept across restores.
 - **Not for every business (review decision)**: never for a business whose sales come from a connection — **Wholesale**
-  (the Order Manager), **Save Point Shop** (eBay; a month can be entered by hand on its eBay page, D13), **Retail
-  stores** (WooCommerce) — they would count twice, nor **Personal** (not a business that sells): 400 `not_by_hand` with
-  the reason (`NOT_BY_HAND`); an **archived** business only for an entry already on it. The sheet offers only the others
-  (today Great White North Design and Business consulting, and any business added later) and says why.
+  (the Order Manager), **Save Point Shop** (eBay; a month can be entered by hand on its eBay page, D13) — they would
+  count twice, nor **Personal** (not a business that sells): 400 `not_by_hand` with the reason (`NOT_BY_HAND`); an
+  **archived** business only for an entry already on it. **Retail stores are allowed with a warning** (follow-up
+  decision, `BY_HAND_WARNING`): "Only for a store not connected to WooCommerce (or sales outside it)" — a retail store
+  can run without the connection, and refusing would leave its sales nowhere; such entries make Retail's business and
+  overall sums total-only like any hand entry. The sheet offers the others (Great White North Design, Business
+  consulting, Retail stores with the warning, and any business added later) and says why.
 - **Idempotent**: the device makes the entry's id (UUIDv7) when the sheet opens: `POST /api/sales/entries { id, … }` →
   201; the same body again → 200 with the same entry; another body under that id → 409 `exists` — the sheet then
   **changes it with PUT** (review fix: a save whose reply was lost, then edited and saved again, is the same entry;
@@ -2681,11 +2692,17 @@ Server `server/src/modules/overview/` (no tables), client `client/src/modules/ov
      e-Transfers that matched no customer or order — its `payments.unmatched` count, total and oldest, as one line:
      "N e-Transfers with no matching order in the Order Manager: $X — record or dismiss them there: Customers →
      E-transfers (/customers/etransfers) · the oldest from …" (named, not linked: the suite doesn't know the Order
-     Manager's address); while it never sent one, a note says to turn its switch on; (b) customers whose payments come
+     Manager's address), always "as of" the day it was sent; notices waiting with a suggested match are a short line of
+     their own ("N more with a suggested match waiting to be recorded there") and **not counted** (decision: the money
+     is in and matched, one tap from being recorded — not urgent); while the latest state is `stopped` (its switch off)
+     the section shows "The Order Manager stopped sending its unmatched e-Transfer count (switched off there) — last count
+     N on …" and that count is left out of the section's count and the headline; while it never sent one, a note says to
+     turn its switch on; (b) customers whose payments come
      to more than every order that counts — a credit balance on the Balances page (`moneyLines().credit`: paid on account
      before ordering, paid twice, or paid on an order since cancelled and not refunded; store credit isn't a payment) —
      **regular depositors left out** (review decision): only credit of at least $1 (`CREDIT_MIN_CENTS`) whose newest
-     payment is more than 14 days old (`CREDIT_SETTLE_DAYS`) from a customer with no order for 30 days
+     payment is more than 14 days old (`CREDIT_SETTLE_DAYS`; its local Toronto day against the device's today) from a
+     customer with no order for 30 days
      (`CREDIT_QUIET_DAYS`). count = the e-Transfers + those customers.
   7. `noNextStep` — **one rule with Today and the Friday review** (review fix: `planner.noNextStep()` — C4a's
      `relationshipsWithoutNextStep` over every live relationship, wholesale exempt, closed clients included as on Today;
@@ -2836,7 +2853,9 @@ test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager chec
 Manager (needs `npm ci` in its `server/`) against a real suite and checks the timeline and spend against its own;
 Step 8 (D2) checks an automatic link on a clean email, a similar name only suggested, and an undo; step 9 (D11; needs an Order Manager
 with A19, else it says it is skipped) compares the suite's wholesale days with its P&L for every local day of the run and
-the whole range (exact cents with a 15 % discount) and its unmatched e-Transfer count (and `--capture` then also writes
+the whole range (exact cents with a 15 % discount; an evening order — 9:30 p.m. Toronto, its created_at moved in the
+Order Manager's database and its tags edited so `order.changed` goes — on its local day) and its unmatched e-Transfer
+count (on, a dismiss, then switched off: `stopped`) (and `--capture` then also writes
 the P&L's answers: `fixtures/wom-captured-sales.json`, which `wholesale-sales.test.js` replays).
 `--capture <file>` writes the events it sent (the fixture `server/test/fixtures/wom-captured-events.json`; D5's
 `wom-captured-notes.json` holds its A11 events and their customers' `customer.created`, taken from such a capture; step 7

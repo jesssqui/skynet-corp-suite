@@ -575,7 +575,8 @@ Afterwards:
 3. **In the Order Manager**: Settings → Integrations → Suite connection → **"Check the suite is up to date"** once: every
    order goes again with its exact (unrounded) totals; the suite rewrites their days (nothing doubles).
 4. **Then turn on "Send unmatched e-Transfer count to the suite"** there (same screen). The overview's *Payments with no
-   matching order* then shows the e-Transfers waiting unmatched in the Order Manager (it says to turn this on until then).
+   matching order* then shows the e-Transfers waiting unmatched in the Order Manager, as of when it last sent them (it
+   says to turn this on until then; turned off again, it shows the last count as stopped).
 
 Then check once:
 - **Wholesale matches the Order Manager's P&L.** In the Order Manager (admin): **Reports → P&L**, pick one past day (From
@@ -586,8 +587,8 @@ Then check once:
   tax and shipping, after refunds), like every other store's — not the P&L's Net Revenue.
 - **Sales entered by hand**: **Money → Sales → Sales entered by hand → Enter a sale** — invoices (consulting, website
   work) and anything no connection brings in; refunds and credit notes are entered as amounts and count down. Not for
-  Wholesale, Save Point Shop, the retail stores or Personal (their sales come from their connections). Needs a
-  connection to the suite.
+  Wholesale, Save Point Shop or Personal (their sales come from the Order Manager and eBay); Retail stores only for a
+  store not connected to WooCommerce (the sheet warns). Needs a connection to the suite.
 - **The overview** (`/overview`; on a phone: Today → *Overview*): sales per business and *To deal with*. Support emails
   show "Not connected yet · comes with the helpdesk (D14)" until D14.
 - **After restoring the suite from a backup**: nothing to do — the wholesale days are written again from the holding

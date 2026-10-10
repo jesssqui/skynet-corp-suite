@@ -428,6 +428,26 @@ async function main() {
       odd.push(r.data.order);
     }
     ok(odd.length === 3, 'three orders of 3 × $7.99 at 15 % off (an unrounded discount)');
+    // An evening order: entered at 9:30 p.m. in Toronto yesterday (after midnight UTC) — its created_at moved in the
+    // Order Manager's database, then a tag edit sends order.changed. Both sides count it on yesterday's local day.
+    const evening = zoneDay(-1);
+    const eveningAt = (() => {
+      const base = Date.parse(`${evening}T21:30:00Z`);
+      const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: ZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+      for (let h = 3; h <= 6; h += 1) {
+        const t = new Date(base + h * 3_600_000);
+        const p = Object.fromEntries(fmt.formatToParts(t).map((x) => [x.type, x.value]));
+        if (`${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}` === `${evening} 21:30`) return t;
+      }
+      throw new Error('no 9:30 p.m. in Toronto?');
+    })();
+    const eve = await placeOrder(bay.id, [{ product_id: 2, quantity: 3, unit_price: 7 }]);
+    {
+      const d = new Database(path.join(tmp, 'om', 'wom.db'));
+      d.prepare('UPDATE orders SET created_at = ? WHERE id = ?').run(eveningAt.toISOString().replace('T', ' ').slice(0, 19), eve.id);
+      d.close();
+    }
+    ok((await wom('PUT', `/api/orders/${eve.id}/tags`, { tags: ['evening'] })).status === 200, `an order entered at 9:30 p.m. Toronto on ${evening} (${eveningAt.toISOString()} UTC), its tags edited`);
     const gone = await placeOrder(bay.id, [{ product_id: 3, quantity: 2, unit_price: 5 }]);
     ok((await wom('POST', `/api/orders/${gone.id}/cancel`, {})).status === 200, 'another placed and cancelled (it doesn’t count)');
     // Given back today on older orders: money back on the 40-day-old one (in its proportion before tax) and store credit.
@@ -481,6 +501,8 @@ async function main() {
       days += 1;
       if (t.orders || t.refunds) withSales += 1;
     }
+    const eveningRow = ctx.services.sales.totals({ from: evening, to: evening, source: 'wholesale' }).overall[0];
+    ok(eveningRow?.orders === 1 && eveningRow.gross === 2100 && pnl.days[evening]?.total_orders === 1, `the evening order on ${evening} in the suite and in the P&L (not the next UTC day)`, { suite: eveningRow, wom: pnl.days[evening] });
     ok(!mismatches.length && withSales >= 3, `every local day from ${from} to ${to} (${days} days, ${withSales} with sales or refunds) = the P&L: orders, revenue, discounts, refunds + credit notes, net revenue`, mismatches);
     const todayRow = mine(ctx.services.sales.totals({ from: zoneDay(), to: zoneDay(), source: 'wholesale' }).overall[0]);
     ok(todayRow.discounts === c(pnl.days[zoneDay()].discounts_given), `today’s discounts to the cent with the unrounded ones ($${pnl.days[zoneDay()].discounts_given})`, todayRow);
@@ -502,6 +524,14 @@ async function main() {
     ok(payments?.unmatched?.count === 1 && payments.count >= 1, 'and the e-Transfer with no matching order', payments && { count: payments.count, unmatched: payments.unmatched });
     const strip = ov.data?.sales?.businesses?.find((b) => b.businessId === card?.businessId);
     ok(Boolean(strip?.today?.length || strip?.month?.length), 'and wholesale in the overview’s sales strip', strip);
+    // Its switch turned off: a last state marked stopped — the suite shows the last count, no longer counted.
+    ok((await wom('POST', '/api/settings/crm/unmatched', { on: false })).status === 200, 'the e-Transfer count switched off there');
+    await settle();
+    const off = ctx.services.wholesale.unmatchedState();
+    ok(off?.stopped === true && off.count === 1, 'the suite knows it stopped (last count 1)', off);
+    const ov2 = (await suite('GET', `/api/overview?today=${zoneDay()}`)).data.attention.find((x) => x.id === 'payments');
+    ok(ov2.unmatched.stopped && ov2.count === ov2.customers, 'the overview leaves the stopped count out', ov2);
+    ok(/stopped sending its unmatched e-Transfer count/.test(ctx.services.connections.get('wom').detail), 'and the Connections row says so');
   }
 
   if (CAPTURE) {
