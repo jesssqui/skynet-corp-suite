@@ -131,11 +131,31 @@ test('checked: our business, a real day not in the future, a kind, an amount abo
 
 test('D13’s eBay months entered by hand still work beside the entries', async (t) => {
   const { call, add, sales } = await setup(t);
-  assert.equal((await add({ businessId: BUSINESS_IDS.save_point, day: '2026-10-14', kind: 'sale', amount: 2500 })).status, 201);
+  assert.equal((await add({ businessId: CONSULTING, day: '2026-10-14', kind: 'sale', amount: 2500 })).status, 201);
   const put = await call('PUT', '/api/sales/manual/ebay/2026-10', { total: 123456, orders: 7 });
   assert.equal(put.status, 200);
   const ebay = sales.summary().stores.find((s) => s.source === 'ebay');
   assert.deepEqual(ebay.month.map((f) => [f.total, f.totalOnly]), [[123456, true]]);
   const sp = sales.summary().businesses.find((b) => b.businessId === BUSINESS_IDS.save_point);
-  assert.deepEqual(sp.month.map((f) => f.total), [123456 + 2500], 'the eBay month and the entry add up for Save Point Shop');
+  assert.deepEqual(sp.month.map((f) => f.total), [123456], 'Save Point Shop: the eBay month');
+  assert.deepEqual(sales.summary().overall.month.map((f) => f.total), [123456 + 2500], 'all together: the eBay month and the entry');
+});
+
+test('never for a business whose sales come from a connection (counted twice), Personal, or an archived business', async (t) => {
+  const { add, call, ctx } = await setup(t);
+  for (const [id, words] of [
+    [BUSINESS_IDS.wholesale, /Order Manager/], [BUSINESS_IDS.save_point, /eBay/], [BUSINESS_IDS.retail, /WooCommerce/], [BUSINESS_IDS.personal, /Personal/],
+  ]) {
+    const r = await add({ businessId: id, day: '2026-10-14', kind: 'sale', amount: 1000 });
+    assert.deepEqual([r.status, r.body.code], [400, 'not_by_hand']);
+    assert.match(r.body.error, words);
+  }
+  // An entry made before its business was archived can still be changed (and stays on it); a new one can't be made.
+  const id = newId();
+  assert.equal((await call('POST', '/api/sales/entries', { id, businessId: AGENCY, day: '2026-10-14', kind: 'sale', amount: 1000 })).status, 201);
+  ctx.services.sync.applyLocal({ actor: 'owner', entity: 'business', op: 'update', recordId: AGENCY, fields: { archived: true } });
+  assert.equal((await call('PUT', `/api/sales/entries/${id}`, { businessId: AGENCY, day: '2026-10-14', kind: 'sale', amount: 1200 })).status, 200);
+  const r = await add({ businessId: AGENCY, day: '2026-10-14', kind: 'sale', amount: 1000 });
+  assert.deepEqual([r.status, r.body.code], [400, 'not_by_hand']);
+  assert.match(r.body.error, /archived/);
 });

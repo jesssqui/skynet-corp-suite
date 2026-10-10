@@ -25,7 +25,7 @@ import { WHOLESALE_ENTITIES, NOTE_TYPES, checkServerOnly } from './entities.js';
 import {
   eventProblem, bodyProblem, isoTime, isDate, orderFigures, itemsSummary, ORDER_SNAPSHOT_EVENTS, ORDER_CREATION_EVENTS,
 } from './events.js';
-import { customerFigures, orderMoney, orderRhythm, owingByOrder, overdueOrders } from './figures.js';
+import { customerFigures, orderMoney, orderRhythm, owingByOrder, overdueOrders, countsAsOrder, daysBetween } from './figures.js';
 import { registerWholesaleAutomations } from './automations.js';
 import { registerFollowUpAutomation } from './followUps.js';
 import { createLinkChanges } from './linkChanges.js';
@@ -52,6 +52,13 @@ const REFUSAL_THROTTLE_MS = 60 * 1000;
 export const CARD_VERSION = 3; // D5: + follow_up_date
 const MONEY_KEY = { payment: 'payment_uid', refund: 'refund_uid', return: 'return_uid', credit_note: 'credit_note_uid' };
 const MONEY_EVENT = { 'payment.recorded': ['payment', 'payment'], 'refund.issued': ['refund', 'refund'], 'return.received': ['return', 'return'], 'credit_note.issued': ['credit_note', 'credit_note'] };
+
+/** D11 review: payments with no order to go against — credit of at least this much … */
+export const CREDIT_MIN_CENTS = 100;
+/** … whose newest payment is older than this (a payment ahead of an order isn't a problem yet) … */
+export const CREDIT_SETTLE_DAYS = 14;
+/** … from a customer with no order for this long (a regular depositor keeps using the credit up). */
+export const CREDIT_QUIET_DAYS = 30;
 
 const yieldNow = () => new Promise((r) => setImmediate(r));
 const clip = (s, max) => (s === null || s === undefined ? null : (String(s).length > max ? `${String(s).slice(0, max - 1)}…` : String(s)));
@@ -132,7 +139,7 @@ export function createWholesaleService(ctx) {
         order_uid = excluded.order_uid, amount_cents = excluded.amount_cents, subtotal_cents = excluded.subtotal_cents,
         removed = excluded.removed, removed_reason = excluded.removed_reason, moved_to = excluded.moved_to, at = excluded.at,
         snapshot = excluded.snapshot, updated_at = excluded.updated_at, dirty = 1`),
-    moneyOf: db.prepare('SELECT uid, kind, sub_kind, amount_cents, subtotal_cents, removed, moved_to, order_uid, return_uid FROM wholesale_held_money WHERE customer_uid = ?'),
+    moneyOf: db.prepare('SELECT uid, kind, sub_kind, amount_cents, subtotal_cents, removed, moved_to, order_uid, return_uid, at FROM wholesale_held_money WHERE customer_uid = ?'),
     moneyOnOrder: db.prepare('SELECT kind, sub_kind, amount_cents, subtotal_cents, removed, moved_to FROM wholesale_held_money WHERE order_uid = ?'),
     moneyDone: db.prepare('UPDATE wholesale_held_money SET record_id = ?, dirty = 0 WHERE uid = ?'),
 
@@ -301,6 +308,9 @@ export function createWholesaleService(ctx) {
     parts.push(`${w.linked} customer${w.linked === 1 ? '' : 's'} linked`);
     if (st.refused_events) parts.push(`${st.refused_events} event${st.refused_events === '1' ? '' : 's'} refused (shown in the Order Manager’s Settings)`);
     if (w.problems) parts.push(`${w.problems} linked to more than one account: undo one link`);
+    // D11 review: the Order Manager's unmatched e-Transfers (only while its switch is on).
+    const um = unmatchedState();
+    if (um?.count) parts.push(`${um.count} e-Transfer${um.count === 1 ? '' : 's'} with no matching order there`);
     // The latest refusal: from memory when newer than what was last written (writes are throttled).
     const fresh = refusals.at && !(st.last_error_at > refusals.at);
     const lastError = fresh ? refusals.message : st.last_error;
@@ -469,7 +479,9 @@ export function createWholesaleService(ctx) {
   function holdOrderDeleted(d, { at, eventTime }) {
     const prev = q.order.get(d.order_uid);
     if (d.order) return holdOrder(d.order, { deleted: true, reason: d.reason, creation: false, at, eventTime });
-    sales.touchOrder(d.order_uid); // D11: its days (it no longer counts)
+    // D11: its days (it no longer counts). Only before the upsert: without a snapshot its placed_at and money stay as
+    // they were, so its days after are the same ones.
+    sales.touchOrder(d.order_uid);
     const customerUid = prev?.customer_uid ?? d.customer_uid ?? null;
     q.upsertOrder.run({
       uid: d.order_uid,
@@ -555,6 +567,15 @@ export function createWholesaleService(ctx) {
     } else if (e.name === 'followup.changed') {
       info = holdFollowUp(d, { at, eventTime });
       subject = `follow_up:${d.customer_uid}`;
+    } else if (e.name === 'payments.unmatched') {
+      // D11 review: the Order Manager's unmatched e-Transfers, a state (latest arrival wins), kept in wholesale_status
+      // (keepOnRestore with the holding area: the Order Manager sends it only when it changes).
+      setStatus({
+        unmatched_count: String(d.count), unmatched_total_cents: String(d.total_cents), unmatched_oldest_at: isoTime(d.oldest_at),
+        unmatched_page: d.page, unmatched_at: eventTime ?? at, unmatched_received_at: at,
+      });
+      info = { customerUids: [], orderUid: null };
+      subject = 'payments_unmatched:state';
     } else {
       const [kind, field] = MONEY_EVENT[e.name];
       info = holdMoney(kind, d[field], d, { at, eventTime });
@@ -1388,36 +1409,59 @@ export function createWholesaleService(ctx) {
     clientId: c.client_id ?? null, accountId: c.account_id ?? null,
   });
   /**
-   * Customers owing money on orders more than 30 days old (D3's rule: the Order Manager's Balances page and its aging,
-   * owingByOrder + overdueOrders), linked or not — money owed is owed either way — biggest first:
-   * [{ uid, name, number, clientId, accountId, overdueCents, orders, oldestDate, balanceCents }].
+   * The overview's two wholesale money lines in one pass over the held customers (two queries each, once a request):
+   *  overdue  customers owing money on orders more than 30 days old (D3's rule: the Order Manager's Balances page and
+   *           its aging, owingByOrder + overdueOrders), linked or not — money owed is owed either way — biggest first:
+   *           [{ uid, name, number, clientId, accountId, overdueCents, orders, oldestDate, balanceCents }];
+   *  credit   payments with no order to go against: customers whose payments come to more than every order of theirs
+   *           that counts — the Order Manager's balance is a credit (owingByOrder's unused money): paid on account before
+   *           ordering, paid twice, or paid on an order since cancelled and not refunded. Store credit from a credit note
+   *           or a deleted order's payment isn't a payment here (as there). **Regular depositors are left out** (review
+   *           decision): listed only when the credit is at least CREDIT_MIN_CENTS, the newest payment is more than
+   *           CREDIT_SETTLE_DAYS old (a payment ahead of an order isn't a problem yet) and there has been no order for
+   *           CREDIT_QUIET_DAYS (credit an ordering customer keeps using up isn't one either):
+   *           [{ uid, name, …, unusedCents, lastPaymentAt, lastOrderDate }], biggest first.
    */
-  function overdueBalances(today) {
-    const out = [];
+  function moneyLines(today) {
+    const overdue = [];
+    const credit = [];
     for (const c of allHeldCustomers.all()) {
-      const owing = owingByOrder(q.ordersFull.all(c.uid), q.moneyOf.all(c.uid));
+      const orders = q.ordersFull.all(c.uid);
+      const money = q.moneyOf.all(c.uid);
+      const owing = owingByOrder(orders, money);
       const late = overdueOrders(owing, today);
-      if (!late.length) continue;
-      out.push({
-        ...customerLine(c), overdueCents: late.reduce((a, o) => a + o.owing_cents, 0), orders: late.length,
-        oldestDate: late[0].order_date, balanceCents: owing.balance_cents,
-      });
+      if (late.length) {
+        overdue.push({
+          ...customerLine(c), overdueCents: late.reduce((a, o) => a + o.owing_cents, 0), orders: late.length,
+          oldestDate: late[0].order_date, balanceCents: owing.balance_cents,
+        });
+      }
+      if (owing.unused_cents >= CREDIT_MIN_CENTS) {
+        const lastPaymentAt = money.filter((m) => m.kind === 'payment' && !m.removed && m.at).map((m) => m.at).sort().at(-1) ?? null;
+        const lastOrderDate = orders.filter((o) => countsAsOrder(o) && o.order_date).map((o) => o.order_date).sort().at(-1) ?? null;
+        const settled = !lastPaymentAt || daysBetween(lastPaymentAt.slice(0, 10), today) > CREDIT_SETTLE_DAYS;
+        const quiet = !lastOrderDate || daysBetween(lastOrderDate, today) > CREDIT_QUIET_DAYS;
+        if (settled && quiet) credit.push({ ...customerLine(c), unusedCents: owing.unused_cents, lastPaymentAt, lastOrderDate });
+      }
     }
-    return out.sort((a, b) => b.overdueCents - a.overdueCents || String(a.name).localeCompare(String(b.name)));
+    const byName = (a, b) => String(a.name).localeCompare(String(b.name));
+    overdue.sort((a, b) => b.overdueCents - a.overdueCents || byName(a, b));
+    credit.sort((a, b) => b.unusedCents - a.unusedCents || byName(a, b));
+    return { overdue, credit };
   }
+  const overdueBalances = (today) => moneyLines(today).overdue;
+  const paymentsWithoutOrder = (today) => moneyLines(today).credit;
   /**
-   * Payments with no order to go against (D11): customers whose payments come to more than every order of theirs
-   * that counts — the Order Manager's balance is a credit (owingByOrder's unused money): paid on account before
-   * ordering, paid twice, or paid on an order since cancelled and not refunded. Store credit from a credit note or a
-   * deleted order's payment isn't a payment here (as there). Biggest first: [{ uid, name, …, unusedCents }].
+   * D11 review: the Order Manager's unmatched e-Transfers as it last said (its A19 `payments.unmatched`, sent only while
+   * its switch is on): { count, totalCents, oldestAt, page, at, receivedAt }, or null when it never said.
    */
-  function paymentsWithoutOrder() {
-    const out = [];
-    for (const c of allHeldCustomers.all()) {
-      const owing = owingByOrder(q.ordersFull.all(c.uid), q.moneyOf.all(c.uid));
-      if (owing.unused_cents > 0) out.push({ ...customerLine(c), unusedCents: owing.unused_cents });
-    }
-    return out.sort((a, b) => b.unusedCents - a.unusedCents || String(a.name).localeCompare(String(b.name)));
+  function unmatchedState() {
+    const st = status();
+    if (st.unmatched_count === undefined || st.unmatched_count === null) return null;
+    return {
+      count: Number(st.unmatched_count), totalCents: Number(st.unmatched_total_cents ?? 0), oldestAt: st.unmatched_oldest_at ?? null,
+      page: st.unmatched_page ?? null, at: st.unmatched_at ?? null, receivedAt: st.unmatched_received_at ?? null,
+    };
   }
 
   /** D11, from the start hook (the sales module exists by then): register the source and write every day again. */
@@ -1431,7 +1475,7 @@ export function createWholesaleService(ctx) {
   return {
     receive, precheck, applyEvents, reconcile, reconcileAll, checkRestore, checkCardVersion, project, describe, status, startReconciler,
     /** D11: wholesale as a sales source (sales.js): startSales() at start; sales.flush() writes marked days. */
-    startSales, sales, overdueBalances, paymentsWithoutOrder,
+    startSales, sales, moneyLines, overdueBalances, paymentsWithoutOrder, unmatchedState,
     /** D3: a customer's money owing as the Order Manager's Balances page works it out (figures.js owingByOrder). */
     owingOf: (uid) => owingByOrder(q.ordersFull.all(uid), q.moneyOf.all(uid)),
     /** Latest Order Manager order time per client (Map client_id -> at), for "last activity" elsewhere (planner). */

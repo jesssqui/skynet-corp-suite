@@ -82,8 +82,15 @@ test('wholesale: balances over 30 days (the Balances page’s aging), payments w
   const old1 = om.order(late, [{ name: 'Zyn', quantity: 10, unit_price_cents: 1000 }], { order_date: addDays(TODAY, -45) }); // 11300
   const old2 = om.order(late, [{ name: 'ALP', quantity: 5, unit_price_cents: 1000 }], { order_date: addDays(TODAY, -40) }); // 5650
   const fresh = om.order(late, [{ name: 'Velo', quantity: 2, unit_price_cents: 1000 }], { order_date: addDays(TODAY, -3) }); // 2260
+  // Paid on account 20 days ago, no order since: listed. A regular depositor (paid ahead last week, ordering every week)
+  // and a payment made two days ago: not (review decision: credit an ordering customer uses up isn't a problem).
   const ahead = om.customer({ business_name: 'Bayview Variety' });
-  const onAccount = { ...om.payment({ order_uid: null, customer_uid: ahead.customer_uid, number: null, order_date: TODAY }, 5000) };
+  const onAccount = om.payment({ order_uid: null, customer_uid: ahead.customer_uid, number: null, order_date: addDays(TODAY, -20) }, 5000, { created_at: `${addDays(TODAY, -20)}T15:00:00.000Z` });
+  const regular = om.customer({ business_name: 'Weekly Smoke Shop' });
+  const weekly = om.order(regular, [{ name: 'Zyn', quantity: 1, unit_price_cents: 1000 }], { order_date: addDays(TODAY, -5) }); // 1130
+  const deposit = om.payment({ order_uid: null, customer_uid: regular.customer_uid, number: null, order_date: addDays(TODAY, -40) }, 50000, { created_at: `${addDays(TODAY, -40)}T15:00:00.000Z` });
+  const fresh2 = om.customer({ business_name: 'Fresh Start Variety' });
+  const justPaid = om.payment({ order_uid: null, customer_uid: fresh2.customer_uid, number: null, order_date: addDays(TODAY, -2) }, 3000, { created_at: `${addDays(TODAY, -2)}T15:00:00.000Z` });
   const paidUp = om.customer({ business_name: 'Harbour Smoke' });
   const hp = om.order(paidUp, [{ name: 'Zyn', quantity: 1, unit_price_cents: 1000 }], { order_date: addDays(TODAY, -50) });
   const r = await postEvents(base, secret, [
@@ -91,6 +98,8 @@ test('wholesale: balances over 30 days (the Balances page’s aging), payments w
     om.paymentRecorded(om.payment(old2, 2000)),
     om.customerCreated(ahead), om.paymentRecorded(onAccount),
     om.customerCreated(paidUp), om.orderPlaced(hp), om.paymentRecorded(om.payment(hp, 1130)),
+    om.customerCreated(regular), om.orderPlaced(weekly), om.paymentRecorded(deposit),
+    om.customerCreated(fresh2), om.paymentRecorded(justPaid),
   ], { ts: Math.floor(clock.now() / 1000) });
   assert.equal(r.status, 200);
   const body = (await overview()).body;
@@ -100,12 +109,18 @@ test('wholesale: balances over 30 days (the Balances page’s aging), payments w
   assert.deepEqual(balances.items.map((i) => [i.name, i.overdueCents, i.orders, i.oldestDate]), [['Northwind Corner Store', 14950, 2, addDays(TODAY, -45)]]);
   const payments = section(body, 'payments');
   assert.deepEqual(payments.items.map((i) => [i.name, i.unusedCents]), [['Bayview Variety', 5000]]);
+  assert.deepEqual([payments.count, payments.customers, payments.unmatched], [1, 1, null], 'the Order Manager hasn’t sent its e-Transfer count');
+  // Its A19 count of unmatched e-Transfers: counted in the section, shown as its own line.
+  const um = { name: 'payments.unmatched', version: 1, key: newId(), source: 'wom', time: new Date(clock.now()).toISOString(), data: { by: null, count: 3, total_cents: 45000, oldest_at: '2026-10-02T13:00:00.000Z', page: '/customers/etransfers' } };
+  assert.equal((await postEvents(base, secret, [um], { ts: Math.floor(clock.now() / 1000) })).body.results[0].status, 'applied');
+  const again = section((await overview()).body, 'payments');
+  assert.deepEqual([again.count, again.unmatched.count, again.unmatched.totalCents, again.unmatched.page], [4, 3, 45000, '/customers/etransfers']);
   await call('PUT', '/api/connections/wom', { paused: true });
   assert.equal(section((await overview()).body, 'balances').state, 'paused', 'paused: still the last known figures, marked');
 });
 
 test('renewals and retainers in 30 days (client services and our costs), relationships and leads with no next step, quiet clients', async (t) => {
-  const { local, overview, section, clock } = await setup(t);
+  const { local, overview, section, clock, ctx } = await setup(t);
   const longAgo = Date.parse(NOW) - 90 * 86_400_000;
   const clientId = local('client', { name: 'Lefty’s', status: 'active' }, { stampMs: longAgo });
   const accountId = local('account', { client_id: clientId, name: 'Lefty’s Vape Shop' }, { stampMs: longAgo });
@@ -121,6 +136,10 @@ test('renewals and retainers in 30 days (client services and our costs), relatio
   local('task', { title: 'Send the proposal', owner: 'owner', business_id: BUSINESS_IDS.consulting, relationship_id: busyRel, client_id: busy, due_date: addDays(TODAY, 3) });
   local('activity', { client_id: busy, type: 'note', body: 'Met', at: new Date(clock.now()).toISOString() });
   local('lead', { name: 'Maple Dental', business_id: BUSINESS_IDS.agency, kind: 'website', stage: 'talking' });
+  // A closed client's active relationship: flagged on Today and in the Friday review, so here too (one rule).
+  const closed = local('client', { name: 'Old Shop', status: 'closed' });
+  const closedAcc = local('account', { client_id: closed, name: 'Old Shop Inc' });
+  local('relationship', { account_id: closedAcc, business_id: BUSINESS_IDS.consulting, kind: 'consulting', status: 'active' });
   const body = (await overview()).body;
   const renewals = section(body, 'renewals');
   assert.deepEqual(renewals.items.map((i) => [i.kind, i.name, i.date]), [
@@ -129,8 +148,10 @@ test('renewals and retainers in 30 days (client services and our costs), relatio
   assert.deepEqual([renewals.count, renewals.services, renewals.costs], [3, 2, 1]);
   assert.equal(renewals.items[0].accountName, 'Lefty’s Vape Shop');
   const nns = section(body, 'noNextStep');
-  assert.deepEqual(nns.items.map((i) => [i.kind, i.accountName ?? i.name]), [['relationship', 'Lefty’s Vape Shop'], ['lead', 'Maple Dental']]);
-  assert.deepEqual([nns.relationships, nns.leads], [1, 1]);
+  assert.deepEqual(nns.items.map((i) => [i.kind, i.accountName ?? i.name]), [['relationship', 'Lefty’s Vape Shop'], ['relationship', 'Old Shop Inc'], ['lead', 'Maple Dental']]);
+  assert.deepEqual([nns.relationships, nns.leads], [2, 1]);
+  const { reviewNumbers } = await import('../src/modules/planner/automations.js');
+  assert.equal(reviewNumbers({ crm: ctx.services.crm, planner: ctx.services.planner, services: ctx.services }, TODAY).noNextStep, 2, 'the Friday review’s count is the same');
   const quiet = section(body, 'quiet');
   assert.deepEqual(quiet.items.map((i) => i.name), ['Lefty’s'], 'quiet for 60 days (made 90 days ago, nothing since)');
   assert.equal(quiet.days, 60);

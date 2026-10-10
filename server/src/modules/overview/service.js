@@ -17,14 +17,17 @@
 // tailnet like every other signed-in read.
 import { nowIso, localDate } from '@suite/shared/time';
 import { addDays } from '@suite/shared/planner';
-import { leadsWithoutNextStep } from '@suite/shared/leads';
-import { relationshipsToChase, quietClients, QUIET_DAYS } from '../planner/automations.js';
 
 /** At most this many items per section are sent (the count is always the full number). */
 export const MAX_ITEMS = 100;
 /** Renewals and retainers due within this many days (the Friday review's window). */
 export const RENEWAL_DAYS = 30;
 export const ATTENTION_SECTIONS = Object.freeze(['overdue', 'balances', 'renewals', 'lowStock', 'support', 'payments', 'noNextStep', 'quiet']);
+/**
+ * Review fix: the sections the page's headline adds up — the urgent ones. "No next step" and "Clients gone quiet" are
+ * standing lists (thousands at scale) shown with their own counts but left out of the headline.
+ */
+export const URGENT_SECTIONS = Object.freeze(['overdue', 'balances', 'renewals', 'lowStock', 'support', 'payments']);
 
 export function createOverviewService(ctx) {
   const { services, log } = ctx;
@@ -86,7 +89,7 @@ export function createOverviewService(ctx) {
   /** The Order Manager's state for the wholesale lines: not_connected (no secret, nothing received), paused or ok. */
   function womState() {
     const w = services.wholesale;
-    if (!w?.overdueBalances) return 'not_available';
+    if (!w?.moneyLines) return 'not_available';
     const set = Boolean(w.secretState?.()?.set);
     const counts = w.waitingCounts?.() ?? {};
     const any = (counts.customers ?? 0) + (counts.linked ?? 0) > 0;
@@ -94,10 +97,11 @@ export function createOverviewService(ctx) {
     return w.isPaused?.() ? 'paused' : 'ok';
   }
 
-  function balances(today) {
+  // The two wholesale money lines are worked out in one pass over the held customers, once a request.
+  function balances(lines) {
     const state = womState();
     if (state === 'not_available' || state === 'not_connected') return section('balances', { count: null, state });
-    const rows = services.wholesale.overdueBalances(today);
+    const rows = lines().overdue;
     return section('balances', {
       count: rows.length, state,
       totalCents: rows.reduce((a, r) => a + r.overdueCents, 0),
@@ -133,36 +137,41 @@ export function createOverviewService(ctx) {
   // The helpdesk is D14: nothing reads a support mailbox yet.
   const support = () => section('support', { count: null, state: 'not_connected', comesWith: 'the helpdesk (D14)' });
 
-  function payments() {
+  /**
+   * Payments with no matching order — both kinds (owner's decision): the Order Manager's e-Transfers that matched no
+   * customer or order (its A19 `payments.unmatched`: a count, a total and the oldest one's time — they are dealt with
+   * there, on `page`), and customers whose payments come to more than their orders here (wholesale.moneyLines' credit,
+   * regular depositors left out). count = the e-Transfers + those customers.
+   */
+  function payments(lines) {
     const state = womState();
     if (state === 'not_available' || state === 'not_connected') return section('payments', { count: null, state });
-    const rows = services.wholesale.paymentsWithoutOrder();
+    const rows = lines().credit;
+    const unmatched = services.wholesale.unmatchedState?.() ?? null;
     return section('payments', {
-      count: rows.length, state,
-      items: rows.map((r) => ({ id: r.uid, name: r.name, unusedCents: r.unusedCents, clientId: r.clientId })),
+      count: rows.length + (unmatched?.count ?? 0), state,
+      unmatched, customers: rows.length,
+      items: rows.map((r) => ({ id: r.uid, name: r.name, unusedCents: r.unusedCents, clientId: r.clientId, lastPaymentAt: r.lastPaymentAt })),
     });
   }
 
   function noNextStep(byId) {
-    const { crm, planner } = services;
-    if (!crm?.liveRelationships || !planner?.openRelationshipTasks) return section('noNextStep', { count: null, state: 'not_available' });
-    // C4a's rule as the "no next step" automation applies it: active clients, businesses not archived.
-    const rels = relationshipsToChase({ crm, planner }).map((r) => ({
+    const { planner } = services;
+    if (!planner?.noNextStep) return section('noNextStep', { count: null, state: 'not_available' });
+    // The same rule as Today and the Friday review (planner.noNextStep), so the three counts agree.
+    const found = planner.noNextStep();
+    const rels = found.relationships.map((r) => ({
       kind: 'relationship', id: r.id, accountName: r.account_name, clientId: r.client_id, clientName: r.client_name,
       business: r.business_name, relationshipKind: r.kind,
     }));
-    // D8: open leads with no dated next step (businesses not archived).
-    const leads = crm.liveLeads && planner.openLeadTasks
-      ? leadsWithoutNextStep({ leads: crm.liveLeads().filter((l) => !byId.get(l.business_id)?.archived), tasks: planner.openLeadTasks() })
-        .map((l) => ({ kind: 'lead', id: l.id, name: l.name, stage: l.stage, business: byId.get(l.business_id)?.name ?? null }))
-      : [];
+    const leads = found.leads.map((l) => ({ kind: 'lead', id: l.id, name: l.name, stage: l.stage, business: byId.get(l.business_id)?.name ?? null }));
     return section('noNextStep', { count: rels.length + leads.length, items: [...rels, ...leads], relationships: rels.length, leads: leads.length });
   }
 
   function quiet(today) {
-    if (!services.crm?.activeClientsWithLastActivity) return section('quiet', { count: null, state: 'not_available' });
-    const rows = quietClients({ crm: services.crm, services }, today);
-    return section('quiet', { count: rows.length, days: QUIET_DAYS, items: rows.map((c) => ({ id: c.id, name: c.name, since: c.since })) });
+    if (!services.planner?.quietClients) return section('quiet', { count: null, state: 'not_available' });
+    const rows = services.planner.quietClients(today);
+    return section('quiet', { count: rows.length, days: services.planner.quietDays, items: rows.map((c) => ({ id: c.id, name: c.name, since: c.since })) });
   }
 
   /** The whole overview for one person (`actor`: whose overdue tasks are "mine") on `today` (the device's day). */
@@ -175,17 +184,19 @@ export function createOverviewService(ctx) {
     } catch (err) {
       log?.error?.('overview: sales failed:', err);
     }
+    let memo = null;
+    const lines = () => (memo ??= services.wholesale.moneyLines(day));
     const attention = [
       guarded('overdue', () => overdue(day, actor, byId)),
-      guarded('balances', () => balances(day)),
+      guarded('balances', () => balances(lines)),
       guarded('renewals', () => renewals(day, byId)),
       guarded('lowStock', () => lowStock()),
       support(),
-      guarded('payments', () => payments()),
+      guarded('payments', () => payments(lines)),
       guarded('noNextStep', () => noNextStep(byId)),
       guarded('quiet', () => quiet(day)),
     ];
-    return { at: nowIso(new Date(clock())), today: day, sales, attention };
+    return { at: nowIso(new Date(clock())), today: day, sales, attention, urgent: URGENT_SECTIONS };
   }
 
   return { overview };
