@@ -10,6 +10,7 @@ export { OWNERS, SHARED };
 /** The CRM's synced record types (entity names), in the order a client's records hang together. */
 export const CRM_ENTITY_NAMES = Object.freeze([
   'business', 'client', 'account', 'contact', 'consent', 'relationship', 'service', 'activity', 'link',
+  'lead', 'lead_activity', // D8
 ]);
 
 export const CLIENT_STATUSES = Object.freeze(['active', 'closed']);

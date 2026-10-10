@@ -6,18 +6,20 @@
 // A trigger is one of:
 //   { type: 'schedule', every: 'day', at: '07:30' }               every day at 7:30 a.m.
 //   { type: 'schedule', every: 'week', day: 'fri', at: '08:00' }  every Friday at 8:00 a.m.
+//   { type: 'schedule', every: 'month', at: '08:05' }             the first workday of each month (D8): the
+//                                                                 month's first Monday–Friday (holidays aren't known)
 //   { type: 'event', event: 'order.placed', label?, key(data) }   when an event happens (D packages)
 //   { type: 'event', events: ['order.packed', 'order.shipped'], label?, key(data), accept?(data) }
 //                                                                 when any of several events happens (D3);
 //                                                                 accept(data) false = not this one (no run)
 //
-// A scheduled automation runs once per **period** (its day, or its Monday–Sunday week): the run
-// key is "<automation id>:<period key>" (period key "2026-10-08" or ISO week "2026-W41"). The
+// A scheduled automation runs once per **period** (its day, its Monday–Sunday week, or its month): the run
+// key is "<automation id>:<period key>" (period key "2026-10-08", ISO week "2026-W41" or "2026-10"). The
 // scheduler runs it once the period's time has passed and that key has no successful scheduled
 // run — so restarts, catch-ups and two servers never run a period twice, and after downtime only
 // the current period is caught up (missed earlier ones are not run one by one).
 import { localDate } from '@suite/shared/time';
-import { addDays, weekStart } from '@suite/shared/planner';
+import { addDays, weekStart, monthStart, addMonthStarts, weekday } from '@suite/shared/planner';
 
 export const WEEKDAYS = Object.freeze(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']);
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -29,12 +31,12 @@ export function checkTrigger(trigger) {
   if (!trigger || typeof trigger !== 'object') throw new Error('trigger: an object');
   if (trigger.type === 'schedule') {
     if (!TIME_RE.test(trigger.at ?? '')) throw new Error(`trigger.at: "HH:MM" (24-hour), got ${trigger.at}`);
-    if (trigger.every === 'day') return trigger;
+    if (trigger.every === 'day' || trigger.every === 'month') return trigger;
     if (trigger.every === 'week') {
       if (!WEEKDAYS.includes(trigger.day)) throw new Error(`trigger.day: one of ${WEEKDAYS.join(', ')}`);
       return trigger;
     }
-    throw new Error("trigger.every: 'day' or 'week'");
+    throw new Error("trigger.every: 'day', 'week' or 'month'");
   }
   if (trigger.type === 'event') {
     if (trigger.events !== undefined) {
@@ -69,6 +71,7 @@ export function triggerText(trigger) {
   if (trigger.type === 'event') return trigger.label ?? `When ${triggerEvents(trigger).join(' or ')} happens`;
   const at = clockText(trigger.at);
   if (trigger.every === 'day') return `Every day at ${at}`;
+  if (trigger.every === 'month') return `The first workday of each month at ${at}`;
   return `Every ${DAY_NAMES[WEEKDAYS.indexOf(trigger.day)]} at ${at}`;
 }
 
@@ -77,6 +80,13 @@ export function atLocal(ymd, hhmm) {
   const [y, mo, d] = ymd.split('-').map(Number);
   const [h, m] = hhmm.split(':').map(Number);
   return new Date(y, mo - 1, d, h, m, 0, 0);
+}
+
+/** The first Monday–Friday of the month that starts on `first` ("YYYY-MM-01"). */
+export function firstWorkday(first) {
+  let d = first;
+  while (['sat', 'sun'].includes(WEEKDAYS[weekday(d)])) d = addDays(d, 1);
+  return d;
 }
 
 /** ISO 8601 week of a day: "2026-W41" (weeks start Monday; week 1 holds the year's first Thursday). */
@@ -99,6 +109,11 @@ export function periodOf(trigger, now) {
   const today = localDate(now instanceof Date ? now : new Date(now));
   if (trigger.every === 'day') {
     return { key: today, start: today, day: today, dueAt: atLocal(today, trigger.at), nextDueAt: atLocal(addDays(today, 1), trigger.at) };
+  }
+  if (trigger.every === 'month') {
+    const first = monthStart(today);
+    const day = firstWorkday(first);
+    return { key: first.slice(0, 7), start: first, day, dueAt: atLocal(day, trigger.at), nextDueAt: atLocal(firstWorkday(addMonthStarts(first, 1)), trigger.at) };
   }
   const monday = weekStart(today);
   const day = addDays(monday, WEEKDAYS.indexOf(trigger.day));

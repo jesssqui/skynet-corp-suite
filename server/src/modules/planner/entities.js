@@ -34,6 +34,9 @@ export const PLANNER_ENTITIES = [
       // C4b: the week goal or month priority it belongs to. A plain ref: deleting a goal never
       // hides its tasks (they become unplanned again).
       goal_id: { type: 'id', ref: 'goal' },
+      // D8: the lead it is the next step for. A plain ref (deleting a lead never hides its tasks); an open
+      // dated task naming a lead clears its "No next step" (leadsWithoutNextStep in @suite/shared/leads).
+      lead_id: { type: 'id', ref: 'lead' },
     },
   },
   {

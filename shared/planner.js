@@ -28,8 +28,8 @@ export const PLANNER_ENTITY_NAMES = Object.freeze(['task', 'inbox_item', 'goal',
 /** Where an inbox item was captured: typed (on the Mac), phone, Siri or the share sheet (C5). */
 export const INBOX_SOURCES = Object.freeze(['typed', 'phone', 'siri', 'share']);
 
-/** What an inbox item became (`became_entity`); free text on the record so D8 can add 'lead'. */
-export const INBOX_BECAME = Object.freeze(['task', 'activity']);
+/** What an inbox item became (`became_entity`; free text on the record): D8 added 'lead'. */
+export const INBOX_BECAME = Object.freeze(['task', 'activity', 'lead']);
 
 export const TASK_TITLE_MAX = 300;
 export const INBOX_TEXT_MAX = 5000;

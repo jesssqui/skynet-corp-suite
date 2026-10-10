@@ -7,6 +7,26 @@ import { normalizePhone } from '@suite/shared/normalize';
 import { OUR_BUSINESSES, consentStatus } from '@suite/shared/crm';
 import { CRM_ENTITIES, CRM_ENTITY } from './entities.js';
 import { createImportService } from './import.js';
+import { isCurrency } from '@suite/shared/costs';
+
+/**
+ * D8: a lead step's own rules, right in any arrival order (only the step's values and the row before
+ * it): a step that makes a lead lost carries its reason; one that makes it won names the client it
+ * became (or the lead already does); the currency is three capital letters; the value is 0 or more.
+ */
+export function checkLead({ op, fields, current }) {
+  if (op === 'delete' || !fields) return null;
+  const has = (k) => Object.hasOwn(fields, k) && fields[k] !== null;
+  if (fields.stage === 'lost' && !(has('lost_reason') || (op === 'update' && current?.stage === 'lost' && current?.lost_reason))) {
+    return { code: 'invalid_value', reason: 'lost_reason: say why the lead was lost' };
+  }
+  if (fields.stage === 'won' && !(has('won_client_id') || current?.won_client_id)) {
+    return { code: 'invalid_value', reason: 'won_client_id: a won lead names the client it became' };
+  }
+  if (has('currency') && !isCurrency(fields.currency)) return { code: 'invalid_value', reason: 'currency: three capital letters, like CAD or USD' };
+  if (has('value_cents') && !(fields.value_cents >= 0)) return { code: 'invalid_value', reason: 'value_cents: 0 or more' };
+  return null;
+}
 
 export const LIMITS = { listDefault: 50, listMax: 200, recentActivities: 20 };
 // Seeds are stamped at this old, fixed time (+ position ms): any real edit is later and wins.
@@ -46,7 +66,7 @@ export function createCrmService({ db, services, log }) {
     };
   }
 
-  const checks = { link: checkLink };
+  const checks = { link: checkLink, lead: checkLead };
   for (const def of CRM_ENTITIES) sync.registerEntity({ module: 'crm', ...def, ...(checks[def.entity] ? { check: checks[def.entity] } : {}) });
 
   /** A row as the API shows it: synced fields (booleans as true/false), who/when, and its sync state. */
@@ -302,6 +322,23 @@ export function createCrmService({ db, services, log }) {
       ORDER BY p.account_id IS NULL, p.created_at, p.id`),
   };
 
+  // ---- reads for leads and the cross-sell list (D8) ----------------------------------------
+  const forLeads = {
+    leads: db.prepare(`SELECT l.* FROM crm_leads l JOIN crm_businesses b ON b.id = l.business_id AND b.deleted_at IS NULL
+      WHERE l.deleted_at IS NULL ORDER BY l.created_at, l.id`),
+    clients: db.prepare('SELECT * FROM crm_clients WHERE deleted_at IS NULL'),
+    accounts: db.prepare(`SELECT a.* FROM crm_accounts a JOIN crm_clients c ON c.id = a.client_id AND c.deleted_at IS NULL
+      WHERE a.deleted_at IS NULL`),
+    contacts: db.prepare(`SELECT p.* FROM crm_contacts p JOIN crm_clients c ON c.id = p.client_id AND c.deleted_at IS NULL
+      WHERE p.deleted_at IS NULL`),
+    consents: db.prepare(`SELECT k.* FROM crm_consents k JOIN crm_contacts p ON p.id = k.contact_id AND p.deleted_at IS NULL
+      JOIN crm_clients c ON c.id = p.client_id AND c.deleted_at IS NULL
+      JOIN crm_businesses b ON b.id = k.business_id AND b.deleted_at IS NULL WHERE k.deleted_at IS NULL`),
+    relationships: db.prepare(`SELECT r.* FROM crm_relationships r ${REL_PARENTS}
+      JOIN crm_clients c ON c.id = a.client_id AND c.deleted_at IS NULL WHERE r.deleted_at IS NULL`),
+  };
+  const plain = (entity) => (r) => view(entity, r, { withSync: false });
+
   // ---- reads for matching and undoing links (D2) -----------------------------------------
   const forMatching = {
     clients: db.prepare('SELECT id, name, status FROM crm_clients WHERE deleted_at IS NULL'),
@@ -444,5 +481,19 @@ export function createCrmService({ db, services, log }) {
     liveService: (id) => (isId(id) ? live.service.get(id) ?? null : null),
     /** Live active clients with created_at and the time of their latest activity (null when none). */
     activeClientsWithLastActivity: () => live.clientsActivity.all(),
+    /** D8: every live lead (any stage; its business live), oldest first, as the API shows records (no sync state). */
+    liveLeads: () => forLeads.leads.all().map(plain('lead')),
+    /**
+     * D8 (the monthly cross-sell list, crossSellList in @suite/shared/leads): the live clients, accounts
+     * (booleans as true/false: age_restricted), relationships, contacts, consents and leads it reads.
+     */
+    crossSellInputs: () => ({
+      clients: forLeads.clients.all().map(plain('client')),
+      accounts: forLeads.accounts.all().map(plain('account')),
+      relationships: forLeads.relationships.all().map(plain('relationship')),
+      contacts: forLeads.contacts.all().map(plain('contact')),
+      consents: forLeads.consents.all().map(plain('consent')),
+      leads: forLeads.leads.all().map(plain('lead')),
+    }),
   };
 }
