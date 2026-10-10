@@ -12,12 +12,19 @@
 // Totals only: no order, item, customer, email or address ever reaches these tables (the stores' order lookups are
 // live and never stored — woocommerce/service.js). Not synced: devices read the API (the page needs a connection).
 // It reads and writes only its own tables; our businesses' names come through the CRM's service.
-import { nowIso } from '@suite/shared/time';
+import { nowIso, localDate } from '@suite/shared/time';
 import { addMonths } from '@suite/shared/crm';
-import { SALES_SOURCES, SALES_FIGURES, sumByCurrency, localDateIn, salesPeriods, zeroFigures } from '@suite/shared/sales';
+import { addDays } from '@suite/shared/planner';
+import { isId } from '@suite/shared/ids';
+import {
+  SALES_SOURCES, SALES_FIGURES, ENTRY_KINDS, sumByCurrency, localDateIn, salesPeriods, zeroFigures, handStoreKey, signedAmount,
+} from '@suite/shared/sales';
 import { HttpError } from '../../lib/httpError.js';
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** "YYYY-MM-DD" that is a day on the calendar (not Feb 30). */
+const realDay = (d) => typeof d === 'string' && DAY_RE.test(d) && !Number.isNaN(Date.parse(`${d}T00:00:00Z`))
+  && new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) === d;
 const CURRENCY_RE = /^[A-Z]{3}$/;
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 /** How many months the months() list shows (this one and the 12 before: a year to compare with). */
@@ -51,6 +58,20 @@ export function createSalesService(ctx) {
     markReplaced: db.prepare('UPDATE sales_manual_months SET replaced_at = ? WHERE store = ? AND month = ? AND replaced_at IS NULL'),
     dropManual: db.prepare('DELETE FROM sales_manual_months WHERE store = ? AND month = ?'),
     lastFetched: db.prepare('SELECT source, store, MAX(fetched_at) AS fetched_at, MIN(day) AS first_day, MAX(day) AS last_day FROM sales_daily GROUP BY source, store'),
+    storeDays: db.prepare('SELECT day FROM sales_daily WHERE source = ? AND store = ? ORDER BY day'),
+    // D11: sales entered by hand.
+    entry: db.prepare('SELECT * FROM sales_entries WHERE id = ?'),
+    insertEntry: db.prepare(`INSERT INTO sales_entries (id, business_id, day, kind, amount, currency, orders, note,
+        entered_at, entered_by, entered_device, updated_at, updated_by)
+      VALUES (@id, @business_id, @day, @kind, @amount, @currency, @orders, @note, @at, @actor, @device, @at, @actor)`),
+    updateEntry: db.prepare(`UPDATE sales_entries SET business_id = @business_id, day = @day, kind = @kind, amount = @amount,
+      currency = @currency, orders = @orders, note = @note, updated_at = @at, updated_by = @actor WHERE id = @id`),
+    deleteEntry: db.prepare('DELETE FROM sales_entries WHERE id = ?'),
+    handDay: db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total, COALESCE(SUM(CASE WHEN kind = 'sale' THEN orders END), 0) AS orders
+      FROM sales_entries WHERE business_id = ? AND currency = ? AND day = ?`),
+    handCount: db.prepare('SELECT COUNT(*) AS n FROM sales_entries WHERE business_id = ? AND currency = ?'),
+    dropDay: db.prepare('DELETE FROM sales_daily WHERE source = ? AND store = ? AND day = ?'),
+    dropStore: db.prepare('DELETE FROM sales_stores WHERE source = ? AND store = ?'),
   };
   const sources = new Map();
 
@@ -122,8 +143,10 @@ export function createSalesService(ctx) {
    * only its total and orders mean anything (a hand entry's net, tax, shipping… are 0 placeholders, not known), so
    * nobody reads a breakdown from it: the store's card, per business and overall alike.
    */
+  // D11: rows entered by hand (source 'manual') know only their total and orders too.
+  const isTotalOnly = (r) => Boolean(r.totalOnly) || r.source === 'manual';
   const marked = (rows) => figures(sumByCurrency(rows))
-    .map((f) => (rows.some((r) => r.totalOnly && r.currency === f.currency) ? { ...f, totalOnly: true } : f));
+    .map((f) => (rows.some((r) => isTotalOnly(r) && r.currency === f.currency) ? { ...f, totalOnly: true } : f));
   const group = (rows, keyOf) => {
     const g = new Map();
     for (const r of rows) {
@@ -141,11 +164,12 @@ export function createSalesService(ctx) {
   function totals({ from, to, business = null, store = null, source = null }) {
     const rows = filtered({ from, to, business, store, source });
     const names = new Map(q.knownStores.all().map((s) => [`${s.source}|${s.store}`, s.name]));
-    const stores = [...group(rows, (r) => `${r.source}|${r.store}`)].flatMap(([key, rs]) => figures(sumByCurrency(rs)).map((f) => ({
+    // D11: figures with hand-entered rows among them are marked totalOnly (only total and orders known), as in summary().
+    const stores = [...group(rows, (r) => `${r.source}|${r.store}`)].flatMap(([key, rs]) => marked(rs).map((f) => ({
       source: rs[0].source, store: rs[0].store, name: names.get(key) ?? rs[0].store, business_id: rs[0].business_id, ...f,
     })));
-    const businesses = [...group(rows, (r) => r.business_id ?? '')].flatMap(([b, rs]) => figures(sumByCurrency(rs)).map((f) => ({ business_id: b || null, ...f })));
-    return { from, to, overall: figures(sumByCurrency(rows)), businesses, stores };
+    const businesses = [...group(rows, (r) => r.business_id ?? '')].flatMap(([b, rs]) => marked(rs).map((f) => ({ business_id: b || null, ...f })));
+    return { from, to, overall: marked(rows), businesses, stores };
   }
 
   /**
@@ -168,6 +192,15 @@ export function createSalesService(ctx) {
     }
     for (const [key, s] of known) {
       if (seen.has(key)) continue;
+      if (s.source === 'manual') {
+        // D11: a business's sales entered by hand (one card per currency), always "connected".
+        list.push({
+          source: 'manual', sourceLabel: 'Entered by hand', connected: true, store: s.store, name: handName(s.business_id, s.currency),
+          businessId: s.business_id, currency: s.currency, timeZone: null, state: 'by_hand', lastSuccessAt: null, lastError: null,
+          link: `/costs/sales/entries?business=${s.business_id}`,
+        });
+        continue;
+      }
       list.push({
         source: s.source, sourceLabel: sources.get(s.source)?.label ?? s.source, connected: false, store: s.store, name: s.name,
         businessId: s.business_id, currency: s.currency, timeZone: s.time_zone, state: 'removed', lastSuccessAt: null, lastError: null, link: null,
@@ -349,11 +382,133 @@ export function createSalesService(ctx) {
       }
       for (const [key, rs] of group(rows, (r) => `${r.source}|${r.store}`)) {
         if (replacedByHand.has(key)) continue;
-        for (const f of figures(sumByCurrency(rs))) out.push({ month, source: rs[0].source, store: rs[0].store, business_id: rs[0].business_id, from: 'real', ...f, key });
+        for (const f of marked(rs)) out.push({ month, source: rs[0].source, store: rs[0].store, business_id: rs[0].business_id, from: 'real', ...f, key });
       }
     }
     return { months: out.map(({ key, ...r }) => r) };
   }
 
-  return { registerSource, putDays, setStore, dayCount, totals, summary, putManualMonth, deleteManualMonth, months, monthly, hasDays };
+  // ---- sales entered by hand (D11) ----------------------------------------------------------------------
+  /** "Business consulting" / "Business consulting (USD)": a hand store's card name (the business's current name). */
+  function handName(businessId, currency) {
+    const b = businessId ? services.crm?.getBusiness?.(businessId) : null;
+    const name = b?.name ?? 'Unknown business';
+    return currency && currency !== 'CAD' ? `${name} (${currency})` : name;
+  }
+  /** The days a business's entries in one currency add up to, written again (a day with none left is removed). */
+  function rebuildHand(businessId, currency, days) {
+    const store = handStoreKey(businessId, currency);
+    const at = nowIso(new Date(clock()));
+    for (const day of new Set(days)) {
+      const r = q.handDay.get(businessId, currency, day);
+      if (!r.n) {
+        q.dropDay.run('manual', store, day);
+        continue;
+      }
+      q.put.run({
+        source: 'manual', store, day, business_id: businessId, currency, fetched_at: at,
+        ...zeroFigures(), total: r.total, orders: r.orders,
+      });
+    }
+    if (q.handCount.get(businessId, currency).n) {
+      q.putStore.run({ source: 'manual', store, name: handName(businessId, currency), business_id: businessId, currency, time_zone: null, at });
+    } else {
+      q.dropStore.run('manual', store);
+    }
+  }
+  const entryView = (e) => (e ? {
+    id: e.id, businessId: e.business_id, day: e.day, kind: e.kind, amount: e.amount, currency: e.currency, orders: e.orders,
+    note: e.note, enteredAt: e.entered_at, enteredBy: e.entered_by, updatedAt: e.updated_at, updatedBy: e.updated_by,
+  } : null);
+  const bad = (code, message) => new HttpError(400, message, undefined, { code });
+  /**
+   * An entry's values checked and cleaned: { businessId, day, kind, amount (cents, > 0 as typed), currency?, orders?,
+   * note? } → the row's fields (amount signed). Refunds and credit notes take no orders.
+   */
+  function cleanEntry(body = {}) {
+    const { businessId, day, kind, amount, currency = 'CAD', orders = null, note = null } = body ?? {};
+    if (!isId(businessId) || !services.crm?.getBusiness?.(businessId)) throw bad('bad_business', 'Pick one of our businesses');
+    if (!realDay(day) || day < '2000-01-01') throw bad('bad_day', 'A day is YYYY-MM-DD');
+    // A day or so ahead is let through (a phone in another time zone); later than that is a typo.
+    if (day > addDays(localDate(new Date(clock())), 1)) throw bad('bad_day', 'That day hasn’t come yet');
+    if (!ENTRY_KINDS.includes(kind)) throw bad('bad_kind', 'A sale, a refund or a credit note');
+    if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 1_000_000_000) throw bad('bad_amount', 'The amount is a whole number of cents, more than 0 (a refund is entered as an amount, it counts down)');
+    const cur = String(currency ?? 'CAD').toUpperCase();
+    if (!CURRENCY_RE.test(cur)) throw bad('bad_currency', 'A currency is three letters (CAD, USD)');
+    let n = null;
+    if (orders !== null && orders !== undefined && orders !== '') {
+      if (kind !== 'sale') throw bad('bad_orders', 'Only a sale has orders');
+      if (!Number.isSafeInteger(orders) || orders < 0 || orders > 100_000) throw bad('bad_orders', 'Orders is a whole number');
+      n = orders;
+    }
+    const text = note === null || note === undefined ? null : String(note).trim().slice(0, 500) || null;
+    return { business_id: businessId, day, kind, amount: signedAmount(kind, amount), currency: cur, orders: n, note: text };
+  }
+  const sameEntry = (row, f) => ['business_id', 'day', 'kind', 'amount', 'currency', 'orders', 'note'].every((k) => (row[k] ?? null) === (f[k] ?? null));
+
+  /**
+   * Add an entry with the id the device made (UUIDv7, once per sheet): the same request sent again answers the same entry
+   * (200); another entry under that id → 409 exists. → { entry, created }
+   */
+  function addEntry(id, body, { actor, deviceId = null }) {
+    if (!isId(id)) throw bad('bad_id', 'The entry needs an id (UUIDv7)');
+    const f = cleanEntry(body);
+    return db.transaction(() => {
+      const prev = q.entry.get(id);
+      if (prev) {
+        if (sameEntry(prev, f)) return { entry: entryView(prev), created: false };
+        throw new HttpError(409, 'Another entry was already saved under this id', undefined, { code: 'exists' });
+      }
+      q.insertEntry.run({ id, ...f, at: nowIso(new Date(clock())), actor, device: deviceId });
+      rebuildHand(f.business_id, f.currency, [f.day]);
+      return { entry: entryView(q.entry.get(id)), created: true };
+    })();
+  }
+  /** Change an entry (any field): its old and new days are written again. → { entry } */
+  function updateEntry(id, body, { actor }) {
+    const f = cleanEntry(body);
+    return db.transaction(() => {
+      const prev = q.entry.get(id);
+      if (!prev) throw new HttpError(404, 'That entry isn’t here any more', undefined, { code: 'not_found' });
+      q.updateEntry.run({ id, ...f, at: nowIso(new Date(clock())), actor });
+      rebuildHand(prev.business_id, prev.currency, [prev.day]);
+      rebuildHand(f.business_id, f.currency, [f.day]);
+      return { entry: entryView(q.entry.get(id)) };
+    })();
+  }
+  /** Delete an entry (deleting one already gone is fine: a retry). → { deleted } */
+  function deleteEntry(id) {
+    return db.transaction(() => {
+      const prev = q.entry.get(id);
+      if (!prev) return { deleted: false };
+      q.deleteEntry.run(id);
+      rebuildHand(prev.business_id, prev.currency, [prev.day]);
+      return { deleted: true };
+    })();
+  }
+  /**
+   * Entries, newest day first (then newest entered): { entries, total, limit, offset, sums: [{ currency, total }] } for
+   * one business or all, from…to (days, optional).
+   */
+  function listEntries({ business = null, from = null, to = null, limit = 50, offset = 0 } = {}) {
+    const where = ['1 = 1'];
+    const args = [];
+    if (business) { where.push('business_id = ?'); args.push(business); }
+    if (from) { where.push('day >= ?'); args.push(from); }
+    if (to) { where.push('day <= ?'); args.push(to); }
+    const w = where.join(' AND ');
+    const rows = db.prepare(`SELECT * FROM sales_entries WHERE ${w} ORDER BY day DESC, entered_at DESC, id DESC LIMIT ? OFFSET ?`).all(...args, limit, offset);
+    const total = db.prepare(`SELECT COUNT(*) AS n FROM sales_entries WHERE ${w}`).get(...args).n;
+    const sums = db.prepare(`SELECT currency, SUM(amount) AS total FROM sales_entries WHERE ${w} GROUP BY currency ORDER BY currency = 'CAD' DESC, currency`).all(...args);
+    return { entries: rows.map(entryView), total, limit, offset, sums };
+  }
+  const getEntry = (id) => entryView(q.entry.get(id));
+
+  /** D11: the days a store has rows for (a source rewriting all its days finds the ones that now have nothing). */
+  const storeDays = ({ source, store }) => q.storeDays.all(source, store).map((r) => r.day);
+
+  return {
+    registerSource, putDays, setStore, dayCount, totals, summary, putManualMonth, deleteManualMonth, months, monthly, hasDays,
+    storeDays, addEntry, updateEntry, deleteEntry, listEntries, getEntry,
+  };
 }

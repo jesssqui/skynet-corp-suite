@@ -7,6 +7,11 @@
 //   PUT    /manual/:store/:month { total, currency?, orders?, note? }   enter or correct a month (cents)
 //   DELETE /manual/:store/:month
 //   GET    /monthly?from=YYYY-MM&to=YYYY-MM   per store and month, with hand-entered months where there are no days (D15)
+// D11, sales entered by hand (invoices, anything not connected; refunds and credit notes count down):
+//   GET    /entries?business=&from=&to=&limit=&offset=   newest first, with the sums per currency
+//   POST   /entries { id, businessId, day, kind, amount, currency?, orders?, note? }   id made by the device (UUIDv7):
+//                                        sent twice = one entry (200 the second time; 201 when made)
+//   PUT    /entries/:id { … }            change it      DELETE /entries/:id
 import { Router } from 'express';
 import { HttpError } from '../../lib/httpError.js';
 
@@ -39,5 +44,19 @@ export function createSalesRouter(_ctx, service) {
     res.json(service.putManualMonth(req.params.store, req.params.month, { total, currency: currency ?? undefined, orders, note }, who(req)));
   });
   router.delete('/manual/:store/:month', (req, res) => res.json(service.deleteManualMonth(req.params.store, req.params.month)));
+  router.get('/entries', (req, res) => {
+    const { business = null, from = null, to = null } = req.query;
+    for (const d of [from, to]) if (d && !DAY_RE.test(String(d))) throw new HttpError(400, 'from and to are days (YYYY-MM-DD)');
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit ?? '50', 10) || 50, 1), 200);
+    const offset = Math.max(Number.parseInt(req.query.offset ?? '0', 10) || 0, 0);
+    res.json(service.listEntries({ business: business || null, from: from || null, to: to || null, limit, offset }));
+  });
+  router.post('/entries', (req, res) => {
+    const { id, ...body } = req.body ?? {};
+    const out = service.addEntry(id, body, who(req));
+    res.status(out.created ? 201 : 200).json({ entry: out.entry });
+  });
+  router.put('/entries/:id', (req, res) => res.json(service.updateEntry(req.params.id, req.body ?? {}, who(req))));
+  router.delete('/entries/:id', (req, res) => res.json(service.deleteEntry(req.params.id)));
   return router;
 }
