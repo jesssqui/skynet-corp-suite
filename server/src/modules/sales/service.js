@@ -173,6 +173,7 @@ export function createSalesService(ctx) {
       const out = { ...s, date: today, lastFetchedAt: fetched.get(`${s.source}|${s.store}`)?.fetched_at ?? null, firstDay: fetched.get(`${s.source}|${s.store}`)?.first_day ?? null };
       for (const [p, { from, to }] of Object.entries(periods)) {
         let rows = filtered({ from, to, store: s.store, source: s.source });
+        let totalOnly = false;
         // D13: a month the connection has no days for is filled by a month entered by hand (its manual target).
         if (p === 'month' && s.manualStore) {
           const m = q.manual.get(s.manualStore, today.slice(0, 7));
@@ -180,10 +181,13 @@ export function createSalesService(ctx) {
             rows = [manualRow(m, s.businessId)];
             out.monthFromManual = true;
             out.manualEntry = manualView(m);
+            totalOnly = true;
           }
         }
         periodRows[p].push(...rows);
-        out[p] = figures(sumByCurrency(rows));
+        // D13b: a period filled by a month entered by hand knows only its total and orders (its other figures are 0,
+        // not known): `totalOnly` says so, so no breakdown is shown for it. Otherwise every figure is the store's own.
+        out[p] = figures(sumByCurrency(rows)).map((f) => (totalOnly ? { ...f, totalOnly: true } : f));
       }
       return out;
     });

@@ -45,3 +45,14 @@
   gap: 2px var(--space-3);
   font-size: var(--text-sm);
 }
+/* D13b: the eBay page's breakdown per period — three side by side, stacked on phones. */
+.sales-breakdown {
+  display: grid;
+  gap: var(--space-3) var(--space-4);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 640px) {
+  .sales-breakdown {
+    grid-template-columns: 1fr;
+  }
+}

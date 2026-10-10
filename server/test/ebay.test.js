@@ -552,3 +552,69 @@ test('review fix: a month eBay stopped reading part way (signed out) may be ente
   assert.equal((await card()).month[0].total, 30000);
   assert.deepEqual((await s.call('GET', '/api/sales/monthly?from=2026-10&to=2026-10')).body.months.map((x) => [x.source, x.total]), [['manual', 30000]]);
 });
+
+// ---- D13b: the breakdown, and the RuName guard ------------------------------------------------------------------
+test('D13b: the eBay page’s reads carry the breakdown (Items, Shipping, Tax; Before tax = total − tax) for today, this week, this month and each month — a hand-entered month only its total', async (t) => {
+  const s = await setup(t, { signIn: false, orders: [
+    ebayOrder({ id: '50-A', created: '2026-10-14T15:00:00.000Z', items: [{ title: 'Pokémon Red', sku: 'GB-RED', qty: 2, price: 20 }], shipping: 10, tax: 6.5 }), // today
+    ebayOrder({ id: '51-B', created: '2026-10-12T15:00:00.000Z', items: [{ title: 'Zelda', sku: 'N64-OOT', qty: 1, price: 80 }], discount: 8, shipping: 12, shipDiscount: 2, tax: 10.14 }), // Monday
+    ebayOrder({ id: '52-C', created: '2026-10-05T15:00:00.000Z', items: [{ title: 'Star Fox 64', sku: 'N64-SF', qty: 1, price: 60 }], tax: 7.8, refunds: [{ at: '2026-10-13T15:00:00.000Z', amount: 30 }] }),
+  ] });
+  const card = async () => (await s.call('GET', '/api/sales/summary')).body.stores.find((x) => x.source === 'ebay');
+  const parts = (f) => ({ items: f.net, shipping: f.shipping, beforeTax: f.total - f.tax, tax: f.tax, total: f.total });
+  // Entered by hand while eBay isn't connected: the month's figure is the hand total, marked total only.
+  await s.call('PUT', '/api/sales/manual/ebay/2026-10', { body: { total: 123456, orders: 31 } });
+  let c = await card();
+  assert.deepEqual(c.month.map((f) => [f.total, f.totalOnly]), [[123456, true]], 'no breakdown to show for a hand-entered month');
+  let oct = (await s.call('GET', '/api/sales/manual/ebay')).body.months.find((m) => m.month === '2026-10');
+  assert.equal(oct.shown, 'manual');
+  assert.deepEqual(Object.keys(oct.manual).filter((k) => ['net', 'tax', 'shipping'].includes(k)), [], 'a hand entry has a total and orders only');
+  // eBay connected: every period is eBay's own, with its breakdown (and no totalOnly).
+  await s.keyset();
+  await s.signInNow();
+  c = await card();
+  assert.ok(!c.monthFromManual);
+  assert.ok(['today', 'week', 'month'].every((p) => c[p].every((f) => !f.totalOnly)));
+  assert.deepEqual(parts(c.today[0]), { items: 4000, shipping: 1000, beforeTax: 5000, tax: 650, total: 5650 });
+  // The week: Monday's order, today's, and the refund of Oct 5's order on Tuesday (off Items, its tax in proportion).
+  assert.deepEqual(parts(c.week[0]), { items: 4000 + 7200 - 3000, shipping: 2000, beforeTax: 8200 + 2000, tax: 650 + 1014 - 390, total: 5650 + 9214 - 3390 });
+  assert.deepEqual(parts(c.month[0]), { items: 14200, shipping: 2000, beforeTax: 16200, tax: 2054, total: 18254 });
+  oct = (await s.call('GET', '/api/sales/manual/ebay')).body.months.find((m) => m.month === '2026-10');
+  assert.deepEqual([oct.shown, oct.replaced], ['real', true]);
+  assert.deepEqual(parts(oct.real.find((f) => f.currency === 'CAD')), parts(c.month[0]), 'the month’s line has the same breakdown as the card');
+});
+
+test('D13b: the App ID in the RuName box is refused (saving, and starting a sign-in with a keyset saved before); a real RuName is fine', async (t) => {
+  // parseKeyset: the App ID itself, any App ID's shape, the Cert ID — refused with where to find the RuName.
+  for (const ruName of [APP_ID, APP_ID.toLowerCase(), 'JessyRho-GWNLISTE-PRD-6b7c5d3e4-1f2a3b4c']) {
+    assert.throws(() => parseKeyset({ appId: APP_ID, certId: CERT_ID, ruName }), (e) => e.code === 'bad_runame'
+      && e.message === 'That’s the App ID, not the RuName: on developer.ebay.com → Application Keysets → Production → User Tokens, copy the value in the “RuName (eBay Redirect URL name)” column.', ruName);
+  }
+  assert.throws(() => parseKeyset({ appId: APP_ID, certId: CERT_ID, ruName: CERT_ID }), (e) => e.code === 'bad_runame' && /Cert ID, not the RuName/.test(e.message));
+  // Genuine RuNames are accepted — even one whose app name has letters like PRD in it.
+  for (const ruName of [RU_NAME, 'Jessy_Rho-JessyRho-GWNLIS-abcdefgh', 'Jessy_Rho-PRD-GWNLIS-abcdefgh', 'Jessy_Rho-JessyRho-PRDLIST-qwertyui']) {
+    assert.equal(parseKeyset({ appId: APP_ID, certId: CERT_ID, ruName }).ruName, ruName);
+  }
+  const s = await setup(t, { signIn: false });
+  const r = await s.call('PUT', '/api/ebay/connection', { body: { appId: APP_ID, certId: CERT_ID, ruName: APP_ID } });
+  assert.deepEqual([r.status, r.body.code], [400, 'bad_runame']);
+  assert.match(r.body.error ?? r.body.message ?? r.text, /That’s the App ID, not the RuName/);
+  assert.equal(s.svc.info().set, false, 'nothing saved');
+  // A keyset saved before the guard with the App ID as its RuName (the owner's): eBay's page is never opened with it.
+  assert.equal((await s.keyset()).status, 200);
+  s.db.prepare('UPDATE ebay_connection SET ru_name = app_id').run();
+  const info = (await s.call('GET', '/api/ebay/connection')).body;
+  assert.match(info.ruNameProblem, /That’s the App ID, not the RuName/);
+  const start = await s.call('POST', '/api/ebay/sign-in', { body: {} });
+  assert.deepEqual([start.status, start.body.code], [409, 'bad_runame']);
+  assert.match(start.text, /That’s the App ID, not the RuName.*save the keyset again/);
+  assert.ok(!start.text.includes('oauth2/authorize'));
+  assert.equal(s.db.prepare('SELECT COUNT(*) AS n FROM ebay_sign_ins').get().n, 0, 'no sign-in started');
+  const row = (await s.call('GET', '/api/connections')).body.connections.find((x) => x.id === 'ebay');
+  assert.equal(row.queueLabel, 'Save the keyset again: the RuName isn’t right');
+  // Saved again with the real RuName: the sign-in works.
+  assert.equal((await s.keyset()).status, 200);
+  assert.equal((await s.call('GET', '/api/ebay/connection')).body.ruNameProblem, null);
+  await s.signInNow();
+  assert.equal(s.svc.info().state, 'on');
+});

@@ -1,7 +1,9 @@
 // Save Point Shop on eBay (/costs/sales/ebay, D13): its totals (today / this week / this month), the last 13 months —
 // eBay's own figure, or a month entered by hand while eBay isn't connected (Seller Hub → Performance → Sales, "Total
 // sales") — and the form to enter or correct one. Once eBay has days for a month, those count and the month entered by
-// hand is kept, shown as replaced. Server data (not synced): needs a connection to the suite.
+// hand is kept, shown as replaced. D13b: what each figure is made of — Items, Shipping, Before tax, Tax and the Total
+// after tax — for today, this week, this month and each month, always from the same source as the figure shown (a
+// month entered by hand has only its total). Server data (not synced): needs a connection to the suite.
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client.js';
@@ -10,10 +12,40 @@ import { PageHeader, Card, Notice, Button, TextField, SelectField } from '../../
 import { formatDateTime } from '../../ui/format.js';
 import MoneyTabs from '../costs/MoneyTabs.jsx';
 import { Periods, StateLine } from './SalesPage.jsx';
-import { stateText, updatedText, monthText, monthLine, parseAmount } from './logic.js';
+import { stateText, updatedText, monthText, monthLine, monthBreakdown, periodBreakdown, parseAmount } from './logic.js';
 import './sales.css';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
+const PERIODS = [['today', 'Today'], ['week', 'This week'], ['month', 'This month']];
+
+/** D13b: each period's breakdown (Items, Shipping, Before tax, Tax, Total after tax), side by side on wide screens. */
+function Breakdown({ card }) {
+  return (
+    <div className="sales-breakdown" data-testid="ebay-breakdown">
+      {PERIODS.map(([k, label]) => {
+        const parts = periodBreakdown(card[k]);
+        return (
+          <div key={k} data-breakdown={k} style={{ display: 'grid', gap: 'var(--space-1)', minWidth: 0 }}>
+            <span style={{ ...muted, fontSize: 'var(--text-xs)', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 600 }}>{label}</span>
+            {parts === null ? <span style={muted} data-testid="breakdown-total-only">Entered by hand: total only</span> : parts.map((part) => (
+              <div key={part.currency} className="sales-lines">
+                {parts.length > 1 ? <span style={{ ...muted, gridColumn: '1 / -1', fontWeight: 600 }}>{part.currency}</span> : null}
+                {part.lines.map(([name, value], i) => {
+                  const last = i === part.lines.length - 1;
+                  const strong = last ? { fontWeight: 650, borderTop: '1px solid var(--border)', paddingTop: 2 } : null;
+                  return [
+                    <span key={`${name}k`} style={{ ...muted, ...strong, color: last ? 'var(--text)' : muted.color }}>{name}</span>,
+                    <span key={`${name}v`} style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', ...strong }}>{value}</span>,
+                  ];
+                })}
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function EbayPage() {
   const months = useServerData('/api/sales/manual/ebay', { everyMs: 60_000 });
@@ -70,6 +102,12 @@ export default function EbayPage() {
           <Card>
             <div style={{ display: 'grid', gap: 'var(--space-3)' }} data-testid="ebay-card">
               <Periods figures={card} />
+              <Breakdown card={card} />
+              <span style={muted} data-testid="ebay-breakdown-note">
+                Items are item prices after discounts and refunds. eBay doesn’t say what part of a refund was shipping, so
+                refunds come off Items, and the tax refunded with a refund is worked out in proportion. Tax is the tax
+                eBay collected. Before tax = Items + Shipping.
+              </span>
               <span style={muted}>
                 {card.monthFromManual ? 'This month entered by hand · ' : ''}{updatedText(card, formatDateTime)} · its day is {card.date}{card.timeZone ? ` (${card.timeZone})` : ''}
               </span>
@@ -82,8 +120,9 @@ export default function EbayPage() {
           <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 'var(--space-2)' }} data-testid="ebay-months">
             {(months.data?.months ?? []).map((m) => {
               const line = monthLine(m);
+              const parts = monthBreakdown(m);
               return (
-                <li key={m.month} data-month={m.month} data-shown={m.shown ?? 'none'} style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'space-between', flexWrap: 'wrap', borderBottom: '1px solid var(--border)', paddingBottom: 'var(--space-2)' }}>
+                <li key={m.month} data-month={m.month} data-shown={m.shown ?? 'none'} style={{ display: 'flex', gap: 'var(--space-1) var(--space-3)', justifyContent: 'space-between', flexWrap: 'wrap', borderBottom: '1px solid var(--border)', paddingBottom: 'var(--space-2)' }}>
                   <span style={{ minWidth: 130 }}>{monthText(m.month)}</span>
                   <span style={{ fontWeight: 600 }}>{line.figure}</span>
                   <span style={{ ...muted, flex: '1 1 180px', textAlign: 'right' }}>
@@ -91,6 +130,7 @@ export default function EbayPage() {
                     {m.replaced ? ` · by hand: ${periodLike(m.manual)}` : ''}
                     {m.manual && !m.replaced ? <> · <button type="button" onClick={() => remove(m.month)} disabled={busy || offline} style={{ background: 'none', border: 0, color: 'var(--accent)', cursor: 'pointer', padding: 0, font: 'inherit' }}>Remove</button></> : null}
                   </span>
+                  {parts ? <span style={{ ...muted, flexBasis: '100%', fontVariantNumeric: 'tabular-nums' }} data-testid="month-breakdown">{parts}</span> : null}
                 </li>
               );
             })}

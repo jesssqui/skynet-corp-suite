@@ -114,3 +114,51 @@ export function monthLine(m) {
   if (m.shown === 'manual') return { figure: periodText([{ currency: m.manual.currency, total: m.manual.total }]), from: `Entered by hand${m.manual.orders !== null && m.manual.orders !== undefined ? ` · ${m.manual.orders} orders` : ''}${m.partial ? ' (eBay read it only in part)' : ''}` };
   return { figure: '—', from: 'Nothing yet' };
 }
+
+// ---- D13b: what eBay's total is made of -----------------------------------------------------------------------
+/**
+ * The breakdown's lines, in order (each from one store's own figures; sales_daily keeps total = net + shipping + tax):
+ * Items (= net: item prices after discounts and refunds), Shipping, Before tax (= Items + Shipping = total − tax), Tax
+ * (the tax eBay collected) and Total (after tax) — Seller Hub's "Total sales", the headline.
+ */
+export const BREAKDOWN_LINES = Object.freeze([['items', 'Items'], ['shipping', 'Shipping'], ['beforeTax', 'Before tax'], ['tax', 'Tax'], ['total', 'Total (after tax)']]);
+
+/** One currency's figures → { items, shipping, beforeTax, tax, total } (cents). */
+export function breakdownOf(f) {
+  const total = Number(f?.total) || 0;
+  const tax = Number(f?.tax) || 0;
+  return { items: Number(f?.net) || 0, shipping: Number(f?.shipping) || 0, beforeTax: total - tax, tax, total };
+}
+
+/**
+ * A period's figures (a list per currency, as the summary gives them) → null when the period was filled by a month
+ * entered by hand (`totalOnly`: only its total is known — never mixed with eBay's breakdown), else one entry per
+ * currency (never added across): [{ currency, lines: [[label, "$12.50"], …] }]. An empty period → CAD zeros.
+ */
+export function periodBreakdown(list) {
+  if (list?.some((f) => f.totalOnly)) return null;
+  const rows = list?.length ? list : [{ currency: 'CAD' }];
+  return rows.map((f) => {
+    const cur = f.currency || 'CAD';
+    const b = breakdownOf(f);
+    return { currency: cur, lines: BREAKDOWN_LINES.map(([k, label]) => [label, salesMoney(b[k], cur)]) };
+  });
+}
+
+/**
+ * The months list's second line for one month — what the shown figure is made of, from the same source as the
+ * figure: eBay's own days ("Items $85 · Shipping $10 · Before tax $95 · Tax $6.50", each currency on its own), or for a
+ * month entered by hand "Entered by hand: total only". '' when nothing counts or eBay's month is all zeros.
+ */
+export function monthBreakdown(m) {
+  if (m?.shown === 'manual') return 'Entered by hand: total only';
+  if (m?.shown !== 'real' || !m.real?.length) return '';
+  // A month with no sales at all: nothing to break down (no row of $0s).
+  if (m.real.every((f) => Object.values(breakdownOf(f)).every((v) => v === 0))) return '';
+  return m.real.map((f) => {
+    const cur = f.currency || 'CAD';
+    const b = breakdownOf(f);
+    const parts = BREAKDOWN_LINES.filter(([k]) => k !== 'total').map(([k, label]) => `${label} ${salesMoney(b[k], cur)}`).join(' · ');
+    return m.real.length > 1 || cur !== 'CAD' ? `${cur}: ${parts}` : parts;
+  }).join(' — ');
+}
