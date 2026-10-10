@@ -62,6 +62,14 @@ if (config.stockroom.scheduled) {
   log.info('Stockroom pulls are off (STOCKROOM_PULL_ENABLED); Pull now on the Connections card still works');
 }
 
+// WooCommerce stores (D12): each store's sales totals (one look a minute; a store is read when it is due).
+let stopWoo = () => {};
+if (config.woocommerce.scheduled) {
+  stopWoo = ctx.services.woocommerce.startPuller();
+} else {
+  log.info('WooCommerce pulls are off (WOO_PULL_ENABLED); Pull now on a store’s card still works');
+}
+
 let shuttingDown = false;
 function shutdown(signal) {
   if (shuttingDown) return;
@@ -71,6 +79,7 @@ function shutdown(signal) {
   stopAutomations();
   stopWholesale();
   stopStockroom();
+  stopWoo();
   server.close(() => {
     db.close(); // checkpoints the WAL into the main file
     stopHeartbeat();

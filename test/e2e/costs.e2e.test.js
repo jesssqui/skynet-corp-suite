@@ -38,7 +38,7 @@ const costRow = (db, where, ...args) => db.prepare(`SELECT * FROM costs_recurrin
 const nav = (page, name) => page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name, exact: true }).click();
 
 async function walkThrough(page, context, server, { today, ids }, label) {
-  await nav(page, 'Costs');
+  await nav(page, 'Money'); // D12: Costs and Sales share the Money tab
   await page.waitForURL(/\/costs/, WAIT);
   // Totals: $35/mo + $24/yr (agency), $1,200/yr (home) → $1,644/yr, $137/mo.
   await page.getByTestId('costs-total').getByText('$137/mo · $1,644/yr').waitFor(WAIT);
@@ -51,8 +51,8 @@ async function walkThrough(page, context, server, { today, ids }, label) {
   await page.locator(`[data-cost-id="${ids.insurance}"]`).getByText('Renews in 10 days').waitFor(WAIT);
   if (label === 'iPhone') {
     assert.ok((await noSideways(page)) <= 0, 'no sideways scrolling on Costs');
-    const tab = await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Costs', exact: true }).boundingBox();
-    assert.ok(tab.height >= 44 && tab.width >= 44, `the Costs tab is a full tap target (${tab.width} × ${tab.height})`);
+    const tab = await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Money', exact: true }).boundingBox();
+    assert.ok(tab.height >= 44 && tab.width >= 44, `the Money tab is a full tap target (${tab.width} × ${tab.height})`);
   }
   await shot(page, `d6-costs-${label.toLowerCase()}`, { fullPage: false });
 

@@ -95,7 +95,7 @@ export function createConnectionsService({ db, config, log, now: clock = Date.no
    * Register a connection (see the top of this file). Returns { isPaused } for the module's own
    * checks. When its switch is off, pause() is called now, before any work can start.
    */
-  function register({ id, name, module, description = null, describe, pause, resume, pausable = true, alwaysOnReason = null }) {
+  function register({ id, name, module, description = null, describe, pause, resume, pausable = true, alwaysOnReason = null, after = null }) {
     if (!ID_RE.test(id ?? '')) throw new Error(`connections: bad id "${id}" (lowercase letters, digits, - and _)`);
     if (!name || !module) throw new Error(`connections: ${id} needs a name and its module`);
     if (typeof describe !== 'function') throw new Error(`connections: ${id} needs describe()`);
@@ -104,7 +104,9 @@ export function createConnectionsService({ db, config, log, now: clock = Date.no
     }
     if (!pausable && !alwaysOnReason) throw new Error(`connections: ${id} can't be paused: say why (alwaysOnReason)`);
     if (entries.get(id)?.kind === 'real') throw new Error(`connections: ${id} is already registered`);
-    entries.set(id, { id, name, module, description, describe, pause, resume, pausable, alwaysOnReason, kind: 'real' });
+    const entry = { id, name, module, description, describe, pause, resume, pausable, alwaysOnReason, after, kind: 'real' };
+    if (after && !entries.has(id) && entries.has(after)) insertAfter(entry, after);
+    else entries.set(id, entry);
     if (pausable && isPaused(id)) {
       try {
         pause();
@@ -114,6 +116,31 @@ export function createConnectionsService({ db, config, log, now: clock = Date.no
       }
     }
     return { isPaused: () => isPaused(id) };
+  }
+
+  /**
+   * D12: a row that belongs under another (a WooCommerce store under "WooCommerce stores") goes after that row and
+   * after the rows already placed under it, so the page lists them together in the order they were registered.
+   */
+  function insertAfter(entry, after) {
+    const list = [...entries.values()];
+    let at = -1;
+    list.forEach((e, i) => {
+      if (e.id === after || e.after === after) at = i;
+    });
+    list.splice(at + 1, 0, entry);
+    entries.clear();
+    for (const e of list) entries.set(e.id, e);
+  }
+
+  /**
+   * D12: take a row off the page (a store that was removed). Its switch and change log stay in the tables (a store
+   * added again gets a new id, so they never apply to anything else). Unknown ids and placeholders are left alone.
+   */
+  function unregister(id) {
+    if (entries.get(id)?.kind !== 'real') return false;
+    entries.delete(id);
+    return true;
   }
 
   function view(e, now = clock()) {
@@ -195,5 +222,5 @@ export function createConnectionsService({ db, config, log, now: clock = Date.no
   });
   for (const p of PLACEHOLDERS) placeholder(p);
 
-  return { register, placeholder, isPaused, setPaused, list, get: (id) => (entries.has(id) ? view(entries.get(id)) : null), changes };
+  return { register, unregister, placeholder, isPaused, setPaused, list, get: (id) => (entries.has(id) ? view(entries.get(id)) : null), changes };
 }

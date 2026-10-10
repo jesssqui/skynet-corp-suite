@@ -62,7 +62,9 @@ test('the page lists the backup (always on), the placeholders (not connected yet
   const { call } = await setup(t);
   const { status, body } = await call('GET', '/api/connections');
   assert.equal(status, 200);
-  assert.deepEqual(body.connections.map((c) => c.id), ['backup', 'wom', 'calendar', 'stockroom', 'calendar-feed', 'conndemo']);
+  assert.deepEqual(body.connections.map((c) => c.id), ['backup', 'wom', 'calendar', 'stockroom', 'calendar-feed', 'woocommerce', 'conndemo']);
+  // D12: the WooCommerce stores' row (each store added gets its own row under it).
+  assert.deepEqual([row(body.connections, 'woocommerce').state, row(body.connections, 'woocommerce').queueLabel], ['always_on', 'No stores yet']);
   const backup = row(body.connections, 'backup');
   assert.equal(backup.state, 'always_on');
   assert.equal(backup.pausable, false);
@@ -247,6 +249,28 @@ test('register() checks its arguments: ids, describe, pause/resume or a reason t
   // A describe() that throws shows as the row's error, not a broken page.
   c.register({ ...base, id: 'broken', describe: () => { throw new Error('boom'); } });
   assert.match(row(c.list(), 'broken').lastError, /Could not read its status: boom/);
+});
+
+test('D12: rows registered `after` another go under it in order; unregister() takes a row off (its switch stays in the table)', async (t) => {
+  const { ctx, call } = await setup(t);
+  const c = ctx.services.connections;
+  const base = { name: 'X', module: 'x', describe: () => ({}), pause() {}, resume() {} };
+  c.register({ ...base, id: 'shop', pausable: false, alwaysOnReason: 'adds shops' });
+  c.register({ ...base, id: 'later' });
+  c.register({ ...base, id: 'shop-a', after: 'shop' });
+  c.register({ ...base, id: 'shop-b', after: 'shop' });
+  c.register({ ...base, id: 'lost', after: 'nowhere' });
+  const ids = () => c.list().map((x) => x.id);
+  assert.deepEqual(ids().slice(ids().indexOf('shop')), ['shop', 'shop-a', 'shop-b', 'later', 'lost']);
+  assert.equal((await call('PUT', '/api/connections/shop-a', { paused: true })).status, 200);
+  assert.equal(c.unregister('shop-a'), true);
+  assert.ok(!ids().includes('shop-a'));
+  assert.equal((await call('PUT', '/api/connections/shop-a', { paused: false })).status, 404);
+  assert.equal(c.isPaused('shop-a'), true, 'the switch row stays (a store added again gets a new id)');
+  assert.equal(c.unregister('calendar'), false, 'placeholders aren’t unregistered');
+  assert.equal(c.unregister('nope'), false);
+  c.register({ ...base, id: 'shop-c', after: 'shop' });
+  assert.deepEqual(ids().slice(ids().indexOf('shop'), ids().indexOf('shop') + 3), ['shop', 'shop-b', 'shop-c']);
 });
 
 test('a restore still recovers a broken live database (zeroed header): the switches can’t be read, so they reset, with a warning', async (t) => {

@@ -33,7 +33,11 @@ from Stockroom (module `stockroom`: a read-only, signed pull from Stockroom — 
 reorder tasks by supplier, the weekly spot check on the shared list, tasks to receive confirmed purchase orders and to
 investigate big count differences; the suite never changes stock), and from **D8** leads and the pipeline (module
 `crm`: leads moving lead → talking → quoted → won or lost, a dated next step on each, winning one makes its client and
-relationship, and the monthly cross-sell list of current clients who could use another of our services).
+relationship, and the monthly cross-sell list of current clients who could use another of our services), and from
+**D12** the WooCommerce stores, read-only (module `sales`: the shared daily sales totals every sales source writes, with
+the Money → Sales tab; module `woocommerce`: each retail store connected with its own read-only REST key on System →
+Connections, its Analytics → Revenue totals read hourly with a 13-month backfill, and live order lookups that store
+nothing).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -134,6 +138,12 @@ server/src/
                            row), plans.js (pure: reorderPlan/spotCheckPlan/keyedPlan, deliveries/differences, applyPlan,
                            caps), automations.js (the four automations, applyReorderPlan), routes.js (/api/stockroom:
                            connection, pull), migrations/001_create_stockroom.sql, 002_order_soon_wanted.sql
+  modules/sales/           D12: service.js (registerSource, putDays, setStore, dayCount, totals, summary), routes.js
+                           (/api/sales: summary, totals; GET only), migrations/001_create_sales.sql (sales_daily, sales_stores)
+  modules/woocommerce/     D12: client.js (the GET-only client: PATHS allowlist, Basic auth, no redirects; cleanStoreUrl,
+                           storeKey, parseKeys, WooError), service.js (stores: add/verify/replaceKey/update/remove; pulls:
+                           window + backfill + backoff + startPuller; lookups + orderView; the 'woocommerce' and 'woo-<id>'
+                           Connections rows; the sales source), routes.js (/api/woocommerce/stores…), migrations/001
   backup/                  backup.js, restore.js (D5: runs this version's migrations on the restored copy, then
                            carryKeptTables: modules' keepOnRestore), schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file), redact.js (C6a), sealed.js (D16: AES-GCM
@@ -147,7 +157,8 @@ server/test/               node --test; helpers.js: tmpDir/testConfig/startApp/t
                            fixtures/wom.js = A10 event builders + signed POST (D1; D5: note, noteAdded, noteDeleted,
                            followUpChanged), wom-captured-events.json = a real Order Manager's events and (D5)
                            wom-captured-notes.json its A11 events (scripts/wom-e2e.mjs --capture); fixtures/stockroomHub.js =
-                           a fake Stockroom implementing B5's read-only API (D16)
+                           a fake Stockroom implementing B5's read-only API (D16); fixtures/wooStore.js = a fake
+                           WooCommerce (index, currency, Analytics → Revenue worked out from its orders, orders, tracking; D12)
 client/src/
   main.jsx, App.jsx        providers + router built from the module list, behind AuthGate and SyncProvider;
                            main.jsx registers the service worker (production builds)
@@ -182,6 +193,12 @@ client/src/
                            costForm; client/test/costs.test.js), costs.css
   modules/stockroom/       D16: no page — ConnectionPanel.jsx (the Stockroom card's settings: paste the code, each read,
                            Pull now, Forget; lazy, via connections/panels.js), logic.js (no React; client/test/stockroom.test.js)
+  modules/sales/           D12: SalesPage (/costs/sales: per store, per business, all together; today/week/month),
+                           StorePage (/costs/sales/woo/:id: its totals + the order lookup, kept in page memory only),
+                           logic.js (no React; client/test/sales.test.js), sales.css; MoneyTabs.jsx lives in costs/
+  modules/woocommerce/     D12: no page — HubPanel.jsx ("WooCommerce stores" card: Add a store), StorePanel.jsx (each
+                           store's card: Pull now, rename / business, replace the key, remove; the 'woo-*' prefix panel),
+                           logic.js (storeIdOf, businessChoices, the key steps and the read-only note)
   modules/wholesale/       D1: WholesalePage (/wholesale: waiting for a client / linked; lazy), ConnectionPanel.jsx (the
                            wom card's address + secret, via connections/panels.js; lazy), parts.jsx (timeline rows,
                            account and client figures on the client page; D3: QuietRegularBadge; D5: note rows, the
@@ -293,9 +310,19 @@ One folder per module on each side, same name on both (`server/src/modules/healt
   the feed handler catches its own errors (503, logged without the path), and app.js's error handler and its 404
   message pass paths through `redactPath` (`server/src/lib/redact.js`: `/api/calendar/feed/[link]`); add any future
   request logging through it too.
-- **The one outbound connection** (D16): the server calls Stockroom on Fly (`https://stockroom-hub.fly.dev`) over HTTPS
-  — signed GETs only, no body, never anything that can change stock; Stockroom never calls in. Its secret is encrypted
-  with a key file outside the database (like D1's). Nothing else in the suite calls out.
+- **Outbound connections** — the only calls the server makes to anything outside (nothing calls in except the Order
+  Manager's signed outbox, D1); each is read-only by construction (one client per module, method fixed to GET, no body,
+  a path allowlist, redirects not followed — proved by tests), HTTPS only, with its secret encrypted with its own key
+  file outside the database:
+  - **Stockroom** (D16) on Fly (`https://stockroom-hub.fly.dev`): signed GETs of `/v1/suite…`, never anything that can
+    change stock; Stockroom never calls in. Key file `stockroom-secret.key`.
+  - **The WooCommerce stores** (D12): each store's own domain (`https://<store>/wp-json/…`), HTTP Basic with that
+    store's **read-only** REST key (consumer key + secret, never in the URL), GETs of six paths only (the site index,
+    the currency, Analytics → Revenue, orders, one order, its shipment tracking). Key file `woocommerce-secret.key`.
+    Order lookups are answered to the person and **never stored or logged** (no customer data in the suite from the
+    stores — they sell age-restricted products, so nothing from them may ever feed a marketing list: the CRM's
+    age rule, "Age-restricted" under "CRM"); the totals are totals only.
+  Nothing else in the suite calls out. (D13's eBay calls will join this list.)
 - **No HSTS** (helmet's is off): browsers apply it to the whole ts.net hostname on every port, which would force the
   Order Manager's plain-http port on the same Mac to https. Tailscale Serve already makes the suite HTTPS-only.
 
@@ -1205,9 +1232,12 @@ switch pauses it without breaking the app.
   Order Manager (`wom`, D1 — real, see "Wholesale"), the task calendar feed (`calendar-feed`, C6a: last read by a
   calendar, refused lookups, whose links are on; paused = every feed answers 503) and placeholders "Not connected yet ·
   comes with …": Apple Calendar (C6b, meetings over CalDAV). Stockroom (`stockroom`, D16 — real, see "Stock tasks from
-  Stockroom") took its placeholder's slot. A connection's card can show extra settings: the client module registers a panel
+  Stockroom") took its placeholder's slot. D12: "WooCommerce stores" (`woocommerce`, always on: it only adds stores)
+  and one row per store under it (`woo-<store id without dashes>`, pausable), placed with `register({ …, after:
+  'woocommerce' })` and taken off with `unregister(id)` when a store is removed (its switch row stays; a store added
+  again gets a new id). A connection's card can show extra settings: the client module registers a panel
   (`registerConnectionPanel(id, Component)` in `client/src/modules/connections/panels.js`; D1's address + secret; D16's
-  code paste).
+  code paste; D12's Add a store and each store's settings — an id ending in `*` is a prefix: `'woo-*'`).
 - **API** (signed in; writes follow the JSON/Origin rules): `GET /api/connections` → `{ connections: [{ id, name,
   module, description, state: on|paused|always_on|not_connected, pausable, alwaysOnReason, comesWith, lastSuccessAt,
   lastErrorAt, lastError, queueSize, queueLabel, detail, changedAt, changedBy }] }`; `PUT /api/connections/:id
@@ -1879,7 +1909,7 @@ and its date has passed: the page says "Overdue — renewed?" until a person set
   resold_yearly_cents }], overall: [{ currency, … }] }` (businesses in their order, CAD first; active costs only).
 
 **Screens** (offline: `useCostsData` reads cached lists; writes `store.create/update/remove`):
-- **`/costs`** (nav "Costs", phone tab bar too — eight tabs; at 320 px wide (iPhone SE 1st gen) a tab is 39–45 px wide,
+- **`/costs`** (nav "Money" since D12 — Costs · Sales tabs (`MoneyTabs`); phone tab bar too — eight tabs; at 320 px wide (iPhone SE 1st gen) a tab is 39–45 px wide,
   under the 44 px target — accepted by the review: 390 px phones get ~48 px): an overall card (monthly · yearly, resold, how the monthly
   equivalent is counted), filters in the URL (status Active / Cancelled / All, "Paid by" business, search over name,
   vendor and payment method), one card per business in our order (two columns ≥ 1100 px) with its totals (active costs
@@ -2191,6 +2221,121 @@ automation and the page use the same function):
 of a lead now lost (by hand); a relationship two wins both restarted stays as it is; per-person pipeline
 targets (D15); the pull scope (closed leads accumulate on devices like done tasks).
 
+## Sales totals (sales module, D12)
+Code `server/src/modules/sales/` (`service.js`, `routes.js`, migration `001_create_sales.sql`), shared facts
+`shared/sales.js`, client `client/src/modules/sales/` (+ `costs/MoneyTabs.jsx`); tests `server/test/sales.test.js`,
+`client/test/sales.test.js`, `test/e2e/sales.e2e.test.js`. Registered after stockroom, before `woocommerce`.
+**Decision: one shared module** owns the daily totals so every sales source writes the same rows and every reader reads
+one table — D12's WooCommerce stores now, **D13's eBay next** (source `ebay`), D11/D15 read them.
+- **`sales_daily`** (PK source + store + day, WITHOUT ROWID): `source` (`woo|ebay|manual` — `SALES_SOURCES`), `store`
+  (the source's own key: for woo the store's address without the scheme or a leading `www.`, e.g. `tinsxpress.com` — so
+  a store re-added under its other host continues its totals), `day` (the **store's
+  own calendar day**, "YYYY-MM-DD"), `business_id` (one of ours), `currency`, and the figures (`SALES_FIGURES`): `orders`,
+  `items`, `gross`, `discounts`, `refunds`, `net`, `tax`, `shipping`, `total` — integer cents except orders/items —
+  `fetched_at`. **Totals only**: no order, item, customer, email or address column (a test checks the columns).
+  `sales_stores` remembers each store's name, business, currency and zone (so a removed store still shows).
+- **Not synced** (server data with a read API): devices need a connection to the suite to see sales (the page says so
+  offline). **Not kept across restores**: every source re-reads its recent days, and D12's backfill re-reads gaps.
+- **Writes** (sources only): `sales.registerSource({ source, label, stores: () => [{ store, name, businessId, currency,
+  timeZone, state, lastSuccessAt, lastError, link }] })` once, then `putDays({ source, store, name, businessId,
+  currency, timeZone, days })` — an **upsert per day** in one transaction (a day read again replaces its row: late
+  refunds, status changes, a backfill run twice — nothing is ever added twice). `setStore` moves a store to another
+  business (its rows follow) or renames it. `dayCount` lets a source find gaps.
+- **Reads**: `ctx.services.sales.totals({ from, to, business?, store?, source? })` → `{ overall, businesses, stores }`,
+  each per currency (CAD first; **never added across currencies** — no exchange rates). `summary()` → every store a
+  source lists (plus stores with totals but no longer connected: `state: 'removed'`) with `date` (its own today) and
+  `today` / `week` (Monday–Sunday) / `month` **in its own time zone**, `lastFetchedAt`; per business and overall = each
+  store's own periods added up per currency. API (signed in, GET only, `no-store`): `GET /api/sales/summary`,
+  `GET /api/sales/totals?from&to&business&store&source`.
+- **Screens (placement decision)**: the phone tab bar keeps eight tabs — the **Costs** entry became **Money**, with tabs
+  Costs · Sales (`MoneyTabs`). `/costs/sales`: all stores together, per business (when more than one), each store's card
+  (net sales and orders today / this week / this month, last updated, its day and zone, state: paused / failing / not
+  read / removed) and a line on what net sales means. `/costs/sales/woo/:id`: the store's totals and the **order lookup**
+  (see below). Headline figure = Analytics' **Net sales** (gross − coupons − returns, before tax and shipping). Plain on
+  purpose: D15's overview is where sales meet costs and goals.
+
+## WooCommerce stores (woocommerce module, D12)
+Code `server/src/modules/woocommerce/` (`client.js`, `service.js`, `routes.js`, migration `001_create_woocommerce.sql`),
+client `client/src/modules/woocommerce/` (the Connections panels) + the sales pages; tests
+`server/test/woocommerce.test.js` (TZ Toronto, stores in Vancouver and GMT+1, against `server/test/fixtures/wooStore.js`),
+`client/test/sales.test.js`, `test/e2e/sales.e2e.test.js`. Registered last (after connections and sales).
+- **Adding a store** (System → Connections → **WooCommerce stores** → *Add a store…*; either person): address, consumer
+  key (`ck_` + 40 hex) and secret (`cs_` + 40 hex), our business (**retail** by default), and a required checkbox "This
+  key was made with permission Read" (`readOnlyConfirmed`; 400 `confirm_read` without it, before any request).
+  **WooCommerce never tells an API client a key's permission** (no endpoint reveals it), so the suite **can't refuse a
+  read_write key**; the form says so ("WooCommerce doesn't tell the suite…") — the read-only guarantee is the suite's own
+  client, the Read key is the second lock. The address is cleaned (`cleanStoreUrl`: https added, `/wp-json…` and a
+  trailing slash dropped, a WordPress in a folder kept; plain http refused except localhost). **The key is checked
+  before anything is saved** (`verify`): the site index (must list `wc/v3` and `wc-analytics`: "WooCommerce Analytics
+  is off" otherwise), the currency, one day of Analytics → Revenue and `orders?per_page=1` — a wrong key (401/403) →
+  400 `refused`, unreachable → 502, a redirect → 502 `redirect` ("use the shop's exact address"), and nothing is saved.
+  A store already connected (same address) → 409 `exists`. Then: the secret sealed (AES-256-GCM, `lib/sealed.js`, key
+  file `config.woocommerce.keyFile` = `<data>/woocommerce-secret.key`, 0600, `WOO_KEY_FILE`) — **never returned** by any
+  API (only `…` + the key's last 7), its Connections row registered, the first pull started. Every change is in
+  `woocommerce_changes` (added / key_replaced / renamed / business_changed / removed; never the secret).
+- **Each store is its own Connections row** `woo-<id without dashes>` under the always-on "WooCommerce stores" row:
+  pausable (paused = **no calls at all** to that store — pulls, Pull now and lookups answer 409 `paused`; nothing is
+  logged as a failure; switched on → read at once), last success, last error, queue label "Totals to <day> · 13 months
+  read". Its card (`StorePanel`): address, key end, currency, zone, backfill state, Pull now, *Rename or business…*,
+  *Replace the key…* (checked first, like adding), *Remove…* (its row goes, `unregister`; **its totals stay** on the
+  Sales page as "removed"; added again it continues the same totals, keyed by address). A missing key file → the store
+  stays but can't be read ("replace the key"), no calls.
+  `woocommerce_stores` and `woocommerce_changes` are **keepOnRestore** (a removed store or replaced key never comes back;
+  a store added after the backup stays); `woocommerce_pulls` (pull state) is not.
+- **Which report is matched (decision): WooCommerce Analytics → Revenue**, read directly —
+  `GET /wp-json/wc-analytics/reports/revenue/stats?interval=day&after=<day>T00:00:00&before=<day>T23:59:59` (store-local
+  times), `per_page=100`, every page (`X-WP-TotalPages`), `force_cache_refresh=true` — not the legacy `wc/v3/reports/sales`
+  (WooCommerce's old report, no longer what the owner sees) and not a recomputation from orders. Reading the report
+  itself means the store's own settings are applied by WooCommerce: its **excluded / actionable statuses** (Analytics
+  settings; by default pending, failed and cancelled are left out), its **date type** (date created / paid /
+  completed), refunds on the day they were made, and **its time zone** (WordPress's `timezone_string`, or a whole-hour
+  `gmt_offset` as `Etc/GMT±N`, a fractional one (5.5, −3.5) as a **fixed offset "+05:30"** whose dates are counted from
+  its minutes (`localDateIn`, review fix: it used to fall back to the Mac's zone), read from `/wp-json/` on every pull) —
+  so "a week's total" here is the same Monday–Sunday the owner picks in Analytics (the Sales page says weeks run
+  Monday–Sunday; a store whose Analytics weeks start on Sunday is compared with a custom range). Each day's subtotals map to the row (`figuresFrom`): orders_count, num_items_sold,
+  gross_sales, coupons, refunds, net_revenue, taxes, shipping, total_sales. A day Analytics leaves out after every page
+  came is written as zeros. **Needs**: Analytics on (WooCommerce → Settings → Advanced → Features) and **historical data
+  imported** (Analytics → Settings → Import historical data) — otherwise Analytics, and so the suite, misses old orders.
+  Pretty permalinks (any setting but "Plain") so `/wp-json/` exists.
+- **Schedule**: the puller (`startPuller`, from `src/index.js` when `WOO_PULL_ENABLED`, on in production) looks once a
+  minute; a store is read when due: every `WOO_PULL_EVERY_MIN` (60) minutes, the **rolling window = the last 60 days**
+  (`WINDOW_DAYS`) in one read with `force_cache_refresh`, so late refunds and status changes land. **Backfill**: the
+  first pulls also read **13 months** back (`BACKFILL_MONTHS`; its first and last day fixed at the first pull) in
+  **90-day chunks** (`BACKFILL_CHUNK_DAYS`), newest first, **without** `force_cache_refresh` (those days don't change),
+  progress saved per chunk (`backfill_before`). **Its failures are its own** (review fix, migration 002): a chunk that
+  fails is recorded in `backfill_error` with its own backoff (`backfill_next_try_at`, 2 … 60 minutes) — the store isn't
+  put into backoff and its Connections row isn't red while the window reads fine; the row's detail says "Backfill: …";
+  a **time-out halves the chunk** (`backfill_chunk_days`, down to `MIN_CHUNK_DAYS` = 7, kept), for stores whose
+  Analytics is slow on wide ranges. A finished backfill with days missing (a restore of an older backup) is read again
+  (`sales.dayCount`). Stores are read **side by side**
+  (`Promise.allSettled`), one pull per store at a time: one failing or slow store never holds up or touches another.
+  **Failures**: time-out `WOO_TIMEOUT_MS` (20 s); backoff `min(2^n, 60)` minutes per store; shown as its row's last
+  error. All upserts: re-reads never double-count.
+- **Order lookups** (`POST /api/woocommerce/stores/:id/orders/lookup { number } | { email }`, the store page): **live,
+  read-only, never stored** — not in the database, not in a log, not on the device (React state only; `no-store`).
+  **A POST** (review fix): the number or email is never in an address, so it can't reach the app's error log (which
+  logs 5xx paths), a proxy's log or browser history; it follows the Origin/JSON rules like every write; and the route
+  answers every error itself (a store's failure → 502 with the store's plain message; anything unexpected → 500 "The
+  lookup failed", logged without the query) — never through app.js's error handler. Tested: a store answering 500 or
+  timing out leaves neither the number nor the email in the log.
+  By number: `orders/<n>` (when numeric) else `orders?search=` filtered to that exact number (custom numbers like
+  "TX-500"); by email: `orders?search=` filtered to that exact billing email; at most 10. Each shown as `orderView`:
+  number, status, dates (UTC), items (name, SKU, quantity), money (total, discount, shipping, tax, refunded), shipping
+  method, tracking when available (the Shipment Tracking plugin's `wc-shipment-tracking/v3/…/shipments`, else visible
+  order meta keys containing "tracking"; nothing when there is none — Stock Link adds no tracking), and the customer's
+  **first name only** — never the last name, email, phone, address, note or IP. Needs a connection to the suite.
+- **Read only by construction**: `client.js` is the module's one network call — `get(path, query)`, method fixed to GET,
+  no body, `redirect: 'manual'`, a time-out, and only the six `PATHS` (anything else throws before a request); auth is a
+  Basic header, never `consumer_key=` in the URL. Tests prove it: every request the fake store saw in a full run (add,
+  pulls, lookups, rename, pause, remove) was a GET with no body on an allowed path, and the module's sources contain
+  exactly one `fetch`.
+- **No customer data, ever**: nothing from these stores identifies a person in the suite; the stores sell age-restricted
+  products, so their data must never feed any marketing list (the CRM's age rule). D13 follows the same rule.
+- **Not exercised here (no real store)**: a real WooCommerce's Analytics numbers (the fake works them out like
+  `wc_order_stats`; DEPLOY.md step 11 checks one week by hand), hosts that strip the `Authorization` header (some
+  Apache/CGI setups — the key check then fails with "refused the key"), Analytics' cache under `force_cache_refresh`,
+  and real shipment-tracking plugins.
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
@@ -2276,6 +2421,14 @@ targets (D15); the pull scope (closed leads accumulate on devices like done task
   a ninth phone tab. The cross-sell pairs are one table in shared code, wholesale is never in it, and the age-restricted
   rule is applied to accounts and their contacts; a new `every: 'month'` trigger runs it on the first workday. Quotes
   are D17: "quoted" is set by hand. Next: D17 sets `quoted` from a sent quote and puts the quote's value on the lead.
+- **D12 (WooCommerce stores, read-only)**: done — see "Sales totals" and "WooCommerce stores". A shared `sales` module
+  owns per-day totals by source/store/day (D13 eBay writes the same rows; D11/D15 read `sales.totals`), not synced;
+  totals are WooCommerce **Analytics → Revenue** read per day (so the store's statuses, date type and zone apply), a
+  60-day window hourly and a 13-month backfill in 90-day chunks, all upserts; each store its own pausable Connections row
+  with a sealed secret, checked before saving, kept across restores; read-only by one GET client with a path allowlist;
+  a key's permission can't be read from WooCommerce, so the person confirms "Read"; order lookups are live and store
+  nothing (first name only); Sales is a tab under Money (no ninth phone tab). Next: D13 registers source `ebay` with
+  `registerSource` and writes `putDays`; D15 reads `totals`.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -2290,7 +2443,7 @@ shift their counts; `startServer(t, config, { crm: true })` includes them. A res
 works with `--force`: carrying the switches is best effort (a warning, then the backup's switches) and the restored
 copy must pass `integrity_check`. Tests that depend on local time set
 `process.env.TZ = 'America/Toronto'` at the top (automations.test.js, wholesale-automations.test.js, wholesale-notes.test.js,
-costs.test.js, stockroom.test.js, leads.test.js). automations.test.js
+costs.test.js, stockroom.test.js, leads.test.js, sales.test.js, woocommerce.test.js). automations.test.js
 switches D3's two scheduled wholesale automations, D6's two renewal reminders and D8's cross-sell list off in its setup (they're on by default)
 so its ticks stay about C8; costs.test.js switches every other scheduled automation off. The e2e `startServer(t, { extraModules })` adds
 test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager checkout>` (D1) runs the real Order
@@ -2303,7 +2456,9 @@ checkout) runs a real Stockroom from its own code (live-sized data from its gene
 count difference; the reader made through its admin API) against a real suite: the code checked, every read, the tasks
 made, 304s, then Stockroom's own actions (an order confirmed, received, cancelled, a difference investigated, a spot
 check applied) finishing them — with how each order ended when the hub has B10 —, nothing made twice, 405 for a POST,
-and Disconnect (revoked). Run it against a
+and Disconnect (revoked). D12's stores are tested only against the fake WooCommerce (`fixtures/wooStore.js`: Analytics
+worked out from its orders with statuses, refunds, date types, zones and pages); the "done when" test compares a past
+week of two stores with the fake's own Analytics answer and with numbers worked out by hand. Run it against a
 `git archive` export of the hub, never by changing the hub repo. `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
 touching the engine, the service worker or the sync UI. Write a test with every module and every bug fix.
 
