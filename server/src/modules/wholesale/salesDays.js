@@ -46,6 +46,15 @@ const parse = (s) => {
   try { return JSON.parse(s); } catch { return null; }
 };
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+// D11 review (speed): each held row's snapshot is parsed once and its figures worked out once (a rebuild reads every
+// order, and a refund looks at its order again) — remembered per row object.
+const SNAPSHOTS = new WeakMap();
+const snapshotOf = (row) => {
+  if (!row || typeof row !== 'object') return {};
+  if (!SNAPSHOTS.has(row)) SNAPSHOTS.set(row, parse(row.snapshot) ?? {});
+  return SNAPSHOTS.get(row);
+};
+const FIGURES = new WeakMap();
 
 /** A stored time (UTC ISO) → its calendar day in the business's zone, else null. */
 export function localDayOf(iso, zone = WHOLESALE_SALES_ZONE) {
@@ -56,7 +65,7 @@ export function localDayOf(iso, zone = WHOLESALE_SALES_ZONE) {
 
 /** The day an order counts on: a history-only order its order_date, any other the local day it was entered. */
 export function orderDayOf(o, zone = WHOLESALE_SALES_ZONE) {
-  const s = parse(o?.snapshot) ?? {};
+  const s = snapshotOf(o);
   if (s.history_only && DATE_RE.test(s.order_date ?? '')) return s.order_date;
   return localDayOf(o?.placed_at, zone);
 }
@@ -69,7 +78,12 @@ export const countsAsSale = (o) => Boolean(o?.snapshot) && !o.deleted && o.statu
  * and unrounded dollars { itemsRaw, discountRaw, taxRaw } (A19's raw totals, else the cents / 100).
  */
 export function orderSaleFigures(o) {
-  const s = parse(o.snapshot) ?? {};
+  if (FIGURES.has(o)) return FIGURES.get(o);
+  const f = orderSaleFiguresOf(snapshotOf(o));
+  FIGURES.set(o, f);
+  return f;
+}
+function orderSaleFiguresOf(s) {
   const t = s.totals ?? {};
   const lines = Array.isArray(s.lines) ? s.lines : [];
   const items = lines.reduce((a, l) => a + (isInt(l?.quantity) ? l.quantity : 0), 0);
@@ -109,7 +123,7 @@ export function givenBack(m, orderOf, returnOf, zone = WHOLESALE_SALES_ZONE) {
   if (!countsAsSale(order)) return null;
   const day = localDayOf(m.at, zone);
   if (!day) return null;
-  const snap = parse(m.snapshot) ?? {};
+  const snap = snapshotOf(m);
   const amountRaw = isNum(snap.amount_raw) ? snap.amount_raw : amount / 100;
   let netRaw;
   let shipping = 0;
@@ -119,7 +133,7 @@ export function givenBack(m, orderOf, returnOf, zone = WHOLESALE_SALES_ZONE) {
     shipping = isInt(snap.shipping_cents) ? snap.shipping_cents : 0;
   } else {
     const ret = m.return_uid ? returnOf(m.return_uid) : null;
-    const retSnap = ret && !ret.removed ? (parse(ret.snapshot) ?? {}) : null;
+    const retSnap = ret && !ret.removed ? snapshotOf(ret) : null;
     const retSub = ret && !ret.removed ? (isInt(ret.subtotal_cents) ? ret.subtotal_cents : (isInt(retSnap?.subtotal_cents) ? retSnap.subtotal_cents : null)) : null;
     if (retSub !== null) {
       netRaw = retSub / 100;

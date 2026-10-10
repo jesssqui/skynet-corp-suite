@@ -23,8 +23,14 @@ export const ENTRY_CURRENCIES = Object.freeze(['CAD', 'USD', 'EUR', 'GBP']);
 export const NOT_BY_HAND = Object.freeze({
   [BUSINESS_IDS.wholesale]: 'Wholesale sales come from the Order Manager',
   [BUSINESS_IDS.save_point]: 'Save Point Shop’s sales come from eBay (a month can be entered by hand on its eBay page)',
-  [BUSINESS_IDS.retail]: 'The retail stores’ sales come from WooCommerce',
   [BUSINESS_IDS.personal]: 'Personal isn’t a business that sells',
+});
+/**
+ * D11 follow-up: businesses whose sales are entered by hand only in part — the retail stores: a store connected to
+ * WooCommerce is counted from there, one that isn't (or sales outside it) can be entered. → business id → the warning.
+ */
+export const BY_HAND_WARNING = Object.freeze({
+  [BUSINESS_IDS.retail]: 'Only for a store not connected to WooCommerce (or sales outside it): a connected store’s sales are already counted',
 });
 /** Can sales be entered by hand for this business? (not one of NOT_BY_HAND, not archived) */
 export const byHandAllowed = (business) => Boolean(business) && !NOT_BY_HAND[business.id] && !business.archived;
@@ -121,14 +127,32 @@ export function localDateIn(timeZone, date = new Date()) {
     const minutes = (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3]));
     return new Date(date.getTime() + minutes * 60_000).toISOString().slice(0, 10);
   }
+  // D11 review (speed): one formatter per zone, and the day remembered per UTC quarter hour (every zone changes on a
+  // quarter hour) — a start-up rebuild asks for tens of thousands of days; building a formatter each time was 10× slower.
+  const zone = timeZone || '';
+  const slot = `${zone}|${Math.floor(date.getTime() / QUARTER_HOUR_MS)}`;
+  const known = DAY_CACHE.get(slot);
+  if (known) return known;
   try {
-    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timeZone || undefined, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
+    let fmt = FORMATTERS.get(zone);
+    if (!fmt) {
+      fmt = new Intl.DateTimeFormat('en-CA', { timeZone: timeZone || undefined, year: 'numeric', month: '2-digit', day: '2-digit' });
+      FORMATTERS.set(zone, fmt);
+    }
+    const parts = fmt.formatToParts(date);
     const get = (t) => parts.find((p) => p.type === t)?.value;
-    return `${get('year')}-${get('month')}-${get('day')}`;
+    const day = `${get('year')}-${get('month')}-${get('day')}`;
+    if (DAY_CACHE.size >= DAY_CACHE_MAX) DAY_CACHE.clear();
+    DAY_CACHE.set(slot, day);
+    return day;
   } catch {
     return localDateIn(null, date);
   }
 }
+const QUARTER_HOUR_MS = 15 * 60_000;
+const FORMATTERS = new Map();
+const DAY_CACHE = new Map();
+const DAY_CACHE_MAX = 50_000;
 
 /**
  * The periods the Sales page shows for a store whose "today" is `today` (its own calendar): today, this
