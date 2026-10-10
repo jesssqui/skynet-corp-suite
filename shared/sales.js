@@ -4,8 +4,21 @@
 // no customer, order or item ever reaches a sales row. See CLAUDE.md, "Sales totals (D12)".
 import { addDays, weekStart, monthStart } from './planner.js';
 
-/** Where a day's totals came from. `manual` is for a later package (totals typed by hand). */
-export const SALES_SOURCES = Object.freeze(['woo', 'ebay', 'manual']);
+/**
+ * Where a day's totals came from: `woo` (D12), `ebay` (D13), `wholesale` (D11: the Order Manager, worked out from the
+ * suite's own holding area) and `manual` (D11: sales entered by hand — invoices, anything not connected — whose rows
+ * know only total and orders: `totalOnly`). D13's months entered by hand are not rows here (sales_manual_months).
+ */
+export const SALES_SOURCES = Object.freeze(['woo', 'ebay', 'wholesale', 'manual']);
+
+/** D11: kinds of a sale entered by hand. Refunds and credit notes are stored as negative amounts. */
+export const ENTRY_KINDS = Object.freeze(['sale', 'refund', 'credit_note']);
+/** D11: currencies offered for an entry (any three capital letters are accepted; CAD by default). */
+export const ENTRY_CURRENCIES = Object.freeze(['CAD', 'USD', 'EUR', 'GBP']);
+/** D11: the sales module's store key for a business's hand entries in one currency ("hand:<id>", "hand:<id>:USD"). */
+export const handStoreKey = (businessId, currency = 'CAD') => (currency === 'CAD' ? `hand:${businessId}` : `hand:${businessId}:${currency}`);
+/** D11: an entry's signed amount: sales count up, refunds and credit notes count down. */
+export const signedAmount = (kind, cents) => (kind === 'sale' ? Math.abs(cents) : -Math.abs(cents));
 
 /**
  * A daily row's figures, all integer cents except `orders` and `items` — WooCommerce Analytics → Revenue's own

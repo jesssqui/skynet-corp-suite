@@ -27,6 +27,11 @@ export default {
     } catch (err) {
       ctx.log.error('checking the card fields failed:', err);
     }
+    try {
+      service.startSales(); // D11: wholesale in the sales totals — every day written again from the holding area
+    } catch (err) {
+      ctx.log.error('writing the wholesale sales days failed (written again after the next change):', err);
+    }
     service.reconcileAll()
       .then(() => service.checkFollowUps()) // D5: follow-up tasks as the holding area says (a restore, a failed run)
       .then(() => service.matching.pass()) // D2: link what matches now (customers or clients that came while it was down)
