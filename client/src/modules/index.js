@@ -3,9 +3,10 @@
 //
 // Module shape:
 //   id      matches the server module name where there is one
-//   nav     { label, icon, order, path?, id?, Badge? } — or a list of them (one module, several entries);
+//   nav     { label, icon, order, path?, id?, Badge?, phone? } — or a list of them (one module, several entries);
 //           omit to stay out of the nav (path defaults to the first route). Badge: a component shown
-//           beside the label (the inbox's count).
+//           beside the label (the inbox's count). phone: false = the sidebar only, not the phone's tab bar
+//           (D11's overview: reached from Today and Money → Sales on a phone).
 //   routes  [{ path, element }] — paths are absolute ('/', '/clients/:id')
 // A module with no nav entry (connections, automations, wholesale, calendar) is reached from another's page;
 // stockroom (D16) has no page at all: only its card's settings on Connections. sales (D12) has the Sales tab under
@@ -25,8 +26,9 @@ import stockroom from './stockroom/index.jsx';
 import sales from './sales/index.jsx';
 import woocommerce from './woocommerce/index.jsx';
 import ebay from './ebay/index.jsx';
+import overview from './overview/index.jsx';
 
-export const modules = [planner, crm, costs, health, connections, automations, wholesale, auth, calendar, sync, stockroom, sales, woocommerce, ebay];
+export const modules = [overview, planner, crm, costs, health, connections, automations, wholesale, auth, calendar, sync, stockroom, sales, woocommerce, ebay];
 
 export const navItems = modules
   .flatMap((m) => (Array.isArray(m.nav) ? m.nav : m.nav ? [m.nav] : [])

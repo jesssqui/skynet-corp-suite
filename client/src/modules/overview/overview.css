@@ -1,0 +1,147 @@
+/* The overview (D11): the sales strip (each business side by side, wrapping), the combined total under it, and the
+   sections of "To deal with" (two columns on a wide screen). No sideways scrolling on a 320 px phone. */
+.overview {
+  display: grid;
+  gap: var(--space-4);
+}
+.overview-strip {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
+}
+.overview-tile {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+.overview-tile-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.overview-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.overview-periods {
+  margin: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+.overview-periods > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.overview-periods dt {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+.overview-periods dd {
+  margin: 0;
+  display: grid;
+  justify-items: end;
+  text-align: right;
+  min-width: 0;
+}
+.overview-figure {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.overview-total {
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 2px solid var(--border);
+}
+.overview-sections {
+  display: grid;
+  gap: var(--space-4);
+}
+@media (min-width: 1000px) {
+  .overview-sections {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+}
+.overview-section {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.overview-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+}
+.overview-section-head h3 {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.overview-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+.overview-item {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-2) 0;
+  min-height: var(--tap);
+  align-content: center;
+  color: var(--text);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.overview-items li + li .overview-item {
+  border-top: 1px dashed var(--border);
+}
+a.overview-item:hover .overview-item-text {
+  text-decoration: underline;
+}
+.overview-item-text {
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+.overview-section-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+.overview-sync {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+  color: var(--text);
+  text-decoration: none;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  min-height: var(--tap);
+}
