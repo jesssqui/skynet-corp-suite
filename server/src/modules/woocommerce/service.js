@@ -23,7 +23,7 @@ import { newId } from '@suite/shared/ids';
 import { nowIso } from '@suite/shared/time';
 import { addDays } from '@suite/shared/planner';
 import { addMonths, BUSINESS_IDS } from '@suite/shared/crm';
-import { localDateIn, toCents, zeroFigures } from '@suite/shared/sales';
+import { localDateIn, toCents, zeroFigures, offsetZone } from '@suite/shared/sales';
 import { HttpError } from '../../lib/httpError.js';
 import { loadKey, encryptSecret, decryptSecret } from '../../lib/sealed.js';
 import { createWooClient, cleanStoreUrl, storeKey, parseKeys, WooError } from './client.js';
@@ -36,6 +36,8 @@ export const WINDOW_DAYS = 60;
 /** How far the one-time backfill reaches, and how much one read covers. */
 export const BACKFILL_MONTHS = 13;
 export const BACKFILL_CHUNK_DAYS = 90;
+/** After a time-out the backfill reads half as many days at a time, down to this (review fix). */
+export const MIN_CHUNK_DAYS = 7;
 /** Analytics answers at most 100 intervals a page. */
 const PER_PAGE = 100;
 export const LOOK_EVERY_MS = MINUTE;
@@ -43,7 +45,11 @@ export const FIRST_LOOK_MS = 30_000;
 export const backoffMs = (failures) => Math.min(2 ** Math.max(1, failures), 60) * MINUTE;
 const LOOKUP_LIMIT = 10;
 
-/** The site's zone from its REST index: timezone_string, else a whole-hour gmt_offset as Etc/GMT±N, else null. */
+/**
+ * The site's zone from its REST index: timezone_string, else its gmt_offset — a whole hour as Etc/GMT±N, a fraction
+ * (5.5, −3.5, 5.75) as a fixed offset "+05:30" counted in minutes (review fix: it used to fall back to the Mac's zone)
+ * — else null.
+ */
 export function siteTimeZone(index) {
   const named = String(index?.timezone_string ?? '').trim();
   if (named) {
@@ -52,10 +58,12 @@ export function siteTimeZone(index) {
       return named;
     } catch { /* not a zone this machine knows */ }
   }
-  const off = Number(index?.gmt_offset);
-  if (Number.isInteger(off) && off !== 0 && Math.abs(off) <= 14) return `Etc/GMT${off > 0 ? '-' : '+'}${Math.abs(off)}`; // Etc signs are reversed
+  const raw = index?.gmt_offset;
+  const off = raw === null || raw === undefined || raw === '' ? NaN : Number(raw);
+  if (!Number.isFinite(off) || Math.abs(off) > 14) return null;
   if (off === 0) return 'UTC';
-  return null;
+  if (Number.isInteger(off)) return `Etc/GMT${off > 0 ? '-' : '+'}${Math.abs(off)}`; // Etc signs are reversed
+  return offsetZone(off);
 }
 
 /** Analytics → Revenue's subtotals for one interval → a sales row's figures (integer cents). */
@@ -137,6 +145,11 @@ export function createWooService(ctx) {
       failures = failures + 1, next_try_at = @next WHERE store_id = @id`),
     backfill: db.prepare('UPDATE woocommerce_pulls SET backfill_before = ?, backfill_target = ?, backfill_done_at = ? WHERE store_id = ?'),
     dropPull: db.prepare('DELETE FROM woocommerce_pulls WHERE store_id = ?'),
+    backfillOk: db.prepare('UPDATE woocommerce_pulls SET backfill_error = NULL, backfill_error_at = NULL, backfill_failures = 0, backfill_next_try_at = NULL WHERE store_id = ?'),
+    backfillFail: db.prepare(`UPDATE woocommerce_pulls SET backfill_error = @error, backfill_error_at = @at, backfill_failures = backfill_failures + 1,
+      backfill_next_try_at = @next, backfill_chunk_days = @chunk WHERE store_id = @id`),
+    backfillReset: db.prepare(`UPDATE woocommerce_pulls SET backfill_before = NULL, backfill_target = NULL, backfill_done_at = NULL, backfill_error = NULL,
+      backfill_error_at = NULL, backfill_failures = 0, backfill_next_try_at = NULL WHERE store_id = ?`),
   };
   const at = () => nowIso(new Date(clock()));
   const refused = (status, code, message) => new HttpError(status, message, undefined, { code });
@@ -304,15 +317,16 @@ export function createWooService(ctx) {
 
   // ---- pulls ---------------------------------------------------------------------------------------------
   /** Analytics → Revenue per day, from…to (store-local), every page. → Map<day, figures>, complete: true when all pages came. */
-  async function readDays(client, from, to) {
+  async function readDays(client, from, to, { fresh = true } = {}) {
     const days = new Map();
     let page = 1;
     let pages = 1;
     do {
       const res = await client.get('/wp-json/wc-analytics/reports/revenue/stats', {
         interval: 'day', after: `${from}T00:00:00`, before: `${to}T23:59:59`, per_page: PER_PAGE, page, order: 'asc', orderby: 'date',
-        // Analytics keeps answers in a cache for a while; the pull wants today's refunds and status changes now.
-        force_cache_refresh: 'true',
+        // Analytics keeps answers in a cache for a while; the window wants today's refunds and status changes now.
+        // Not for backfill chunks (review fix): those days don't change, and a cached answer is cheaper for the store.
+        ...(fresh ? { force_cache_refresh: 'true' } : {}),
       });
       const intervals = Array.isArray(res.body?.intervals) ? res.body.intervals : null;
       if (!intervals) throw new WooError('bad_answer', 'The store’s Analytics answer had no days in it', { status: 200 });
@@ -340,8 +354,9 @@ export function createWooService(ctx) {
   function due(row, pull, nowMs) {
     if (pull?.next_try_at && Date.parse(pull.next_try_at) > nowMs) return false;
     if (!pull?.last_success_at) return true;
-    if (!pull.backfill_done_at) return true; // a backfill that stopped part way (after its backoff)
-    return nowMs - Date.parse(pull.last_success_at) >= cfg.everyMinutes * MINUTE;
+    if (nowMs - Date.parse(pull.last_success_at) >= cfg.everyMinutes * MINUTE) return true;
+    // A backfill that stopped part way: after its own backoff (the window doesn't wait for it, nor it for the window).
+    return !pull.backfill_done_at && !(pull.backfill_next_try_at && Date.parse(pull.backfill_next_try_at) > nowMs);
   }
 
   async function doPull(id, { force = false } = {}) {
@@ -382,24 +397,46 @@ export function createWooService(ctx) {
       if (p.backfill_done_at && p.backfill_target && p.backfill_target < from) {
         const want = daysBetween(p.backfill_target, addDays(from, -1)).length;
         if (sales.dayCount({ source: 'woo', store: live.store_key, from: p.backfill_target, to: addDays(from, -1) }) < want) {
-          q.backfill.run(null, null, null, id);
+          q.backfillReset.run(id);
           p = q.pull.get(id);
         }
       }
       const target = p.backfill_target ?? addMonths(today, -BACKFILL_MONTHS);
+      // Fixed at the first pull (review fix): a backfill that waits a day for a slow store still reads the same days.
+      if (!p.backfill_done_at && !p.backfill_target) {
+        q.backfill.run(p.backfill_before ?? from, target, null, id);
+        p = q.pull.get(id);
+      }
       let before = p.backfill_before ?? from;
       let chunks = 0;
-      while (!p.backfill_done_at && before > target) {
+      let backfillError = null;
+      const backfillWaits = p.backfill_next_try_at && Date.parse(p.backfill_next_try_at) > clock();
+      let chunkDays = p.backfill_chunk_days ?? BACKFILL_CHUNK_DAYS;
+      while (!p.backfill_done_at && before > target && !backfillWaits) {
         if (isPaused(row)) break;
-        const chunkFrom = [addDays(before, -BACKFILL_CHUNK_DAYS), target].sort().at(-1);
+        const chunkFrom = [addDays(before, -chunkDays), target].sort().at(-1);
         const chunkTo = addDays(before, -1);
-        put(await readDays(client, chunkFrom, chunkTo));
+        // The backfill's failures are its own (review fix): recorded apart, with their own backoff, and a time-out
+        // halves the chunk (down to MIN_CHUNK_DAYS) — the window read above has succeeded and stays the store's state.
+        try {
+          put(await readDays(client, chunkFrom, chunkTo, { fresh: false }));
+        } catch (err) {
+          if (!(err instanceof WooError)) throw err;
+          if (err.code === 'timeout') chunkDays = Math.max(MIN_CHUNK_DAYS, Math.floor(chunkDays / 2));
+          const failures = (q.pull.get(id)?.backfill_failures ?? 0) + 1;
+          q.backfillFail.run({ id, error: String(err.message).slice(0, 500), at: at(), next: new Date(clock() + backoffMs(failures)).toISOString(), chunk: chunkDays });
+          log?.warn?.(`WooCommerce ${row.url}: backfill ${chunkFrom}…${chunkTo}: ${err.message}`);
+          backfillError = err.message;
+          break;
+        }
         before = chunkFrom;
         chunks += 1;
+        q.backfillOk.run(id);
         q.backfill.run(before, target, before <= target ? at() : null, id);
         p = q.pull.get(id);
       }
-      if (!p.backfill_done_at && before <= target) q.backfill.run(before, target, at(), id);
+      if (!backfillError && !p.backfill_done_at && before <= target) q.backfill.run(before, target, at(), id);
+      if (backfillError) return { ok: true, window: { from, to: today }, backfillChunks: chunks, backfillError };
       return { ok: true, window: { from, to: today }, backfillChunks: chunks };
     } catch (err) {
       if (!(err instanceof WooError)) log?.error?.(`WooCommerce ${row.url}: unexpected error`, err);
@@ -512,7 +549,11 @@ export function createWooService(ctx) {
       lastSuccessAt: p.last_success_at ?? null, lastAttemptAt: p.last_attempt_at ?? null, lastErrorAt: p.last_error_at ?? null,
       lastError: p.last_error ?? null, failures: p.failures ?? 0, nextTryAt: p.next_try_at ?? null,
       window: p.window_from ? { from: p.window_from, to: p.window_to } : null,
-      backfill: { before: p.backfill_before ?? null, target: p.backfill_target ?? null, doneAt: p.backfill_done_at ?? null },
+      backfill: {
+        before: p.backfill_before ?? null, target: p.backfill_target ?? null, doneAt: p.backfill_done_at ?? null,
+        error: p.backfill_error ?? null, errorAt: p.backfill_error_at ?? null, failures: p.backfill_failures ?? 0,
+        nextTryAt: p.backfill_next_try_at ?? null, chunkDays: p.backfill_chunk_days ?? BACKFILL_CHUNK_DAYS,
+      },
       changes: q.changes.all(row.id),
     };
   }
@@ -527,7 +568,8 @@ export function createWooService(ctx) {
       lastSuccessAt: s.lastSuccessAt, lastErrorAt: s.failures ? s.lastErrorAt : null, lastError: s.failures ? s.lastError : null,
       queueSize: null,
       queueLabel: s.lastSuccessAt ? `Totals to ${s.window?.to ?? '—'} · ${backfill}` : backfill,
-      detail: null, // the card's panel shows the address, key and zone
+      // The card's panel shows the address, key and zone; a backfill problem shows here, apart from the window's state.
+      detail: s.backfill.error && !s.backfill.doneAt ? `Backfill: ${s.backfill.error} (tried again ${s.backfill.nextTryAt ? `after ${s.backfill.nextTryAt.slice(11, 16)} UTC` : 'later'}, ${s.backfill.chunkDays} days at a time)` : null,
     };
   }
 

@@ -62,8 +62,9 @@ function Lookup({ storeId, disabled }) {
     setBusy(true);
     setProblem(null);
     try {
-      const qs = q.number ? `number=${encodeURIComponent(q.number)}` : `email=${encodeURIComponent(q.email)}`;
-      setResult({ ...(await api.get(`/api/woocommerce/stores/${storeId}/orders?${qs}`)), asked: text.trim() });
+      // A POST: the number or email never goes in an address (logs, history).
+      const body = q.number ? { number: q.number } : { email: q.email };
+      setResult({ ...(await api.post(`/api/woocommerce/stores/${storeId}/orders/lookup`, body)), asked: text.trim() });
     } catch (err) {
       setResult(null);
       setProblem(err.status === 0 ? 'Can’t reach the suite server: looking orders up needs a connection.' : err.message);

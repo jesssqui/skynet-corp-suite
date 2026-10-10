@@ -321,8 +321,9 @@ One folder per module on each side, same name on both (`server/src/modules/healt
   "Check in with …"), so those appear in Apple Calendar on the phone and the Mac, including the lock screen and
   notifications. Notes, contacts, clients' details and everything else are not sent. **The token never reaches a log**:
   the feed handler catches its own errors (503, logged without the path), and app.js's error handler and its 404
-  message pass paths through `redactPath` (`server/src/lib/redact.js`: `/api/calendar/feed/[link]`); add any future
-  request logging through it too.
+  message pass paths through `redactPath` (`server/src/lib/redact.js`: `/api/calendar/feed/[link]`; since D13 it also
+  drops **every query string** — "?…" —, so a search for a client's name, an email or eBay's sign-in code on
+  `/ebay/accepted?code=…` never reaches the log); add any future request logging through it too.
 - **Outbound connections** — the only calls the server makes to anything outside (nothing calls in except the Order
   Manager's signed outbox, D1); each is read-only by construction (one client per module, method fixed to GET, no body,
   a path allowlist, redirects not followed — proved by tests), HTTPS only, with its secret encrypted with its own key
@@ -2247,7 +2248,8 @@ Code `server/src/modules/sales/` (`service.js`, `routes.js`, migration `001_crea
 **Decision: one shared module** owns the daily totals so every sales source writes the same rows and every reader reads
 one table — D12's WooCommerce stores now, **D13's eBay next** (source `ebay`), D11/D15 read them.
 - **`sales_daily`** (PK source + store + day, WITHOUT ROWID): `source` (`woo|ebay|manual` — `SALES_SOURCES`), `store`
-  (the source's own key: for woo the store's address without the scheme, e.g. `tinsxpress.com`), `day` (the **store's
+  (the source's own key: for woo the store's address without the scheme or a leading `www.`, e.g. `tinsxpress.com` — so
+  a store re-added under its other host continues its totals), `day` (the **store's
   own calendar day**, "YYYY-MM-DD"), `business_id` (one of ours), `currency`, and the figures (`SALES_FIGURES`): `orders`,
   `items`, `gross`, `discounts`, `refunds`, `net`, `tax`, `shipping`, `total` — integer cents except orders/items —
   `fetched_at`. **Totals only**: no order, item, customer, email or address column (a test checks the columns).
@@ -2321,23 +2323,35 @@ client `client/src/modules/woocommerce/` (the Connections panels) + the sales pa
   itself means the store's own settings are applied by WooCommerce: its **excluded / actionable statuses** (Analytics
   settings; by default pending, failed and cancelled are left out), its **date type** (date created / paid /
   completed), refunds on the day they were made, and **its time zone** (WordPress's `timezone_string`, or a whole-hour
-  `gmt_offset` as `Etc/GMT±N`, read from `/wp-json/` on every pull) — so "a week's total" here is the same Monday–Sunday
-  the owner picks in Analytics. Each day's subtotals map to the row (`figuresFrom`): orders_count, num_items_sold,
+  `gmt_offset` as `Etc/GMT±N`, a fractional one (5.5, −3.5) as a **fixed offset "+05:30"** whose dates are counted from
+  its minutes (`localDateIn`, review fix: it used to fall back to the Mac's zone), read from `/wp-json/` on every pull) —
+  so "a week's total" here is the same Monday–Sunday the owner picks in Analytics (the Sales page says weeks run
+  Monday–Sunday; a store whose Analytics weeks start on Sunday is compared with a custom range). Each day's subtotals map to the row (`figuresFrom`): orders_count, num_items_sold,
   gross_sales, coupons, refunds, net_revenue, taxes, shipping, total_sales. A day Analytics leaves out after every page
   came is written as zeros. **Needs**: Analytics on (WooCommerce → Settings → Advanced → Features) and **historical data
   imported** (Analytics → Settings → Import historical data) — otherwise Analytics, and so the suite, misses old orders.
   Pretty permalinks (any setting but "Plain") so `/wp-json/` exists.
 - **Schedule**: the puller (`startPuller`, from `src/index.js` when `WOO_PULL_ENABLED`, on in production) looks once a
   minute; a store is read when due: every `WOO_PULL_EVERY_MIN` (60) minutes, the **rolling window = the last 60 days**
-  (`WINDOW_DAYS`) in one read, so late refunds and status changes land. **Backfill**: the first pulls also read
-  **13 months** back (`BACKFILL_MONTHS`) in **90-day chunks** (`BACKFILL_CHUNK_DAYS`), newest first, progress saved per
-  chunk (`backfill_before`) — a failure or restart carries on where it stopped (after the backoff); a finished backfill
-  with days missing (a restore of an older backup) is read again (`sales.dayCount`). Stores are read **side by side**
+  (`WINDOW_DAYS`) in one read with `force_cache_refresh`, so late refunds and status changes land. **Backfill**: the
+  first pulls also read **13 months** back (`BACKFILL_MONTHS`; its first and last day fixed at the first pull) in
+  **90-day chunks** (`BACKFILL_CHUNK_DAYS`), newest first, **without** `force_cache_refresh` (those days don't change),
+  progress saved per chunk (`backfill_before`). **Its failures are its own** (review fix, migration 002): a chunk that
+  fails is recorded in `backfill_error` with its own backoff (`backfill_next_try_at`, 2 … 60 minutes) — the store isn't
+  put into backoff and its Connections row isn't red while the window reads fine; the row's detail says "Backfill: …";
+  a **time-out halves the chunk** (`backfill_chunk_days`, down to `MIN_CHUNK_DAYS` = 7, kept), for stores whose
+  Analytics is slow on wide ranges. A finished backfill with days missing (a restore of an older backup) is read again
+  (`sales.dayCount`). Stores are read **side by side**
   (`Promise.allSettled`), one pull per store at a time: one failing or slow store never holds up or touches another.
   **Failures**: time-out `WOO_TIMEOUT_MS` (20 s); backoff `min(2^n, 60)` minutes per store; shown as its row's last
   error. All upserts: re-reads never double-count.
-- **Order lookups** (`GET /api/woocommerce/stores/:id/orders?number=|email=`, the store page): **live, read-only, never
-  stored** — not in the database, not in a log (the query either), not on the device (React state only; `no-store`).
+- **Order lookups** (`POST /api/woocommerce/stores/:id/orders/lookup { number } | { email }`, the store page): **live,
+  read-only, never stored** — not in the database, not in a log, not on the device (React state only; `no-store`).
+  **A POST** (review fix): the number or email is never in an address, so it can't reach the app's error log (which
+  logs 5xx paths), a proxy's log or browser history; it follows the Origin/JSON rules like every write; and the route
+  answers every error itself (a store's failure → 502 with the store's plain message; anything unexpected → 500 "The
+  lookup failed", logged without the query) — never through app.js's error handler. Tested: a store answering 500 or
+  timing out leaves neither the number nor the email in the log.
   By number: `orders/<n>` (when numeric) else `orders?search=` filtered to that exact number (custom numbers like
   "TX-500"); by email: `orders?search=` filtered to that exact billing email; at most 10. Each shown as `orderView`:
   number, status, dates (UTC), items (name, SKU, quantity), money (total, discount, shipping, tax, refunded), shipping
@@ -2443,6 +2457,11 @@ store "thesavepointshop").
   in-app alert would repeat it); switch to alert on System → Automations. What is kept for it (`ebay_ship_orders`):
   order id, created, statuses, ship-by, total, currency, items (title, SKU, quantity) — **no buyer details**: no username,
   name, address, email, phone or checkout notes (a test scans every table).
+- **Nothing personal in an address that reaches a log** (the D12 review's lookup issue, checked here): every eBay route
+  with a value in it is a POST (`/sign-in/finish` takes the code and state in the body); the one GET with a code in its
+  address is the browser's `/ebay/accepted?code=…&state=…` (the app shell; the page takes them out of the address at
+  once), and `redactPath` drops query strings from every logged path. No eBay data about a buyer is ever requested by
+  number or email.
 - **Read-only by construction**: `client.js`'s `call()` is the module's one network call and allows exactly `GET
   /sell/fulfillment/v1/order` and `POST /identity/v1/oauth2/token` (grant types authorization_code / refresh_token);
   anything else throws before a request; no redirect followed; https only (http just for localhost, tests). Tests check

@@ -7,10 +7,14 @@
 //   PUT    /stores/:id/key { key, secret, readOnlyConfirmed }                    a new key (checked first)
 //   DELETE /stores/:id                     forget it here (revoke the key in WooCommerce too); its totals stay
 //   POST   /stores/:id/pull                read its totals now (409 when paused)
-//   GET    /stores/:id/orders?number=|email=   look orders up, live — the answer is never stored (no-store)
+//   POST   /stores/:id/orders/lookup { number } | { email }   look orders up, live — the answer is never stored
+//          (no-store). A POST (review fix) so the number or email is never in an address — not in the app's error
+//          log, a proxy's or the browser's history — and the route answers every error itself, never through the
+//          app's error handler, and logs nothing about the query.
 import { Router } from 'express';
 
-export function createWooRouter(_ctx, service) {
+export function createWooRouter(ctx, service) {
+  const log = ctx?.log;
   const router = Router();
   const who = (req) => ({ actor: req.auth.user.actor, deviceId: req.auth.device?.id ?? null });
   router.use((_req, res, next) => {
@@ -35,10 +39,16 @@ export function createWooRouter(_ctx, service) {
   });
   router.delete('/stores/:id', (req, res) => res.json(service.removeStore(req.params.id, who(req))));
   router.post('/stores/:id/pull', async (req, res) => res.json(await service.pullNow(req.params.id)));
-  router.get('/stores/:id/orders', async (req, res) => {
-    const number = typeof req.query.number === 'string' ? req.query.number : null;
-    const email = typeof req.query.email === 'string' ? req.query.email : null;
-    res.json(await service.lookup(req.params.id, { number, email }));
+  router.post('/stores/:id/orders/lookup', async (req, res) => {
+    const number = typeof req.body?.number === 'string' ? req.body.number : null;
+    const email = typeof req.body?.email === 'string' ? req.body.email : null;
+    try {
+      res.json(await service.lookup(req.params.id, { number, email }));
+    } catch (err) {
+      const status = Number.isInteger(err?.status) && err.status >= 400 && err.status < 600 ? err.status : 500;
+      if (status === 500) log?.error?.(`WooCommerce order lookup failed for store ${req.params.id} (${err?.name ?? 'Error'}; the query is never logged)`);
+      res.status(status).json({ error: status === 500 ? 'The lookup failed: try again' : err.message, code: err?.code ?? 'lookup_failed' });
+    }
   });
   return router;
 }

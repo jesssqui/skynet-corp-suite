@@ -27,8 +27,16 @@ const cents = (n) => Math.round(Number(n) * 100);
 const money = (c) => (c / 100).toFixed(2);
 const num = (c) => Number((c / 100).toFixed(2));
 
-/** "YYYY-MM-DDTHH:MM:SS" local in `timeZone` → a Date (UTC instant). */
+const OFFSET = /^([+-])(\d{2}):(\d{2})$/;
+const offsetMinutes = (z) => {
+  const m = OFFSET.exec(z ?? '');
+  return m ? (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : null;
+};
+
+/** "YYYY-MM-DDTHH:MM:SS" local in `timeZone` (IANA, or a fixed "+05:30") → a Date (UTC instant). */
 export function localToUtc(local, timeZone) {
+  const fixed = offsetMinutes(timeZone);
+  if (fixed !== null) return new Date(Date.parse(`${local}Z`) - fixed * 60_000);
   const [d, t = '00:00:00'] = local.split('T');
   const [y, m, day] = d.split('-').map(Number);
   const [hh, mm, ss = 0] = t.split(':').map(Number);
@@ -44,6 +52,8 @@ export function localToUtc(local, timeZone) {
 }
 /** A Date → "YYYY-MM-DDTHH:MM:SS" in `timeZone`. */
 export function utcToLocal(date, timeZone) {
+  const fixed = offsetMinutes(timeZone);
+  if (fixed !== null) return new Date(date.getTime() + fixed * 60_000).toISOString().slice(0, 19);
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(date);
   const g = (k) => parts.find((p) => p.type === k).value;
   return `${g('year')}-${g('month')}-${g('day')}T${g('hour')}:${g('minute')}:${g('second')}`;
@@ -122,9 +132,17 @@ export async function startFakeWoo(t, {
     delayMs: {},
     /** when set, every request is answered 301 to this address. */
     redirectTo: null,
+    /** (after, before) of an Analytics read → ms to wait before answering (a store slow on wide reads). */
+    slow: null,
   };
   const st = store.state;
-  const tz = () => st.timezone || (st.gmtOffset !== null ? `Etc/GMT${st.gmtOffset > 0 ? '-' : '+'}${Math.abs(st.gmtOffset)}` : 'UTC');
+  const tz = () => {
+    if (st.timezone) return st.timezone;
+    if (st.gmtOffset === null || st.gmtOffset === 0) return 'UTC';
+    if (Number.isInteger(st.gmtOffset)) return `Etc/GMT${st.gmtOffset > 0 ? '-' : '+'}${Math.abs(st.gmtOffset)}`;
+    const min = Math.round(st.gmtOffset * 60);
+    return `${min < 0 ? '-' : '+'}${String(Math.floor(Math.abs(min) / 60)).padStart(2, '0')}:${String(Math.abs(min) % 60).padStart(2, '0')}`;
+  };
   const gmt = (local) => (local ? localToUtc(local, tz()).toISOString().slice(0, 19) : null);
 
   const orderJson = (o) => ({
@@ -221,6 +239,8 @@ export async function startFakeWoo(t, {
       if (auth !== expected) return send(res, 401, { code: 'woocommerce_rest_cannot_view', message: 'Sorry, you cannot list resources.', data: { status: 401 } });
       if (path === '/wp-json/wc/v3/data/currencies/current') return send(res, 200, { code: st.currency, name: 'Canadian dollar', symbol: '&#36;' });
       if (path === '/wp-json/wc-analytics/reports/revenue/stats') {
+        const wait = store.slow?.(String(url.searchParams.get('after') ?? ''), String(url.searchParams.get('before') ?? '')) ?? 0;
+        if (wait) await new Promise((r) => setTimeout(r, wait));
         if (!st.analytics) return send(res, 404, { code: 'rest_no_route', message: 'No route was found matching the URL and request method.' });
         return revenue(url.searchParams, res);
       }

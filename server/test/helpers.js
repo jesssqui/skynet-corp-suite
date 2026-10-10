@@ -27,6 +27,15 @@ export function testConfig(dir, env = {}) {
 
 export const quietLog = createLogger('test', 'silent');
 
+/** A logger that keeps every line as text (to check what reaches the log). */
+export function capturingLog(lines = []) {
+  const make = (tag) => {
+    const out = (level) => (...args) => lines.push({ level, tag, text: args.map((a) => (a instanceof Error ? `${a.message}\n${a.stack}` : typeof a === 'string' ? a : JSON.stringify(a))).join(' ') });
+    return { debug: out('debug'), info: out('info'), warn: out('warn'), error: out('error'), child: (sub) => make(`${tag}:${sub}`) };
+  };
+  return Object.assign(make('test'), { lines });
+}
+
 /** A clock tests can move: now() is real time plus `offsetMs`. */
 export function testClock() {
   const clock = { offsetMs: 0, now: () => Date.now() + clock.offsetMs, advance: (ms) => { clock.offsetMs += ms; } };
@@ -37,9 +46,9 @@ export function testClock() {
  * createApp on a real temporary database, listening on an ephemeral port.
  * Closed when the test ends (or earlier with close()).
  */
-export async function startApp(t, config, { modules = registeredModules, now } = {}) {
+export async function startApp(t, config, { modules = registeredModules, now, log = quietLog } = {}) {
   const db = openDb(config.dbPath);
-  const { app, ctx } = await createApp({ config, db, log: quietLog, modules, ...(now ? { now } : {}) });
+  const { app, ctx } = await createApp({ config, db, log, modules, ...(now ? { now } : {}) });
   const server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });

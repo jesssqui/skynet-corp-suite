@@ -22,7 +22,7 @@ import { restoreBackup, KEPT_TABLES } from '../src/backup/restore.js';
 import { createWooClient, cleanStoreUrl, storeKey, parseKeys, PATHS, WooError } from '../src/modules/woocommerce/client.js';
 import { siteTimeZone, figuresFrom, orderView, backoffMs, connectionId, WINDOW_DAYS, BACKFILL_MONTHS } from '../src/modules/woocommerce/service.js';
 import { startFakeWoo, order, STORE_KEY, STORE_SECRET, OTHER_KEY, OTHER_SECRET, DEFAULT_EXCLUDED } from './fixtures/wooStore.js';
-import { tmpDir, testConfig, startApp, ensureTestUsers, testClock, sessionFor } from './helpers.js';
+import { tmpDir, testConfig, startApp, ensureTestUsers, testClock, sessionFor, capturingLog } from './helpers.js';
 
 const RETAIL = BUSINESS_IDS.retail;
 // 01:30 on Wednesday Oct 14 in Toronto = 22:30 on Tuesday Oct 13 in Vancouver: the stores' "today" isn't the Mac's.
@@ -61,10 +61,10 @@ function offsetOrders() {
 }
 
 // ---- setup ---------------------------------------------------------------------------------------------
-async function setup(t, { config = testConfig(tmpDir(t), { WOO_TIMEOUT_MS: '1000' }), clock = testClock(), start = START } = {}) {
+async function setup(t, { config = testConfig(tmpDir(t), { WOO_TIMEOUT_MS: '1000' }), clock = testClock(), start = START, log } = {}) {
   const setNow = (ms) => { clock.offsetMs = ms - Date.now(); };
   if (start !== null) setNow(start);
-  const env = await startApp(t, config, { modules, now: clock.now });
+  const env = await startApp(t, config, { modules, now: clock.now, ...(log ? { log } : {}) });
   const users = await ensureTestUsers(env.ctx);
   const owner = sessionFor(env.ctx, users.owner);
   const call = async (method, url, { body, session = owner } = {}) => {
@@ -119,6 +119,7 @@ test('the client: addresses, keys, the allowlist — anything but a GET of an al
   assert.equal(cleanStoreUrl('https://TinsXpress.com/wp-json/wc/v3/'), 'https://tinsxpress.com');
   assert.equal(cleanStoreUrl('https://example.com/shop/'), 'https://example.com/shop');
   assert.equal(storeKey('https://Example.com/shop'), 'example.com/shop');
+  assert.equal(storeKey('https://www.TinsXpress.com'), 'tinsxpress.com', 'www. dropped: the same shop under its other host (review fix)');
   assert.equal(cleanStoreUrl('http://127.0.0.1:8080'), 'http://127.0.0.1:8080', 'plain http only for this machine');
   for (const bad of ['http://tinsxpress.com', 'ftp://x.com', 'https://x.com/?a=1', 'https://u:p@x.com', 'not a url at all']) {
     assert.throws(() => cleanStoreUrl(bad), (e) => e instanceof WooError && e.code === 'bad_url', bad);
@@ -154,7 +155,9 @@ test('the site’s zone, Analytics figures in cents, an order shown with the fir
   assert.equal(siteTimeZone({ timezone_string: '', gmt_offset: 1 }), 'Etc/GMT-1');
   assert.equal(siteTimeZone({ timezone_string: '', gmt_offset: -5 }), 'Etc/GMT+5');
   assert.equal(siteTimeZone({ timezone_string: '', gmt_offset: 0 }), 'UTC');
-  assert.equal(siteTimeZone({ timezone_string: '', gmt_offset: 5.5 }), null, 'a half-hour offset has no Etc zone: the last known one is kept');
+  assert.equal(siteTimeZone({ timezone_string: '', gmt_offset: 5.5 }), '+05:30', 'a fractional offset is kept in minutes (review fix)');
+  assert.equal(siteTimeZone({ timezone_string: '', gmt_offset: -3.5 }), '-03:30');
+  assert.equal(siteTimeZone({ timezone_string: '', gmt_offset: '5.75' }), '+05:45');
   assert.equal(siteTimeZone({ timezone_string: 'Mars/Olympus' }), null);
   assert.deepEqual(figuresFrom({ orders_count: 3, num_items_sold: 5, gross_sales: 145, coupons: 2, refunds: 20, net_revenue: 123, taxes: 10.4, shipping: 8, total_sales: 141.4 }),
     { orders: 3, items: 5, gross: 14500, discounts: 200, refunds: 2000, net: 12300, tax: 1040, shipping: 800, total: 14140 });
@@ -281,12 +284,17 @@ test('backfill: a failure part way is remembered; the next pull (after its backo
   van.fail['/wp-json/wc-analytics'] = { status: 500, times: 1, skip: 3 };
   const a = await s.add(van);
   const p = s.pulls(a.id);
-  assert.equal(p.failures, 1);
+  assert.equal(p.failures, 0, 'the window read fine: the store isn’t failing (review fix)');
+  assert.equal(p.backfill_failures, 1);
   assert.equal(p.backfill_done_at, null);
   const windowFrom = addDays(VAN_TODAY, -(WINDOW_DAYS - 1));
   assert.equal(p.backfill_before, addDays(windowFrom, -90), 'the first chunk is saved');
   assert.ok(p.last_success_at, 'the window itself was read');
-  assert.match(p.last_error, /500/);
+  assert.match(p.backfill_error, /500/);
+  assert.equal(p.last_error, null);
+  const row = (await s.call('GET', '/api/connections')).body.connections.find((c) => c.id === a.connectionId);
+  assert.equal(row.lastError, null, 'the row isn’t red');
+  assert.match(row.detail, /^Backfill: The store answered 500/);
   const n = analyticsCalls(van).length;
   await s.svc.pullRound();
   assert.equal(analyticsCalls(van).length, n, 'waits for its backoff (2 minutes)');
@@ -294,6 +302,7 @@ test('backfill: a failure part way is remembered; the next pull (after its backo
   await s.svc.pullRound();
   const p2 = s.pulls(a.id);
   assert.equal(p2.failures, 0);
+  assert.equal(p2.backfill_failures, 0);
   assert.ok(p2.backfill_done_at);
   const later = analyticsCalls(van).slice(n).map((r) => r.query.after.slice(0, 10));
   assert.deepEqual(later, [windowFrom, addDays(windowFrom, -180), addDays(windowFrom, -270), addMonths(VAN_TODAY, -BACKFILL_MONTHS)], 'the window, then on from where it stopped');
@@ -391,7 +400,7 @@ test('secrets: the consumer secret is stored only encrypted (key file 0600, outs
   await s2.svc.pullStore(a.id, { force: true });
   assert.equal(van.requests.length, n, 'no calls without the secret');
   assert.match(s2.svc.store(a.id).lastError, /can’t be read/);
-  assert.equal((await s2.call('GET', `/api/woocommerce/stores/${a.id}/orders?number=101`)).body.code, 'unreadable');
+  assert.equal((await s2.call('POST', `/api/woocommerce/stores/${a.id}/orders/lookup`, { body: { number: '101' } })).body.code, 'unreadable');
 });
 
 // ---- Connections: rows, pause, failures ------------------------------------------------------------------
@@ -420,7 +429,7 @@ test('Connections: a “WooCommerce stores” row and one row per store under it
   await s.svc.pullRound({ force: true });
   assert.equal(van.requests.length, n, 'paused: no calls at all');
   assert.equal((await s.call('POST', `/api/woocommerce/stores/${a.id}/pull`)).body.code, 'paused');
-  assert.equal((await s.call('GET', `/api/woocommerce/stores/${a.id}/orders?number=101`)).body.code, 'paused');
+  assert.equal((await s.call('POST', `/api/woocommerce/stores/${a.id}/orders/lookup`, { body: { number: '101' } })).body.code, 'paused');
   assert.equal(van.requests.length, n);
   list = (await s.call('GET', '/api/connections')).body.connections;
   assert.equal(list.find((c) => c.id === a.connectionId).state, 'paused');
@@ -494,7 +503,7 @@ test('order lookups: by number or email, live; first name only; tracking when th
   van.state.shipments['120'] = [{ tracking_provider: 'Canada Post', tracking_number: '7023 4567 8901', tracking_link: 'https://www.canadapost-postescanada.ca/track?x=1', date_shipped: '2026-10-12' }];
   const a = await s.add(van);
   const before = van.requests.length;
-  let r = await s.call('GET', `/api/woocommerce/stores/${a.id}/orders?number=%23120`);
+  let r = await s.call('POST', `/api/woocommerce/stores/${a.id}/orders/lookup`, { body: { number: '#120' } });
   assert.equal(r.status, 200, r.text);
   assert.equal(r.headers.get('cache-control'), 'no-store');
   assert.equal(r.body.orders.length, 1);
@@ -507,19 +516,19 @@ test('order lookups: by number or email, live; first name only; tracking when th
   assert.deepEqual(o.tracking, [{ provider: 'Canada Post', number: '7023 4567 8901', url: 'https://www.canadapost-postescanada.ca/track?x=1', shippedOn: '2026-10-12' }]);
   assert.equal(o.createdAt, '2026-10-12T16:00:00Z', 'times in UTC (Vancouver 09:00)');
   for (const s2 of ['Nakamura', 'kim@example.com', '6045550199', '77 Secret Lane', 'back door', '203.0.113.9', 'Brantford', 'N3T']) assert.ok(!r.text.includes(s2), s2);
-  r = await s.call('GET', `/api/woocommerce/stores/${a.id}/orders?email=${encodeURIComponent(' KIM@example.com ')}`);
+  r = await s.call('POST', `/api/woocommerce/stores/${a.id}/orders/lookup`, { body: { email: ' KIM@example.com ' } });
   assert.deepEqual(r.body.orders.map((x) => x.number).sort(), ['120', '121'], 'exact email only (not xkim@)');
   assert.ok(!r.text.includes('Xavier') && !r.text.includes('kim@'));
-  r = await s.call('GET', `/api/woocommerce/stores/${a.id}/orders?number=TX-500`);
+  r = await s.call('POST', `/api/woocommerce/stores/${a.id}/orders/lookup`, { body: { number: 'TX-500' } });
   assert.deepEqual(r.body.orders.map((x) => x.number), ['TX-500'], 'a custom order number, through the search');
-  r = await s.call('GET', `/api/woocommerce/stores/${a.id}/orders?number=99999`);
+  r = await s.call('POST', `/api/woocommerce/stores/${a.id}/orders/lookup`, { body: { number: '99999' } });
   assert.deepEqual(r.body.orders, []);
-  assert.equal((await s.call('GET', `/api/woocommerce/stores/${a.id}/orders`)).status, 400);
-  assert.equal((await s.call('GET', `/api/woocommerce/stores/${a.id}/orders?email=not-an-email`)).status, 400);
-  assert.equal((await s.call('GET', `/api/woocommerce/stores/${a.id}/orders?number=1;DROP`)).status, 400);
+  assert.equal((await s.call('POST', `/api/woocommerce/stores/${a.id}/orders/lookup`, { body: {} })).status, 400);
+  assert.equal((await s.call('POST', `/api/woocommerce/stores/${a.id}/orders/lookup`, { body: { email: 'not-an-email' } })).status, 400);
+  assert.equal((await s.call('POST', `/api/woocommerce/stores/${a.id}/orders/lookup`, { body: { number: '1;DROP' } })).status, 400);
   // No tracking plugin: the order still shows.
   van.state.tracking = false;
-  r = await s.call('GET', `/api/woocommerce/stores/${a.id}/orders?number=121`);
+  r = await s.call('POST', `/api/woocommerce/stores/${a.id}/orders/lookup`, { body: { number: '121' } });
   assert.deepEqual(r.body.orders[0].tracking, []);
   assert.ok(van.requests.slice(before).every((q) => q.method === 'GET'));
   // Nothing from the lookups is anywhere in the database.
@@ -535,8 +544,8 @@ test('the suite only reads: every call it made to a store in a full run was a GE
   const van = await startFakeWoo(t);
   van.state.orders = vancouverOrders();
   const a = await s.add(van);
-  await s.call('GET', `/api/woocommerce/stores/${a.id}/orders?number=101`);
-  await s.call('GET', `/api/woocommerce/stores/${a.id}/orders?email=buyer101@example.com`);
+  await s.call('POST', `/api/woocommerce/stores/${a.id}/orders/lookup`, { body: { number: '101' } });
+  await s.call('POST', `/api/woocommerce/stores/${a.id}/orders/lookup`, { body: { email: 'buyer101@example.com' } });
   await s.call('POST', `/api/woocommerce/stores/${a.id}/pull`);
   await s.call('PUT', `/api/woocommerce/stores/${a.id}`, { body: { name: 'TX', businessId: BUSINESS_IDS.agency } });
   await s.call('PUT', `/api/connections/${a.connectionId}`, { body: { paused: true } });
@@ -627,4 +636,114 @@ test('restores: the stores are the current ones (one added after the backup stay
   await second.svc.pullRound();
   const target = addMonths(VAN_TODAY, -BACKFILL_MONTHS);
   assert.equal(second.sales.dayCount({ source: 'woo', store: a.storeKey, from: target, to: VAN_TODAY }), 396);
+});
+
+// ---- review fixes ----------------------------------------------------------------------------------------------
+test('review fix: an order lookup is a POST (the number or email in the body); a store failing or timing out during one leaves neither in the log', async (t) => {
+  const log = capturingLog();
+  const s = await setup(t, { log });
+  const van = await startFakeWoo(t);
+  van.state.orders = [order({ id: 120, created: '2026-10-12T09:00:00', email: 'kim.private@example.com' })];
+  const a = await s.add(van);
+  const lookup = (body) => s.call('POST', `/api/woocommerce/stores/${a.id}/orders/lookup`, { body });
+  // Failing.
+  van.fail['/wp-json/wc/v3/orders'] = { status: 500, times: Infinity };
+  let r = await lookup({ email: 'kim.private@example.com' });
+  assert.equal(r.status, 502);
+  r = await lookup({ number: '4242' });
+  assert.equal(r.status, 502);
+  delete van.fail['/wp-json/wc/v3/orders'];
+  // Timing out.
+  van.delayMs['/wp-json/wc/v3/orders'] = 1500;
+  r = await lookup({ email: 'kim.private@example.com' });
+  assert.equal(r.status, 502);
+  assert.match(r.body.error, /didn’t answer/);
+  r = await lookup({ number: '4242' });
+  assert.equal(r.status, 502);
+  delete van.delayMs['/wp-json/wc/v3/orders'];
+  // Something unexpected inside the lookup: answered 500 by the route itself, logged without the query.
+  const real = s.svc.lookup;
+  s.svc.lookup = async () => { throw new Error('boom kim.private@example.com 4242'); };
+  r = await lookup({ email: 'kim.private@example.com' });
+  assert.equal(r.status, 500);
+  assert.equal(r.body.error, 'The lookup failed: try again');
+  s.svc.lookup = real;
+  const text = log.lines.map((l) => l.text).join('\n');
+  assert.ok(!text.includes('kim.private'), 'no email in the log');
+  assert.ok(!/4242/.test(text), 'no order number in the log');
+  assert.ok(log.lines.some((l) => /order lookup failed/.test(l.text)), 'the failure itself is logged');
+  // The old GET with the query in the address doesn't exist.
+  assert.equal((await s.call('GET', `/api/woocommerce/stores/${a.id}/orders?email=kim.private@example.com`)).status, 404);
+  assert.ok(!log.lines.map((l) => l.text).join('\n').includes('kim.private'));
+  // The lookup route still follows the Origin/JSON rules.
+  const res = await fetch(`${s.base}/api/woocommerce/stores/${a.id}/orders/lookup`, { method: 'POST', headers: { cookie: s.owner.cookie, origin: 'https://evil.example', 'content-type': 'application/json' }, body: '{"number":"120"}' });
+  assert.equal(res.status, 403);
+});
+
+test('review fix: a slow store — backfill chunks time out and are halved (down to 7 days) on their own backoff, without cache refresh; the window stays fine', async (t) => {
+  const s = await setup(t);
+  const van = await startFakeWoo(t);
+  van.state.orders = vancouverOrders();
+  const windowFrom = addDays(VAN_TODAY, -(WINDOW_DAYS - 1));
+  const days = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000) + 1;
+  // Over 30 days of older days at once: slower than the 1 s time-out. The window (60 days, recent) is quick.
+  van.slow = (after, before) => (after.slice(0, 10) < windowFrom && days(after.slice(0, 10), before.slice(0, 10)) > 30 ? 1500 : 0);
+  const a = await s.add(van);
+  let p = s.pulls(a.id);
+  assert.equal(p.failures, 0);
+  assert.ok(p.last_success_at, 'the window read fine');
+  assert.equal(p.backfill_chunk_days, 45, 'halved after the time-out');
+  assert.match(p.backfill_error, /didn’t answer within 1 s/);
+  let row = (await s.call('GET', '/api/connections')).body.connections.find((c) => c.id === a.connectionId);
+  assert.equal(row.lastError, null);
+  assert.match(row.detail, /^Backfill: The store didn’t answer within 1 s .*45 days at a time/);
+  // Its own backoff: 2 minutes, then 4…; the chunk halves until it is quick enough (22 days), then carries on.
+  for (let i = 0; i < 12 && !s.pulls(a.id).backfill_done_at; i += 1) {
+    s.clock.advance(61 * 60_000);
+    await s.svc.pullRound();
+  }
+  p = s.pulls(a.id);
+  assert.ok(p.backfill_done_at, JSON.stringify(p));
+  assert.equal(p.backfill_chunk_days, 22);
+  assert.equal(p.failures, 0);
+  assert.equal(s.sales.dayCount({ source: 'woo', store: a.storeKey, from: addMonths(VAN_TODAY, -BACKFILL_MONTHS), to: VAN_TODAY }), 396);
+  row = (await s.call('GET', '/api/connections')).body.connections.find((c) => c.id === a.connectionId);
+  assert.equal(row.detail, null);
+  // Backfill reads never ask for a cache refresh; window reads always do.
+  for (const r of analyticsCalls(van).filter((x) => x.query.per_page === '100')) {
+    const isWindow = r.query.after.slice(0, 10) >= windowFrom;
+    assert.equal(r.query.force_cache_refresh, isWindow ? 'true' : undefined, `${r.query.after} … ${r.query.before}`);
+  }
+  const year = { from: addMonths(VAN_TODAY, -BACKFILL_MONTHS), to: VAN_TODAY };
+  assert.deepEqual(pick(s.sales.totals({ ...year, store: a.storeKey }).overall[0]), asFigures(await analytics(van, year)));
+});
+
+test('review fix: a site with only a fractional gmt_offset (+5:30) has its days counted from that offset, not the Mac’s zone', async (t) => {
+  const s = await setup(t);
+  const ind = await startFakeWoo(t, { name: 'Mumbai Tins', timezone: '', gmtOffset: 5.5, currency: 'INR' });
+  ind.state.orders = [
+    order({ id: 1, created: '2026-10-11T23:50:00', items: [{ name: 'Tin', sku: 'T', qty: 1, price: 100 }] }), // Sunday there
+    order({ id: 2, created: '2026-10-05T00:10:00', items: [{ name: 'Tin', sku: 'T', qty: 1, price: 50 }] }),
+    order({ id: 3, created: '2026-10-04T23:55:00', items: [{ name: 'Tin', sku: 'T', qty: 1, price: 999 }] }),
+  ];
+  const a = await s.add(ind);
+  assert.equal(a.timeZone, '+05:30');
+  // 05:30 UTC on Oct 14 = 11:00 on Oct 14 at +05:30 (and 01:30 in Toronto).
+  assert.equal(s.svc.store(a.id).today, '2026-10-14');
+  const week = s.sales.totals({ ...LAST_WEEK, store: a.storeKey }).overall[0];
+  assert.deepEqual(pick(week), asFigures(await analytics(ind, LAST_WEEK)));
+  assert.equal(week.net, 15000);
+  const card = (await s.call('GET', '/api/sales/summary')).body.stores.find((x) => x.store === a.storeKey);
+  assert.equal(card.date, '2026-10-14');
+  assert.equal(card.timeZone, '+05:30');
+});
+
+test('review fix: a store re-added under its other host (with or without www.) continues the same totals', async (t) => {
+  const s = await setup(t);
+  const van = await startFakeWoo(t);
+  van.state.orders = vancouverOrders();
+  const a = await s.add(van);
+  // Same store key whatever the host's www.: the fake is on 127.0.0.1, so the key logic is checked directly.
+  assert.equal(storeKey('https://www.tinsxpress.com'), storeKey('https://tinsxpress.com'));
+  assert.equal(a.storeKey, storeKey(van.url));
 });

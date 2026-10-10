@@ -107,6 +107,8 @@ export default function SalesPage() {
             {stores.map((s) => <StoreCard key={`${s.source}|${s.store}`} store={s} businessName={names.get(s.businessId ?? null) ?? '—'} />)}
           </div>
           <p style={{ ...muted, margin: 0 }}>
+            Weeks run Monday–Sunday, each store in its own calendar (a store’s own report may start weeks on another day:
+            compare with a custom Monday–Sunday range there).
             Total sales = items, shipping and tax, after discounts and refunds — as WooCommerce Analytics and eBay’s
             Seller Hub show it; a refund counts on the day it was made. Which orders count is each store’s own setting
             (eBay: cancelled and unpaid orders don’t). Read about once an hour, recent weeks again each time, so late
