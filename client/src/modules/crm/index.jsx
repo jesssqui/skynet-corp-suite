@@ -8,6 +8,10 @@ import { lazy, Suspense } from 'react';
 // so they still open offline.
 const QuickAddPage = lazy(() => import('./QuickAddPage.jsx'));
 const ImportPage = lazy(() => import('./ImportPage.jsx'));
+// D8: the pipeline, a lead and the cross-sell list (lazy too: cached by the service worker, so offline).
+const PipelinePage = lazy(() => import('./PipelinePage.jsx'));
+const LeadPage = lazy(() => import('./LeadPage.jsx'));
+const CrossSellPage = lazy(() => import('./CrossSellPage.jsx'));
 const loading = <p style={{ color: 'var(--text-muted)' }}>Loading…</p>;
 
 // The CRM's screens (C3b). Its record types are registered on the server (crm module, C3a) and
@@ -19,6 +23,11 @@ const loading = <p style={{ color: 'var(--text-muted)' }}>Loading…</p>;
 //   /crm/businesses      our businesses (colour, archived) and the plain record views
 //   /crm/quick-add       C7: the brain dump — one client per line, preview, save (offline)
 //   /crm/import          C7: the accounting customer list as a CSV (on the server: needs a connection)
+//   /crm/pipeline        D8: leads by stage (columns on wide screens, a stage switch on phones)
+//   /crm/leads/:id       D8: one lead — stage moves, Won… (makes the client), Lost…, next step, its timeline
+//   /crm/cross-sell      D8: current clients who could use another of our services; Make a lead
+// Pipeline and Cross-sell are tabs of the Clients entry (CrmTabs), not their own nav entries: the phone's
+// tab bar already has eight, and a lead becomes a client there.
 export default {
   id: 'crm',
   nav: { label: 'Clients', icon: 'users', order: 20, path: '/crm' },
@@ -28,5 +37,8 @@ export default {
     { path: '/crm/businesses', element: <BusinessesPage /> },
     { path: '/crm/quick-add', element: <Suspense fallback={loading}><QuickAddPage /></Suspense> },
     { path: '/crm/import', element: <Suspense fallback={loading}><ImportPage /></Suspense> },
+    { path: '/crm/pipeline', element: <Suspense fallback={loading}><PipelinePage /></Suspense> },
+    { path: '/crm/leads/:id', element: <Suspense fallback={loading}><LeadPage /></Suspense> },
+    { path: '/crm/cross-sell', element: <Suspense fallback={loading}><CrossSellPage /></Suspense> },
   ],
 };

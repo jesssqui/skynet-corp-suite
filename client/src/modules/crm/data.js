@@ -35,6 +35,9 @@ const BELONGS_TO = {
   wholesale_note: ['account', 'client'], // D5
   // D6: a recurring cost belongs to one of our businesses; its (resold) relationship is a plain ref.
   recurring_cost: ['business'],
+  // D8: a lead belongs to one of our businesses (its client/account are plain refs); its timeline to it.
+  lead: ['business'],
+  lead_activity: ['lead', 'business'],
 };
 
 const caches = new WeakMap(); // engine -> { entries: Map<entity, Promise<Entry>>, off }
@@ -129,7 +132,7 @@ export async function cachedList(engine, entity) {
 // D5: the Order Manager's notes are timeline items too, and count as activity on the list.
 const LIST_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'activity', 'wholesale_order', 'wholesale_customer', 'wholesale_note'];
 const PAGE_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'service', 'consent', 'activity', 'link', 'task',
-  'wholesale_customer', 'wholesale_order', 'wholesale_entry', 'wholesale_note', 'recurring_cost'];
+  'wholesale_customer', 'wholesale_order', 'wholesale_entry', 'wholesale_note', 'recurring_cost', 'lead', 'lead_activity'];
 
 /** Last activity per client: Map<client_id, at>. */
 export function lastActivityByClient(activities) {
@@ -179,7 +182,7 @@ const byName = (a, b) => String(a.name).localeCompare(String(b.name)) || (a.id <
 export function useClientPageData(clientId) {
   const { data, loading, error } = useSyncData(async (e) => {
     const [businesses, clients, accounts, contacts, relationships, services, consents, activities, links, tasks,
-      wholesaleCustomers, wholesaleOrders, wholesaleEntries, wholesaleNotes, costs] = await cachedLists(e, PAGE_ENTITIES);
+      wholesaleCustomers, wholesaleOrders, wholesaleEntries, wholesaleNotes, costs, leads, leadActivities] = await cachedLists(e, PAGE_ENTITIES);
     const client = clients.byId().get(clientId) ?? null;
     if (!client) return { client: null };
     const myAccounts = [...accounts.where('client_id', clientId)].sort(byName);
@@ -208,8 +211,77 @@ export function useClientPageData(clientId) {
       wholesaleNotes: myAccounts.flatMap((a) => wholesaleNotes.where('account_id', a.id)), // D5
       // D6: our recurring costs resold on this client's relationships.
       resoldCosts: myRelationships.flatMap((r) => costs.where('relationship_id', r.id)),
+      // D8: leads pointing at this client (cross-sell) or won into it, and their own timelines.
+      ...(() => {
+        const mine = [...new Map([...leads.where('client_id', clientId), ...leads.where('won_client_id', clientId)].map((l) => [l.id, l])).values()];
+        return { leads: mine, leadActivities: mine.flatMap((l) => leadActivities.where('lead_id', l.id)), leadTasks: mine.flatMap((l) => tasks.where('lead_id', l.id)) };
+      })(),
     };
   }, [clientId], { entities: PAGE_ENTITIES });
+  return { data: data ?? null, loading, error };
+}
+
+// D8: the pipeline and one lead (the device's copy).
+const PIPELINE_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'lead', 'task'];
+
+/** The Pipeline page: every lead, our businesses, the open tasks naming leads (their next steps), and clients/accounts for names. */
+export function usePipelineData() {
+  const { data, loading, error } = useSyncData(async (e) => {
+    const [businesses, clients, accounts, contacts, relationships, leads, tasks] = await cachedLists(e, PIPELINE_ENTITIES);
+    return {
+      businesses: businesses.records,
+      businessesById: businesses.byId(),
+      clients: clients.records,
+      clientsById: clients.byId(),
+      accounts: accounts.records,
+      accountsById: accounts.byId(),
+      contacts: contacts.records,
+      relationships: relationships.records,
+      leads: leads.records,
+      leadsById: leads.byId(),
+      tasks: tasks.records,
+      tasksByLead: tasks.by('lead_id'),
+    };
+  }, [], { entities: PIPELINE_ENTITIES });
+  return { data: data ?? null, loading, error };
+}
+
+const LEAD_PAGE_ENTITIES = [...PIPELINE_ENTITIES, 'lead_activity'];
+
+/** One lead with its timeline and tasks, plus what winning reads (clients, accounts, contacts, relationships); { lead: null } when not here. */
+export function useLeadPageData(leadId) {
+  const { data, loading, error } = useSyncData(async (e) => {
+    const [businesses, clients, accounts, contacts, relationships, leads, tasks, leadActivities] = await cachedLists(e, LEAD_PAGE_ENTITIES);
+    const lead = leads.byId().get(leadId) ?? null;
+    if (!lead) return { lead: null };
+    return {
+      lead,
+      businesses: businesses.records,
+      businessesById: businesses.byId(),
+      clients: clients.records,
+      clientsById: clients.byId(),
+      accounts: accounts.records,
+      accountsById: accounts.byId(),
+      contacts: contacts.records,
+      relationships: relationships.records,
+      tasks: tasks.where('lead_id', leadId),
+      activities: [...leadActivities.where('lead_id', leadId)].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)),
+    };
+  }, [leadId], { entities: LEAD_PAGE_ENTITIES });
+  return { data: data ?? null, loading, error };
+}
+
+// D8: the cross-sell page reads the same as the monthly list (crossSellList in @suite/shared/leads).
+const CROSS_SELL_ENTITIES = ['business', 'client', 'account', 'contact', 'consent', 'relationship', 'lead'];
+
+export function useCrossSellData() {
+  const { data, loading, error } = useSyncData(async (e) => {
+    const [businesses, clients, accounts, contacts, consents, relationships, leads] = await cachedLists(e, CROSS_SELL_ENTITIES);
+    return {
+      businesses: businesses.records, businessesById: businesses.byId(), clients: clients.records, accounts: accounts.records,
+      contacts: contacts.records, consents: consents.records, relationships: relationships.records, leads: leads.records,
+    };
+  }, [], { entities: CROSS_SELL_ENTITIES });
   return { data: data ?? null, loading, error };
 }
 

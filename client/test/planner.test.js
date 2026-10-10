@@ -275,7 +275,7 @@ test('the task form: a new task saves every field; an edit sends only what chang
   assert.equal(isDirty(fresh, { ...fresh }), false, 'pre-filled values are not "typed"');
   assert.deepEqual(taskForm.toFields(fresh).fields, {
     title: 'Renew the domain', notes: null, owner: 'owner', business_id: PERSONAL, client_id: null, account_id: null, relationship_id: null,
-    goal_id: null, due_date: null, due_time: null, estimate_minutes: null, done_at: null, top_on_owner: null,
+    goal_id: null, lead_id: null, due_date: null, due_time: null, estimate_minutes: null, done_at: null, top_on_owner: null,
   });
   // A record pulled before C4b has no goal_id at all: opening and saving it doesn't send one.
   const old = taskValues({ id: 't0', title: 'Old', owner: 'owner', business_id: W }, { today: TODAY });

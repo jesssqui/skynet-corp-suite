@@ -6,10 +6,11 @@ import { useSyncData } from '../../sync/index.js';
 import { cachedLists, cachedList, lastActivityOf } from '../crm/data.js';
 import { lastOrderByClient, mergeLastActivity } from '../wholesale/logic.js';
 
-const PLANNER_ENTITIES = ['business', 'client', 'account', 'relationship', 'task', 'inbox_item', 'goal', 'workday'];
+// D8: leads too (Today's "No next step" lists open leads; task rows name their lead).
+const PLANNER_ENTITIES = ['business', 'client', 'account', 'relationship', 'task', 'inbox_item', 'goal', 'workday', 'lead'];
 
 function maps(entries) {
-  const [businesses, clients, accounts, relationships, tasks, inbox, goals, workdays] = entries;
+  const [businesses, clients, accounts, relationships, tasks, inbox, goals, workdays, leads] = entries;
   return {
     businesses: businesses.records,
     clients: clients.records,
@@ -28,6 +29,9 @@ function maps(entries) {
     goalsById: goals.byId(),
     tasksByGoal: tasks.by('goal_id'),
     workdays: workdays.records,
+    // D8: leads and the tasks naming each (its "No next step").
+    leads: leads.records,
+    leadsById: leads.byId(),
   };
 }
 

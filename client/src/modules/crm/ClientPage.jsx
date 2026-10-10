@@ -20,6 +20,8 @@ import { wholesaleItems, activityItem, sumCards, linkHowText } from '../wholesal
 import { WholesaleTimelineItem, AccountWholesale, ClientWholesale, QuietRegularBadge } from '../wholesale/parts.jsx';
 import UndoLinkSheet from '../wholesale/UndoLinkSheet.jsx';
 import { resoldLine } from '../costs/logic.js';
+import { STAGE_LABELS, clientLeads, leadTimelineItems, leadValueText, nextStepOf, isOpenLead } from './leads.js';
+import { LeadForm } from './leadForms.jsx';
 import './crm.css';
 
 // One client on one screen (/crm/clients/:id): who they are, their businesses (accounts) with
@@ -302,6 +304,71 @@ function ActivityItem({ activity, account, business, me }) {
   );
 }
 
+// D8: a note, call or stage change made on one of this client's leads (cross-sell, or before it was won):
+// shown like an activity, with a link to the lead it was made on.
+function LeadTimelineItem({ item, account, business, me }) {
+  const who = actorLabel(item.record._sync?.createdBy ?? (item.record._sync?.local ? me : null), me);
+  return (
+    <li className="crm-activity" data-activity-id={item.id} data-from-lead={item.lead?.id}>
+      <span className="crm-activity-icon" aria-hidden="true"><Icon name={ICONS[item.type] ?? 'note'} size={16} /></span>
+      <div style={{ display: 'grid', gap: 4, minWidth: 0 }}>
+        <div style={{ ...muted, display: 'flex', gap: '0 var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
+          <strong style={{ color: 'var(--text)' }}>{ACTIVITY_LABELS[item.type] ?? item.type}</strong>
+          <time dateTime={item.at}>{formatDateTime(item.at)}</time>
+          {who ? <span>by {who === 'You' ? 'you' : who === 'Your partner' ? 'your partner' : who.toLowerCase()}</span> : null}
+          {item.lead ? <Link to={`/crm/leads/${item.lead.id}`}>on the lead</Link> : null}
+          <Badges record={item.record} />
+        </div>
+        {item.body ? <p style={preWrap}>{item.body}</p> : null}
+        {business || account ? (
+          <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
+            {business ? <BusinessChip business={business} /> : null}
+            {account ? <span style={muted}>{account.name}</span> : null}
+          </div>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+// D8: this client's leads — cross-sell ones pointing at it and the one(s) it was won from.
+function LeadsCard({ leads, tasks, businessesById, onNew, today }) {
+  const tasksByLead = new Map();
+  for (const t of tasks) tasksByLead.set(t.lead_id, [...(tasksByLead.get(t.lead_id) ?? []), t]);
+  return (
+    <Card>
+      <div style={sectionHead}>
+        <h2 style={h2}>Leads</h2>
+        <TextButton onClick={onNew}><Icon name="plus" size={14} />New lead</TextButton>
+      </div>
+      {leads.length ? (
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 'var(--space-2)' }} data-testid="client-leads">
+          {leads.map((l) => {
+            const next = isOpenLead(l) ? nextStepOf(tasksByLead.get(l.id)) : null;
+            const value = leadValueText(l);
+            return (
+              <li key={l.id} style={{ display: 'grid', gap: 4 }} data-lead-id={l.id}>
+                <span style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <Link to={`/crm/leads/${l.id}`} style={{ fontWeight: 600 }}>{l.name}</Link>
+                  <Badge tone={l.stage === 'won' ? 'ok' : l.stage === 'lost' ? 'danger' : 'accent'}>{STAGE_LABELS[l.stage]}</Badge>
+                  <BusinessChip business={businessesById.get(l.business_id)} short />
+                  {l.kind ? <span style={muted}>{KIND_LABELS[l.kind]}</span> : null}
+                  {value ? <span style={muted}>{value}</span> : null}
+                </span>
+                {isOpenLead(l) ? (
+                  next
+                    ? <span style={{ ...muted, color: next.due_date < today ? 'var(--danger)' : 'var(--text-muted)' }}>Next: {next.title} · {formatDate(next.due_date)}</span>
+                    : <span><Badge tone="warn">No next step</Badge></span>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : <p style={{ ...muted, margin: 0 }}>No leads. A new lead here is for this client (another service, another of our businesses).</p>}
+    </Card>
+  );
+}
+
 // The timeline's items are the client's activities and (D1) its Order Manager orders, payments,
 // returns and refunds, in one list (`items`, from activityItem / wholesaleItems): the Order Manager's
 // are type 'order' ("Orders") and business wholesale, so the filters work the same on both. (D5) Its
@@ -352,6 +419,8 @@ function Timeline({ items: activities, accounts, businesses, accountsById, busin
         <ul style={{ listStyle: 'none', margin: 0, padding: 0 }} data-testid="timeline">
           {rows.slice(0, shown).map((t) => (t.source === 'activity' ? (
             <ActivityItem key={t.id} activity={t.record} account={accountsById.get(t.account_id)} business={businessesById.get(t.business_id)} me={me} />
+          ) : t.source === 'lead_activity' ? (
+            <LeadTimelineItem key={t.id} item={t} account={accountsById.get(t.account_id)} business={businessesById.get(t.business_id)} me={me} />
           ) : (
             <WholesaleTimelineItem key={t.id} item={t} account={accountsById.get(t.account_id)} business={businessesById.get(t.business_id)} />
           )))}
@@ -425,7 +494,11 @@ function ClientScreen({ clientId }) {
       relationships: data.relationships, accounts: data.accounts, clients: [data.client], tasks: data.relationshipTasks,
     }).map((r) => r.id));
     // D1: the Order Manager's records on the timeline beside the activities, and its figures.
-    const items = [...data.activities.map(activityItem), ...wholesaleItems(data.wholesaleOrders, data.wholesaleEntries, data.wholesaleNotes)];
+    // D8: and the notes, calls and stage changes made on its leads (they stay with the lead; shown here).
+    const relationshipsById = new Map(data.relationships.map((r) => [r.id, r]));
+    const leadsById = new Map(data.leads.map((l) => [l.id, l]));
+    const items = [...data.activities.map(activityItem), ...wholesaleItems(data.wholesaleOrders, data.wholesaleEntries, data.wholesaleNotes),
+      ...leadTimelineItems(data.leadActivities, leadsById, relationshipsById)];
     const cardsByAccount = new Map();
     for (const c of data.wholesaleCustomers) cardsByAccount.set(c.account_id, [...(cardsByAccount.get(c.account_id) ?? []), c]);
     const wholesale = sumCards(data.wholesaleCustomers);
@@ -528,6 +601,13 @@ function ClientScreen({ clientId }) {
           </Card>
         </div>
         <div className="crm-col">
+          <LeadsCard
+            leads={clientLeads(data.leads, client.id)}
+            tasks={data.leadTasks}
+            businessesById={businessesById}
+            today={today}
+            onNew={() => open({ kind: 'lead' })}
+          />
           <ClientTasksCard
             client={client}
             tasks={data.tasks}
@@ -564,6 +644,16 @@ function ClientScreen({ clientId }) {
           how={linkHowText(sheet.link, me)}
           onClose={close}
           onDone={(undone) => { close(); setStatusError(null); setUndone(undone); }}
+        />
+      ) : null}
+      {sheet?.kind === 'lead' ? (
+        <LeadForm
+          initial={{ client_id: client.id, account_id: accounts.length === 1 ? accounts[0].id : '', name: accounts.length === 1 ? accounts[0].name : client.name, source: 'cross_sell' }}
+          businesses={businesses}
+          clientsById={new Map([[client.id, client]])}
+          accountsById={accountsById}
+          onClose={close}
+          onDone={(id) => { close(); if (id) navigate(`/crm/leads/${id}`); }}
         />
       ) : null}
       {sheet?.kind === 'client' ? (

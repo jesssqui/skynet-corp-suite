@@ -54,11 +54,14 @@ export async function inboxItemGuard(itemId, me) {
       label: note ? 'Open that client' : null,
     };
   }
+  if (sorted.entity === 'lead' && sorted.id) { // D8
+    return { message: `Already sorted by ${who}: it became a lead.`, to: `/crm/leads/${sorted.id}`, label: 'Open that lead' };
+  }
   return { message: `Already sorted by ${who}: it was dismissed.`, to: null, label: null };
 }
 
 /** The guard's refusal, with a link to what the item became. */
-function Blocked({ blocked }) {
+export function Blocked({ blocked }) {
   if (!blocked) return null;
   return (
     <Notice tone="warn">
@@ -177,6 +180,13 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
     >
       {live ? <RecordSync record={live} what="task" /> : null}
       <Blocked blocked={blocked} />
+      {v.lead_id ? (
+        // D8: the lead this task is the next step for (set from the lead's page, Today or the Pipeline).
+        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--text-sm)' }} data-testid="task-sheet-lead">
+          <span>Next step for the lead <strong>{data?.leadsById?.get(v.lead_id)?.name ?? '(not on this device)'}</strong></span>
+          <button type="button" className="crm-link-button" onClick={() => setV((cur) => ({ ...cur, lead_id: '' }))}>Not for this lead</button>
+        </div>
+      ) : null}
       <TextField
         id="task-title"
         label="Task"

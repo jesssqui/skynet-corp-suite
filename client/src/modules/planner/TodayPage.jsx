@@ -14,6 +14,8 @@ import { BusinessChip, TextButton } from '../crm/parts.jsx';
 import { KIND_LABELS } from '../crm/logic.js';
 import { usePlannerData } from './data.js';
 import { buildToday, openInbox, relationshipsWithoutNextStep, TOP_LIMIT } from './logic.js';
+import { leadsWithoutNextStep } from '@suite/shared/leads';
+import { STAGE_LABELS } from '../crm/leads.js';
 import { unplannedTasks, dayMinutesFor } from './plan.js';
 import { DayLoadPanel } from './planParts.jsx';
 import { PagedTaskList, ShowMore, PAGE, CaptureBar, CaptureSpacer, useToday, muted } from './parts.jsx';
@@ -37,18 +39,23 @@ function Section({ title, tone, count, children, testId }) {
   );
 }
 
-function NoNextStep({ flagged, data, onAdd }) {
+// D8: open leads with no dated next step are listed here too (after the relationships), each linking to
+// its lead page, with the same "Next step" button.
+function NoNextStep({ flagged, leads = [], data, onAdd, onAddLead }) {
   const [shown, setShown] = useState(SHOWN_FLAGS); // 5, then 50 more at a time (thousands at scale)
   const rows = flagged.slice(0, shown);
+  const leadRows = leads.slice(0, shown); // each list shows `shown` at most
   return (
     <Card>
       <div className="planner-section-head">
         <h2>No next step</h2>
-        <span style={muted} data-testid="no-next-step-count">{flagged.length}</span>
+        <span style={muted} data-testid="no-next-step-count">{flagged.length + leads.length}</span>
       </div>
-      <p style={{ ...muted, margin: '0 0 var(--space-2)' }} data-testid="no-next-step-summary">
-        {flagged.length === 1 ? '1 active relationship has' : `${flagged.length} active relationships have`} no dated next step.
-      </p>
+      {flagged.length ? (
+        <p style={{ ...muted, margin: '0 0 var(--space-2)' }} data-testid="no-next-step-summary">
+          {flagged.length === 1 ? '1 active relationship has' : `${flagged.length} active relationships have`} no dated next step.
+        </p>
+      ) : null}
       <ul style={{ listStyle: 'none', margin: 0, padding: 0 }} data-testid="no-next-step">
         {rows.map((r) => {
           const account = data.accountsById.get(r.account_id);
@@ -67,7 +74,28 @@ function NoNextStep({ flagged, data, onAdd }) {
           );
         })}
       </ul>
-      <ShowMore shown={shown} total={flagged.length} onMore={() => setShown((n) => n + PAGE)} testId="no-next-step-more" />
+      {leads.length ? (
+        <>
+          <p style={{ ...muted, margin: 'var(--space-2) 0' }} data-testid="no-next-step-leads-summary">
+            {leads.length === 1 ? '1 open lead has' : `${leads.length} open leads have`} no dated next step (<Link to="/crm/pipeline">Pipeline</Link>).
+          </p>
+          <ul style={{ listStyle: 'none', margin: 0, padding: 0 }} data-testid="no-next-step-leads">
+            {leadRows.map((l) => (
+              <li key={l.id} data-lead-id={l.id} style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap', borderTop: '1px solid var(--border)', padding: 'var(--space-1) 0' }}>
+                <span style={{ display: 'grid', gap: 2, minWidth: 0, flex: '1 1 180px' }}>
+                  <Link to={`/crm/leads/${l.id}`} style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{l.name}</Link>
+                  <span style={{ ...muted, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <BusinessChip business={data.businessesById.get(l.business_id)} short />
+                    <span>Lead · {STAGE_LABELS[l.stage]}</span>
+                  </span>
+                </span>
+                <TextButton onClick={() => onAddLead(l)} aria-label={`Add a next step for the lead ${l.name}`}><Icon name="plus" size={14} />Next step</TextButton>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+      <ShowMore shown={shown} total={Math.max(flagged.length, leads.length)} onMore={() => setShown((n) => n + PAGE)} testId="no-next-step-more" />
     </Card>
   );
 }
@@ -87,17 +115,30 @@ export default function TodayPage() {
     const name = (r) => data.clientsById.get(data.accountsById.get(r.account_id)?.client_id)?.name ?? '';
     return rows.sort((a, b) => name(a).localeCompare(name(b)) || (a.id < b.id ? -1 : 1));
   }, [data]);
+  const flaggedLeads = useMemo(() => {
+    if (!data) return [];
+    const live = data.leads.filter((l) => !data.businessesById.get(l.business_id)?.archived);
+    return leadsWithoutNextStep({ leads: live, tasks: data.tasks }).sort((a, b) => String(a.name).localeCompare(String(b.name)) || (a.id < b.id ? -1 : 1));
+  }, [data]);
   const inboxCount = useMemo(() => (data ? openInbox(data.inbox).length : 0), [data]);
   const toSort = useMemo(() => (data ? unplannedTasks(data.tasks, { goalsById: data.goalsById, me, today }).length : 0), [data, me, today]);
   const dayMinutes = data ? dayMinutesFor(data.workdays, me) : 0;
   const navigate = useNavigate();
 
   const rowProps = {
-    me, today, businessesById: data?.businessesById, clientsById: data?.clientsById, accountsById: data?.accountsById, goalsById: data?.goalsById,
+    me, today, businessesById: data?.businessesById, clientsById: data?.clientsById, accountsById: data?.accountsById, goalsById: data?.goalsById, leadsById: data?.leadsById,
     onOpen: (task) => setSheet({ kind: 'task', record: task }),
   };
   const close = () => setSheet(null);
   const addTask = () => setSheet({ kind: 'task', initial: newTaskInitial({ me, businesses: data?.businesses ?? [] }) });
+  const addLeadStep = (lead) => setSheet({
+    kind: 'task',
+    title: 'Next step',
+    initial: newTaskInitial({
+      me, businesses: data.businesses, context: lead.business_id, lead_id: lead.id,
+      client_id: lead.won_client_id ?? lead.client_id ?? '', account_id: lead.account_id ?? '',
+    }),
+  });
   const addNextStep = (rel, account) => setSheet({
     kind: 'task',
     title: 'Next step',
@@ -174,7 +215,7 @@ export default function TodayPage() {
                   <Icon name="tasks" size={20} /> All tasks <Icon name="chevron" size={16} />
                 </Link>
               </Card>
-              {flagged.length ? <NoNextStep flagged={flagged} data={data} onAdd={addNextStep} /> : null}
+              {flagged.length || flaggedLeads.length ? <NoNextStep flagged={flagged} leads={flaggedLeads} data={data} onAdd={addNextStep} onAddLead={addLeadStep} /> : null}
             </div>
           </div>
         )}
