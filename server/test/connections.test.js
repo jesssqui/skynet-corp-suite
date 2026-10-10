@@ -67,10 +67,13 @@ test('the page lists the backup (always on), the placeholders (not connected yet
   assert.equal(backup.state, 'always_on');
   assert.equal(backup.pausable, false);
   assert.match(backup.alwaysOnReason, /can’t pause/);
-  // D1 registered the real Order Manager connection in the placeholder's slot; the others still wait.
+  // D1 registered the real Order Manager connection in the placeholder's slot; the others still wait
   const wom = row(body.connections, 'wom');
   assert.deepEqual([wom.state, wom.pausable, wom.module], ['on', true, 'wholesale']);
-  for (const p of PLACEHOLDERS.filter((x) => x.id !== 'wom')) {
+  // D16 did the same for Stockroom.
+  const stockroom = row(body.connections, 'stockroom');
+  assert.deepEqual([stockroom.state, stockroom.pausable, stockroom.module, stockroom.queueLabel], ['on', true, 'stockroom', 'Not set up']);
+  for (const p of PLACEHOLDERS.filter((x) => !['wom', 'stockroom'].includes(x.id))) {
     const c = row(body.connections, p.id);
     assert.deepEqual([c.state, c.comesWith, c.pausable], ['not_connected', p.comesWith, false]);
   }

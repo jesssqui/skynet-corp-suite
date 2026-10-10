@@ -203,7 +203,7 @@ test('seeds survive a restore without duplicates; a backup from before the CRM g
   const dir = tmpDir(t);
   const config = testConfig(dir);
   // A database from before C3a (no crm module — nor the planner, which needs it, nor what needs the planner), backed up.
-  const preModules = modules.filter((m) => !['crm', 'planner', 'wholesale', 'calendar', 'costs'].includes(m.name));
+  const preModules = modules.filter((m) => !['crm', 'planner', 'wholesale', 'calendar', 'costs', 'stockroom'].includes(m.name));
   const pre = await startApp(t, config, preModules);
   const preBackup = await runBackup({ db: pre.db, dir: config.backup.dir, offsiteDir: null, keepDays: 30 });
   await pre.close();

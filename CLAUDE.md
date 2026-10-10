@@ -28,7 +28,10 @@ module: its CRM notes on the linked client's timeline, and its follow-up dates a
 calendar feed (module `calendar`: each person's dated tasks as a read-only calendar Apple Calendar subscribes to, by a
 secret link per person), and from **D6** renewals and recurring costs (module `costs`: what our businesses and the home
 pay for, with monthly and yearly totals, reminder tasks 30 days before a client service renews and 14 days before one
-of our costs does, auto-renewing costs rolled forward, resold costs on the client page).
+of our costs does, auto-renewing costs rolled forward, resold costs on the client page), and from **D16** stock tasks
+from Stockroom (module `stockroom`: a read-only, signed pull from Stockroom — the Inventory Hub on Fly — that makes
+reorder tasks by supplier, the weekly spot check on the shared list, tasks to receive confirmed purchase orders and to
+investigate big count differences; the suite never changes stock).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -54,6 +57,8 @@ npm run backup         # one backup now (same code as the nightly one)
 npm run restore -- --list | <file> [--to <path>] [--force]
 npm run user:add -- --actor owner|partner --username <name> --name "Display"   # the only way to make an account (sets up 2FA)
 npm run user:list | user:password -- <username> | user:reset-2fa -- <username> | user:unlock -- <username>
+npm run test:wom -- <wholesale-order-manager checkout>   # D1: the real Order Manager against a real suite
+npm run test:stockroom -- <inventory-hub checkout>       # D16: a real Stockroom (its own code) against a real suite
 ```
 Deploying, Tailscale Serve, backup scheduling and the restore drill: **DEPLOY.md**.
 
@@ -117,16 +122,25 @@ server/src/
                            cost/renewingBetween/autoRenewingPassed/liveCosts, monthlyTotals for D15), reminders.js
                            (the reminder engine reminderPlan/applyReminderPlan, rollCostsForward, the service-renewals
                            and cost-renewals automations), migrations/001_create_costs.sql (costs_recurring), 002_anchor_day.sql; no routes
+  modules/stockroom/       D16: client.js (the signed GET-only client, connection codes), service.js (the connection with
+                           its sealed secret, the pulls + backoff + startPuller, snapshots, the 'stockroom' Connections
+                           row), plans.js (pure: reorderPlan/spotCheckPlan/keyedPlan, deliveries/differences, applyPlan,
+                           caps), automations.js (the four automations, applyReorderPlan), routes.js (/api/stockroom:
+                           connection, pull), migrations/001_create_stockroom.sql, 002_order_soon_wanted.sql
   backup/                  backup.js, restore.js (D5: runs this version's migrations on the restored copy, then
                            carryKeptTables: modules' keepOnRestore), schedule.js
-  lib/                     log.js, httpError.js, serverLock.js (heartbeat file)
+  lib/                     log.js, httpError.js, serverLock.js (heartbeat file), redact.js (C6a), sealed.js (D16: AES-GCM
+                           secrets with a key file — D1's Order Manager secret, D16's Stockroom secret)
 server/scripts/            backup.js, restore.js, users.js (CLIs)
 scripts/wom-e2e.mjs        D1: the real Order Manager (a checkout) against a real suite: `npm run test:wom -- <path>`
+scripts/stockroom-e2e.mjs  D16: a real Stockroom (an inventory-hub checkout, run by stockroom-hub.mjs under its own tsx)
+                           against a real suite: `npm run test:stockroom -- <path>`
 server/test/               node --test; helpers.js: tmpDir/testConfig/startApp/testClock/ensureTestUsers/sessionFor/dumpDb;
                            fixtures/syncdemo = test-only synced module; fixtures/conndemo = test-only connection (C8);
                            fixtures/wom.js = A10 event builders + signed POST (D1; D5: note, noteAdded, noteDeleted,
                            followUpChanged), wom-captured-events.json = a real Order Manager's events and (D5)
-                           wom-captured-notes.json its A11 events (scripts/wom-e2e.mjs --capture)
+                           wom-captured-notes.json its A11 events (scripts/wom-e2e.mjs --capture); fixtures/stockroomHub.js =
+                           a fake Stockroom implementing B5's read-only API (D16)
 client/src/
   main.jsx, App.jsx        providers + router built from the module list, behind AuthGate and SyncProvider;
                            main.jsx registers the service worker (production builds)
@@ -159,6 +173,8 @@ client/src/
                            CostForm.jsx (the add/edit sheet, the CRM's useForm), data.js (cached reads via crm/data.js),
                            logic.js (no React: filters, groups, totals text, renewalLabel, resoldLine, relationshipOptions,
                            costForm; client/test/costs.test.js), costs.css
+  modules/stockroom/       D16: no page — ConnectionPanel.jsx (the Stockroom card's settings: paste the code, each read,
+                           Pull now, Forget; lazy, via connections/panels.js), logic.js (no React; client/test/stockroom.test.js)
   modules/wholesale/       D1: WholesalePage (/wholesale: waiting for a client / linked; lazy), ConnectionPanel.jsx (the
                            wom card's address + secret, via connections/panels.js; lazy), parts.jsx (timeline rows,
                            account and client figures on the client page; D3: QuietRegularBadge; D5: note rows, the
@@ -263,6 +279,9 @@ One folder per module on each side, same name on both (`server/src/modules/healt
   the feed handler catches its own errors (503, logged without the path), and app.js's error handler and its 404
   message pass paths through `redactPath` (`server/src/lib/redact.js`: `/api/calendar/feed/[link]`); add any future
   request logging through it too.
+- **The one outbound connection** (D16): the server calls Stockroom on Fly (`https://stockroom-hub.fly.dev`) over HTTPS
+  — signed GETs only, no body, never anything that can change stock; Stockroom never calls in. Its secret is encrypted
+  with a key file outside the database (like D1's). Nothing else in the suite calls out.
 - **No HSTS** (helmet's is off): browsers apply it to the whole ts.net hostname on every port, which would force the
   Order Manager's plain-http port on the same Mac to https. Tailscale Serve already makes the suite HTTPS-only.
 
@@ -1170,8 +1189,10 @@ switch pauses it without breaking the app.
   behind once the last good backup is over 26 h old; `pausable: false` — backups are never pausable from the app), the
   Order Manager (`wom`, D1 — real, see "Wholesale"), the task calendar feed (`calendar-feed`, C6a: last read by a
   calendar, refused lookups, whose links are on; paused = every feed answers 503) and placeholders "Not connected yet ·
-  comes with …": Apple Calendar (C6b, meetings over CalDAV), Stockroom (D16). A connection's card can show extra settings: the client module registers a panel
-  (`registerConnectionPanel(id, Component)` in `client/src/modules/connections/panels.js`; D1's address + secret).
+  comes with …": Apple Calendar (C6b, meetings over CalDAV). Stockroom (`stockroom`, D16 — real, see "Stock tasks from
+  Stockroom") took its placeholder's slot. A connection's card can show extra settings: the client module registers a panel
+  (`registerConnectionPanel(id, Component)` in `client/src/modules/connections/panels.js`; D1's address + secret; D16's
+  code paste).
 - **API** (signed in; writes follow the JSON/Origin rules): `GET /api/connections` → `{ connections: [{ id, name,
   module, description, state: on|paused|always_on|not_connected, pausable, alwaysOnReason, comesWith, lastSuccessAt,
   lastErrorAt, lastError, queueSize, queueLabel, detail, changedAt, changedBy }] }`; `PUT /api/connections/:id
@@ -1858,6 +1879,142 @@ and its date has passed: the page says "Overdue — renewed?" until a person set
   cost on /costs) and "Add resold cost" (not on wholesale relationships).
 - **The Friday review**'s renewals step: "Client services" then "Our costs" (active, renewing today…+30); the count is both.
 
+## Stock tasks from Stockroom (stockroom module, D16)
+Code `server/src/modules/stockroom/` (`client.js` the signed GET client, `service.js` the connection + pulls + the
+Connections row, `plans.js` the pure planners, `automations.js` the four automations, `routes.js`, migration
+`001_create_stockroom.sql`, `002_order_soon_wanted.sql`), the shared AES-GCM helpers `server/src/lib/sealed.js` (moved from D1's `secret.js`, which
+re-exports them), client `client/src/modules/stockroom/` (the card's panel only); tests `server/test/stockroom.test.js`
+(TZ Toronto; against `server/test/fixtures/stockroomHub.js`, a fake Stockroom implementing B5), `client/test/stockroom.test.js`,
+`test/e2e/stockroom.e2e.test.js`, and the cross-app run `scripts/stockroom-e2e.mjs` (+ `scripts/stockroom-hub.mjs`).
+Registered last (after the planner and automations: it registers the `stockroom` connection in the placeholder's slot,
+and its automations make tasks). Reads and writes only its own tables; tasks through the automations framework.
+Stockroom = the Inventory Hub (`~/Developer/inventory-hub`, Fly app `stockroom-hub`); its side is its package **B5**
+("Read-only connection for the Skynet Corp Suite" in its DECISIONS.md, `src/api/suite.ts`, `src/core/suite.ts`).
+
+**The suite only reads — by construction.** `client.js` is the module's one network call: `get(path)` with the method
+fixed to `GET`, no body, `redirect: 'manual'`, a time-out, and only paths `/v1/suite` or `/v1/suite/<read>` (anything
+else throws before a request). Stockroom's side refuses every other method with 405 before reading anything. Tests prove
+it: every request the fake hub saw in a full run (connect, pulls, pause, Pull now, forget) was a signed GET with an empty
+body, and the module's sources contain exactly one `fetch` (client.js, `method: 'GET'`) and no other HTTP client. Apps at
+home call out to Fly; Stockroom never calls the suite.
+
+**The connection** (server settings, not synced):
+- Made in Stockroom (admin): **Settings → Connections → Connect the suite** → a code shown once, `SLR1.` + base64url JSON
+  `{u: hub url, k: key, s: secret}` (key `suite.<12 hex>`, secret 32 random bytes as 64 hex; store codes are `SL1.`, refused
+  here with a message). *Make a new secret* there rotates it (the old stops at once); *Disconnect* is final there.
+- Pasted on **System → Connections → Stockroom** (`PUT /api/stockroom/connection { code }`, or `{ url, key, secret }`):
+  `parseConnection` checks the shapes (https only — http just for localhost, tests), then a signed `GET /v1/suite` must
+  succeed **before** anything is saved (wrong secret → 400 `refused`; unreachable → 502 `unreachable`; paused → 409
+  `paused`: paused means no calls, so no check either). Saved in `stockroom_connection` (one row): address, key, the secret
+  **AES-256-GCM-encrypted** with the key file `config.stockroom.keyFile` (`<data>/stockroom-secret.key`, 0600, made on
+  first use, `STOCKROOM_KEY_FILE`) — never in the database or backups in usable form; never sent back (`GET /connection`
+  has no secret). A new code replaces it; answers stored from another Stockroom address are dropped. `DELETE /connection`
+  forgets it here (answers too; tasks stay). Every change is in `stockroom_connection_changes` (connected / replaced /
+  forgotten / revoked). Both tables are **keepOnRestore**: a restore keeps the current connection, and one replaced or
+  forgotten after the backup never comes back. A key file that is gone → the secret can't be read: no calls, the card
+  says to paste the code again.
+- **Signing** (B5): headers `X-SL-Reader` (key), `X-SL-Timestamp` (unix s), `X-SL-Signature` = hex
+  HMAC-SHA256(secret, `${ts}\nGET\n${path-with-query}\n${sha256hex('')}`), and a fresh `nonce` query parameter (24
+  base64url chars) on every call — part of the signed path; Stockroom accepts each signature once (`replayed`), within
+  300 s, and refuses timestamps from before its process started (`stale_timestamp`: the client re-signs and retries once).
+  `If-None-Match` with the last ETag → 304. Answers are `{ version: 1, as_of, … }`; another version is refused
+  (`unsupported_version`: update the suite) — Stockroom bumps it only to rename or remove a field.
+
+**The pulls** (`service.js`; the loop `startPuller()` from `src/index.js` when `STOCKROOM_PULL_ENABLED`, on in
+production; one look a minute, 20 s after start; calls only when an answer is due; one round at a time — a plain
+request while one runs gets that round, a **forced** one (Pull now, a new code) gets one forced round chained after
+it, shared by every forced request made meanwhile):
+- `deliveries`, `differences`, `counts` **hourly**; `order-soon` **daily after 6:30 a.m.** (local), again when the
+  deliveries answer changed (a purchase order confirmed, received or cancelled changes what is on order), and whenever
+  its answer is over a day old. "Changed" ignores what moves with the calendar alone (`as_of`, the deliveries' `today`,
+  `counts`, each order's `overdue`) and compares B10's `ended` by its sorted `po_id`s only — an order confirmed and
+  received between two hourly reads never shows in `items`, but appearing in `ended` still triggers the re-read (review
+  fix). The re-read is a flag on the order-soon row (`wanted`, migration 002) kept
+  until that read succeeds: normally the same round, otherwise after its backoff (or a restart) — never lost. **Why**: deliveries, differences and spot checks change during the working day and their
+  answers are small (a 304 when unchanged: Stockroom measured 0–12 ms for these); the forecast behind order-soon works on
+  whole days (its windows end yesterday), so an hourly read would only churn the reorder tasks' notes, and it is the
+  costliest read (60–90 ms on live-sized data). Reorders are not urgent within the day.
+- Each answer is kept in `stockroom_pulls` (endpoint, hub_url, etag, body, as_of, fetched_at, changed_at, last error,
+  failures, next_try_at) — not synced, not kept across restores (the next pull refreshes it).
+- **Failures**: time-out `STOCKROOM_TIMEOUT_MS` (15 s). A failed read waits `min(2^n, 60)` minutes (2, 4, 8, 16, 32,
+  60). A network error, time-out, 401, 5xx or 429 **stops the round** (the other reads due then are recorded as "Not
+  tried: …" with the same wait); a 4xx on one read (404, 400) or an unreadable answer doesn't stop the others. **401
+  `revoked`** (disconnected in Stockroom) sets `revoked_at`: no more calls at all until a new code is pasted; the card says
+  "Disconnected in Stockroom". Nothing a pull does can throw into anything else (caught and logged).
+- After a round that got at least one answer (200 or 304): `automations.emit('stockroom.pulled', { key: <new id>, got,
+  changed })` — the automations decide on the **stored** answers, so Run now (no event) does the same.
+- **Pause** (the card's switch; the `stockroom` connection): no calls at all — the loop, Pull now (409 `paused`) and
+  connecting check it before every call; nothing is logged as a failure; switched on → a round at once.
+- `POST /api/stockroom/pull` (Pull now: every read now; 409 `not_set_up` / `revoked` / `paused`).
+- **The Connections row**: last success = the latest answer; last error = the latest read error ("Deliveries: …"), or
+  "Disconnected in Stockroom"; queue label = what Stockroom lists now ("3 to reorder · 1 delivery expected · 2
+  differences open"; "Not set up"; "Disconnected"). The panel (`ConnectionPanel.jsx`) shows the address and key (never
+  the secret), each read's last answer or error and next try, Pull now, Paste a new code…, Forget….
+
+**The automations** (`automations.js`, `plans.js`; module `stockroom`; event `stockroom.pulled`, run key per round;
+`accept` runs one only when its plan has something to do — no run rows for the hourly no-ops; **all on and silent** by
+default; tasks only, through `create`/`update` = `sync.applyLocal` as `system`). **Business wholesale** (Stockroom's
+stock is the wholesale business's), owner `planner.automatedOwnerFor(wholesale)` — **except the weekly spot check, which
+goes on the shared list** (decision: either of you can count, like the Friday review). Keys in `automations_made`;
+"who finished it decides" with `../automations/taskBook.js`: a task a person finished or deleted is final for its subject,
+one the suite finished may be reopened when its subject comes back, and a title, notes or due date is rewritten only
+while it is still the one the suite wrote. **New tasks are capped per day** (`DAILY_CAPS`: 10 reorders, 20 deliveries,
+10 differences; spot check 1 a week) — counted under `new:<day>:<task id>` keys, because these run on every hourly round
+(D3's caps were per run of a daily automation); the rest come the next days, most urgent first.
+- **`stockroom-reorders`** — "Reorder from <supplier>: N products" (`reorderGroups`): order-soon items with
+  `suggested_qty > 0` (null = no sales speed, 0 = enough on hand and on order), grouped by `supplier_id`; items with no
+  supplier set share one task "Reorder: N products with no supplier in Stockroom" (each line says its last supplier or
+  brand). Notes: each product (most urgent first) with the suggested tins, case size, days left and run-out day,
+  available, on order; the total; how to finish it. **Episodes** (`stockroom_reorder_episodes`, the module's own table,
+  written in the run's transaction, rolled back with the tasks on a restore): one per supplier from the first suggestion
+  until it **closes** — `ordered`: a purchase order to that supplier on the deliveries answer with `confirmed_at` after the
+  episode opened ("Ordered: purchase order PO-0012 confirmed in Stockroom on …"), or `empty`: nothing from that supplier
+  needs ordering any more. Closing finishes its task. One task per episode (key `<sup:id|sup:none>:<episode>`); while open
+  it is kept up to date (title and notes, while still the suite's; the notes change at most daily with the order-soon
+  read). A new episode opens only from an order-soon answer read after the last one closed — and, after `ordered`, on a
+  later day (Stockroom's suggestion then counts what is on order). A person finishing the task: final until the episode
+  closes.
+- **`stockroom-spot-check`** — "Weekly spot check in Stockroom: N products to count" on the shared list, key
+  `week:<Monday>` (ISO week, Monday–Sunday, local), due the day it is made: made once the counts answer was read that
+  week and **no spot check was applied that week** (`last_spot_check.applied_at`). Notes: Stockroom's suggestions
+  (product, brand, on hand, reasons) as of then — fixed (the live list is in Stockroom). Finished "Spot check applied in
+  Stockroom on …" once one is applied in its week or later; last week's still open is finished "Replaced by this week’s
+  spot check" when this week's is made.
+- **`stockroom-deliveries`** — "Receive delivery PO-0012 from <supplier>: N tins" per purchase order on the deliveries
+  answer (confirmed or partly received), key `po:<po_id>`, due its `expected_on` (or the day it is made when none),
+  following a changed expected day while the due date is still the suite's (a person's day is kept). Notes: confirmed
+  when and by whom, expected (late), each line still to come ("40 of 100 tins"). **Finished when it leaves the list**,
+  saying how it ended from Stockroom's **B10** fields (hub PR #11): `ended: [{ po_id, number, supplier, supplier_id,
+  status: received|cancelled|closed_short, ended_at, reason }]` (the last 30 days) → "Received in full in Stockroom",
+  "Cancelled in Stockroom: <reason>", "Closed short in Stockroom: <reason>" (`endedWhy`); not in `ended` (ended longer
+  ago), or a Stockroom without B10 → "No longer expected in Stockroom (received in full, cancelled or closed short)".
+  **`purchase_orders_truncated: true`** (over 500 open, the list was cut) → nothing is finished; missing (before B10) →
+  the list is whole. Listed again (a receipt deleted there) → reopened if the suite had finished it — with the order's
+  current notes, which keep following it (review fix: `finishOwn` marks the finished notes as the suite's when they
+  were, and the reopen marks its notes; kept in this module, so taskBook and D3/D5/D6 are unchanged — D3's ship task
+  still keeps its notes as they were after a suite reopen).
+- **`stockroom-differences`** — "Investigate count difference: <product> (<sku>), ±N tins" per open difference with
+  |variance| ≥ **Stockroom's own limit** (`threshold_tins`, its Settings → variance threshold — decision: one limit, set in
+  one place). Stockroom opens a difference only when it is at or over the limit *at the time*; raising the limit later
+  leaves the older ones open there, so the check here only decides which get a **new** task. key `diff:<id>`, due the
+  day it is made. Notes: expected, counted, the difference and its value, the count and its day, reason, who opened it.
+  **Finished "Marked investigated in Stockroom"** only when it leaves the list (`keyedPlan`'s `listedKeys` = every open
+  id, whatever its size — review fix: a raised limit no longer finishes still-open ones as "investigated") — and never
+  while the list is `truncated` (over 500 open: a missing one may just be cut off).
+- **Idempotent**: every task has its key; replayed events are no-ops (run key), Run now, re-pulls (304s) and restarts
+  make nothing twice; after a restore, tasks made after the backup are gone with it and are made again once at the next
+  pull (tested).
+
+**Hub fields**: everything D16 needs is in B5 (suppliers on order-soon since B6a, `on_order_orders`, confirmed orders
+with `confirmed_at` and `expected_on`, the spot check's time and suggestions, open differences) plus **B10** (hub PR #11,
+`ended` + `purchase_orders_truncated` on the deliveries read: how an order left the list, and whether the list was cut),
+used when present and not needed (a Stockroom without them works as before). Tested with and without them (fake hub)
+and against a `git archive` of the hub's B10 branch and of master.
+
+**Not built / open**: Stockroom's `/summary` (the stock card on the overview is **D15**); the decisions waiting in
+Stockroom's `/orders` (B8) as tasks; per-supplier or per-product overrides; editing anything in Stockroom from the suite
+(never: it stays in Stockroom). Pruning `stockroom_reorder_episodes` (one small row per supplier need).
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
@@ -1878,7 +2035,7 @@ and its date has passed: the page says "Overdue — renewed?" until a person set
   - **D1** (Order Manager receiver): done — see "Wholesale". Its events (`order.placed`, …) go through
     `automations.emit` (no automations listen yet).
   - **C6b** (Apple Calendar meetings) registers `calendar` (CalDAV pull: last success, error; pausing stops the pull,
-    never deletes anything); C6a's task feed is its own row, `calendar-feed`; **D16** registers `stockroom` (read-only pull) the same way.
+    never deletes anything); C6a's task feed is its own row, `calendar-feed`; **D16** registered `stockroom` (read-only pull: done, see "Stock tasks from Stockroom").
   - **D3** (done, see "Wholesale automations"): check-ins, balances, ready to ship in the wholesale module. **Later
     packages** add automations with `register()` in their own module (renewals…): tasks via `automatedOwnerFor`,
     `made(key)` / `madeLike(prefix)` for "once per order/customer/period", event triggers with a `key` (and `accept`).
@@ -1925,6 +2082,15 @@ and its date has passed: the page says "Overdue — renewed?" until a person set
   currency, monthly = yearly ÷ 12, once left out, the resold side only for live relationships; `costs.monthlyTotals()` is
   D15's read. D3's task book moved to `automations/taskBook.js`. Next: D15 (the overview) reads `monthlyTotals()`; D9
   (projects) owns stages/checklists; exchange rates and per-weekday reminders are not modelled.
+- **D16 (stock tasks from Stockroom)**: done — see "Stock tasks from Stockroom". A pull, not a push (Stockroom on Fly can't
+  reach the Mac): signed GETs only (one client, method fixed, proved by tests), the secret sealed with a key file and the
+  connection kept across restores; hourly reads of deliveries, differences and counts, the order-soon list daily after 6:30
+  (and when deliveries change), 304s, backoff to 60 min, revoked = stop. Four event automations decide on the stored
+  answers after each round (wholesale business, the business's default owner; the spot check on the shared list), with
+  daily caps; reorders are per supplier "episode", finished when a purchase order to it is confirmed or nothing is left;
+  the difference limit is Stockroom's own (for new tasks; an open difference keeps its task until investigated);
+  delivery tasks say how the order ended from B10's `ended` when the hub has it. Next: D15's
+  stock card reads `/v1/suite/summary` through this connection.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -1934,12 +2100,12 @@ and its date has passed: the page says "Overdue — renewed?" until a person set
 (`createApp` + `listen(0)`) — no mocks of the database. Client tests (`client/test`) run the sync engine in Node with
 fake-indexeddb against such a server (helpers.js: `startServer`, `makeDevice` with an on/off connection switch); the
 client build must succeed. The sync engine tests (`server/test/sync.test.js`, `client/test/engine.test.js`) run without
-the crm module (nor the planner, which needs it, nor the automations with their synced alerts, nor wholesale, which needs the crm, nor costs) so seeded records don't
+the crm module (nor the planner, which needs it, nor the automations with their synced alerts, nor wholesale, which needs the crm, nor costs, nor stockroom) so seeded records don't
 shift their counts; `startServer(t, config, { crm: true })` includes them. A restore of a broken live database still
 works with `--force`: carrying the switches is best effort (a warning, then the backup's switches) and the restored
 copy must pass `integrity_check`. Tests that depend on local time set
 `process.env.TZ = 'America/Toronto'` at the top (automations.test.js, wholesale-automations.test.js, wholesale-notes.test.js,
-costs.test.js). automations.test.js
+costs.test.js, stockroom.test.js). automations.test.js
 switches D3's two scheduled wholesale automations and D6's two renewal reminders off in its setup (they're on by default)
 so its ticks stay about C8; costs.test.js switches every other scheduled automation off. The e2e `startServer(t, { extraModules })` adds
 test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager checkout>` (D1) runs the real Order
@@ -1947,7 +2113,13 @@ Manager (needs `npm ci` in its `server/`) against a real suite and checks the ti
 Step 8 (D2) checks an automatic link on a clean email, a similar name only suggested, and an undo.
 `--capture <file>` writes the events it sent (the fixture `server/test/fixtures/wom-captured-events.json`; D5's
 `wom-captured-notes.json` holds its A11 events and their customers' `customer.created`, taken from such a capture; step 7
-needs an Order Manager with A11). `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
+needs an Order Manager with A11). `npm run test:stockroom -- <inventory-hub checkout>` (D16; needs `npm install` in the
+checkout) runs a real Stockroom from its own code (live-sized data from its generator, suppliers, a purchase order, a
+count difference; the reader made through its admin API) against a real suite: the code checked, every read, the tasks
+made, 304s, then Stockroom's own actions (an order confirmed, received, cancelled, a difference investigated, a spot
+check applied) finishing them — with how each order ended when the hub has B10 —, nothing made twice, 405 for a POST,
+and Disconnect (revoked). Run it against a
+`git archive` export of the hub, never by changing the hub repo. `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
 touching the engine, the service worker or the sync UI. Write a test with every module and every bug fix.
 
 ## Git

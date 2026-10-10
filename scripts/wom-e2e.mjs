@@ -126,6 +126,9 @@ async function main() {
     const d = new Database(path.join(tmp, 'om', 'wom.db'));
     const ins = d.prepare('INSERT INTO products (id, name, sku, brand, cost, wholesale_price, stock_quantity, is_custom) VALUES (?, ?, ?, ?, 4, 10, 500, 0)');
     ins.run(1, 'Zyn Cool Mint 6mg', 'ZYN-CM6', 'Zyn'); ins.run(2, 'ALP Mango Freeze', 'ALP-MF', 'ALP'); ins.run(3, 'Velo Freeze 10mg', 'VELO-F10', 'Velo');
+    // A18 (Order Manager): the default admin must change "changeme" before any other call (403 mustChangePassword).
+    // Cleared here as the Order Manager's own e2e scripts do; an Order Manager without the column is left alone.
+    if (d.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'must_change_password')) d.prepare('UPDATE users SET must_change_password = 0').run();
     d.close();
   }
   startOm(); await waitUp(`${OM}/api/settings/branding`);
