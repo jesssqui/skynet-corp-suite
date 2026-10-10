@@ -28,3 +28,22 @@ test('the state line and the keyset checks', () => {
   assert.match(keysetProblem({ appId: 'SavePoin-suite-PRD-1a2b', certId: '', ruName: 'x12345' }), /Cert ID/);
   assert.match(keysetProblem({ appId: 'SavePoin-suite-PRD-1a2b', certId: 'PRD-1a2b3c4d5e6f', ruName: 'https://x' }), /RuName/);
 });
+
+test('review fix: the code and state leave the address before the app renders, and are taken once', async () => {
+  const { captureAcceptedParams, takeAcceptedParams } = await import('../src/modules/ebay/acceptedParams.js');
+  const store = new Map();
+  const storage = { setItem: (k, v) => store.set(k, v), getItem: (k) => store.get(k) ?? null, removeItem: (k) => store.delete(k) };
+  const replaced = [];
+  const hist = { state: { x: 1 }, replaceState: (st, _t, url) => replaced.push([st, url]) };
+  captureAcceptedParams({ pathname: '/ebay/accepted', search: '?state=s1&code=v%5E1.1%23i&expires_in=299' }, hist, storage);
+  assert.deepEqual(replaced, [[{ x: 1 }, '/ebay/accepted']], 'the address keeps only the path');
+  assert.deepEqual(takeAcceptedParams(storage), { code: 'v^1.1#i', state: 's1', declined: false });
+  assert.equal(takeAcceptedParams(storage), null, 'once');
+  // Elsewhere nothing is touched.
+  captureAcceptedParams({ pathname: '/crm', search: '?q=Pat' }, hist, storage);
+  assert.equal(replaced.length, 1);
+  // A reload before the page reads them (a sign-in first): sessionStorage still has them.
+  captureAcceptedParams({ pathname: '/ebay/accepted', search: '?state=s2&code=c2' }, hist, storage);
+  const again = await import(`../src/modules/ebay/acceptedParams.js?reload=${Date.now()}`);
+  assert.deepEqual(again.takeAcceptedParams(storage), { code: 'c2', state: 's2', declined: false });
+});

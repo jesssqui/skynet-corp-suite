@@ -93,6 +93,8 @@ test('D13: months — their names, amounts typed, and which figure a month shows
   assert.deepEqual(monthLine({ shown: 'real', real: [{ currency: 'CAD', total: 7000 }], replaced: true }), { figure: '$70', from: 'From eBay (replaces the month entered by hand)' });
   assert.deepEqual(monthLine({ shown: 'manual', manual: { currency: 'CAD', total: 123456, orders: 31 } }), { figure: '$1,234.56', from: 'Entered by hand · 31 orders' });
   assert.deepEqual(monthLine({ shown: null }), { figure: '—', from: 'Nothing yet' });
+  assert.match(monthLine({ shown: 'real', partial: true, real: [{ currency: 'CAD', total: 500 }] }).from, /Read in part/);
+  assert.match(monthLine({ shown: 'manual', partial: true, manual: { currency: 'CAD', total: 900, orders: null } }).from, /Entered by hand \(eBay read it only in part\)/);
   assert.match(stateText({ state: 'not_set_up' }).text, /enter a month by hand/);
   assert.equal(stateText({ state: 'signed_out' }).tone, 'danger');
 });

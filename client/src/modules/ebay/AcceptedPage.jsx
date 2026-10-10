@@ -1,11 +1,12 @@
 // Where eBay sends the browser after "I agree" (/ebay/accepted, D13) when the RuName's accept URL is the suite's own
-// address: the code and state in the address are posted to the server (which checks the state, exchanges the code and
+// address: the code and state (taken out of the address by main.jsx before anything rendered) are posted to the server (which checks the state, exchanges the code and
 // keeps the sign-in encrypted), then taken out of the address. /ebay/declined (the RuName's declined URL) just says so.
 // Needs a connection to the suite.
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client.js';
 import { PageHeader, Card, Notice } from '../../ui/index.js';
+import { takeAcceptedParams } from './acceptedParams.js';
 
 export default function AcceptedPage({ declined = false }) {
   const [result, setResult] = useState({ phase: 'working' });
@@ -13,16 +14,15 @@ export default function AcceptedPage({ declined = false }) {
   useEffect(() => {
     if (sent.current) return;
     sent.current = true;
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
-    const state = params.get('state');
-    window.history.replaceState(null, '', window.location.pathname); // the code leaves the address bar and history
+    // main.jsx took code and state out of the address before the app rendered (captureAcceptedParams).
+    const got = takeAcceptedParams() ?? {};
+    const { code, state } = got;
     if (declined) {
       setResult({ phase: 'error', message: 'The sign-in wasn’t agreed to on eBay: nothing changed.' });
       return;
     }
     if (!code || !state) {
-      setResult({ phase: 'error', message: params.get('isAuthSuccessful') === 'false' ? 'eBay says the sign-in wasn’t agreed to: nothing changed.' : 'This page needs the code eBay sends after “I agree”: start again with Sign in to eBay.' });
+      setResult({ phase: 'error', message: got.declined ? 'eBay says the sign-in wasn’t agreed to: nothing changed.' : 'This page needs the code eBay sends after “I agree”: start again with Sign in to eBay.' });
       return;
     }
     api.post('/api/ebay/sign-in/finish', { code, state })

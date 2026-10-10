@@ -19,7 +19,7 @@ export default function EbayPage() {
   const months = useServerData('/api/sales/manual/ebay', { everyMs: 60_000 });
   const summary = useServerData('/api/sales/summary', { everyMs: 60_000 });
   const card = summary.data?.stores.find((s) => s.source === 'ebay' && s.manualStore === 'ebay') ?? null;
-  const open = (months.data?.months ?? []).filter((m) => m.shown !== 'real');
+  const open = (months.data?.months ?? []).filter((m) => m.canEnter ?? m.shown !== 'real');
   const [form, setForm] = useState({ month: '', total: '', orders: '', note: '' });
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState(null);
@@ -99,8 +99,9 @@ export default function EbayPage() {
         <Card title="Enter a month by hand">
           <div style={{ display: 'grid', gap: 'var(--space-3)' }} data-testid="ebay-manual">
             <span style={muted}>
-              For months eBay isn’t connected for: in Seller Hub, Performance → Sales, pick the month and copy its <strong>Total sales</strong>.
-              Once eBay has its own figure for a month, that counts and this entry is kept, shown as replaced.
+              For months eBay isn’t connected for — or only read in part before it was signed out or switched off: in Seller
+              Hub, Performance → Sales, pick the month and copy its <strong>Total sales</strong>. Once eBay is reading again
+              and has the whole month, its own figure counts and this entry is kept, shown as replaced.
             </span>
             {!open.length ? <span style={muted} data-testid="ebay-all-real">Every month shown has eBay’s own figure: nothing to enter by hand.</span> : <>
             <SelectField id="ebay-month" label="Month" value={month} onChange={(v) => setForm({ ...form, month: v })}

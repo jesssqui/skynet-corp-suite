@@ -2278,11 +2278,17 @@ one table — D12's WooCommerce stores now, **D13's eBay next** (source `ebay`),
 - **Months entered by hand** (D13; `sales_manual_months`, migration 002): for a store whose connection is off or not
   set up — eBay's card names `manualStore: 'ebay'` (`registerSource({ manualStores: ['ebay'], stores: () => [{ …,
   manualStore }] })`). A month = { total cents, currency, orders?, note? } (Seller Hub's Total sales); store `ebay`,
-  source `manual`. It **fills the same card**: `summary()`'s `month` for that store is the hand-entered month when the
-  connection has **no days** in that month (`monthFromManual: true`, `manualEntry`), and it adds into per-business and
-  all-stores totals the same way; today / this week stay real only. Once the connection has any day in a month (its
-  pulls write every day, zeros included), **its figure wins**; the entry is kept and `months(store)` shows it
-  `replaced: true`; entering a month the connection has days for is refused (409 `has_data`); future months refused.
+  source `manual`. It **fills the same card**: `summary()`'s `month` for that store is the hand-entered month whenever
+  the connection's own days don't count for it (`monthFromManual: true`, `manualEntry`), and it adds into per-business
+  and all-stores totals the same way; today / this week stay real only. **When the connection's days count**
+  (`realWins`): it has days in that month **and** either it is reading now (the store's `delivering`: eBay on, not read
+  yet or failing for now; sources that don't say count as reading) **or** it has every day of the month so far
+  (`covered`, to the store's today). So a month eBay **stopped reading part way** — signed out by eBay, switched off,
+  forgotten mid-month — can be entered by hand and counts (review fix; `months()` marks it `partial`, the page says
+  "Read in part from eBay"), until eBay reads again and has the whole month: then **its figure wins**, the entry is
+  kept and shown `replaced: true`. Entering a month whose days count is refused (409 `has_data`) — after a Forget too,
+  for a month eBay read completely (no double count); future months refused. Never both: `summary`, `months` and
+  `monthly` all decide with `realWins`.
   **Server data, not synced** (like the totals): entering one needs a connection to the suite. Not kept across
   restores (data, rolled back with the rest). API: `GET /api/sales/manual/:store` (13 months: real, manual, shown,
   replaced), `PUT|DELETE /api/sales/manual/:store/:month`; `totals()` stays days only, and **D15 reads
@@ -2430,10 +2436,14 @@ store "thesavepointshop").
   **America/Toronto** by default (`EBAY_TIME_ZONE`; the business is in Ontario); DEPLOY.md step 12 compares one month,
   and if eBay's day boundaries turn out to be Pacific time, set the card to America/Los_Angeles (changing it re-reads
   the 13 months in the new zone).
-- **Totals**: `sales.putDays({ source: 'ebay', store: <the seller's eBay user ID>, business save_point })` (before any
-  order is seen the card's key is `ebay`). **Currency**: each order's own (`pricingSummary.total.currency`); eBay.ca
-  orders are CAD; an order in another currency (a listing on another marketplace) goes to its own store key
-  `<account> USD` and card ("Save Point Shop (eBay, USD)") — never added to CAD.
+- **Totals**: `sales.putDays({ source: 'ebay', store: 'ebay', business save_point })`. **The store key is a constant
+  per connection** (review fix): `ebay` for the account's main currency, `ebay <CUR>` for another — **never the
+  seller's username**, which eBay lets a seller change (the new name would have started a second 13 months of days
+  beside the first, and a month entered by hand could have counted against the old key's real days). The username
+  (`sellerId` from the orders) is only a label (`info().account`, the card's `account`). Months entered by hand use the
+  same key (`ebay`). **Currency**: each order's own (`pricingSummary.total.currency`); eBay.ca orders are CAD; an order in
+  another currency (a listing on another marketplace) goes to `ebay USD` and its own card ("Save Point Shop (eBay,
+  USD)") — never added to CAD.
 - **Pulls**: the puller (`startPuller`, `EBAY_PULL_ENABLED`, on in production) looks once a minute and reads when due:
   every `EBAY_PULL_EVERY_MIN` (60) minutes, getOrders `creationdate:[<window start>..]` **and**
   `lastmodifieddate:[<window start>..]` (refunds and cancellations of older orders), 200 a page (`limit` max; `offset`
@@ -2441,7 +2451,9 @@ store "thesavepointshop").
   default reach); **backfill** once: back to the **1st of the month 13 months ago** (`BACKFILL_MONTHS`; getOrders goes
   back two years at most), in the same two reads; every day of the range written (zeros too), so a month with days is
   "covered"; a finished backfill with days missing (a restore of an older backup) is read again. Failures back off
-  2, 4 … 60 minutes; a 401 renews the access token once; paused (its Connections row, `ebay`) = **no calls at all**
+  2, 4 … 60 minutes; a 401 renews the access token once; **a cancellation (or refund) more than 90 days after its order
+  isn't reflected** once the backfill is done — the hourly reads go back 90 days by creation and by last change, so an
+  order changed later than that is never read again; paused (its Connections row, `ebay`) = **no calls at all**
   (pulls, Pull now, sign-in); switched on = read at once. After each successful read `automations.emit('ebay.pulled')`.
 - **Orders to ship** — automation **`ebay-orders-to-ship`** (event `ebay.pulled`; **on, silent**): for each order created
   in the window and **waiting to ship** (`orderFulfillmentStatus` NOT_STARTED | IN_PROGRESS, not cancelled, paid, not
@@ -2459,8 +2471,10 @@ store "thesavepointshop").
   name, address, email, phone or checkout notes (a test scans every table).
 - **Nothing personal in an address that reaches a log** (the D12 review's lookup issue, checked here): every eBay route
   with a value in it is a POST (`/sign-in/finish` takes the code and state in the body); the one GET with a code in its
-  address is the browser's `/ebay/accepted?code=…&state=…` (the app shell; the page takes them out of the address at
-  once), and `redactPath` drops query strings from every logged path. No eBay data about a buyer is ever requested by
+  address is the browser's `/ebay/accepted?code=…&state=…` (the app shell) — **main.jsx takes them out of the address
+  before anything renders** (`client/src/modules/ebay/acceptedParams.js`, review fix: before the sign-in screen, so they
+  never sit in the address bar or history; kept in memory and this tab's sessionStorage until the accepted page takes
+  them, once) — and `redactPath` drops query strings from every logged path. No eBay data about a buyer is ever requested by
   number or email.
 - **Read-only by construction**: `client.js`'s `call()` is the module's one network call and allows exactly `GET
   /sell/fulfillment/v1/order` and `POST /identity/v1/oauth2/token` (grant types authorization_code / refresh_token);
@@ -2574,7 +2588,7 @@ store "thesavepointshop").
   address (state checked either way); refresh token sealed, access token in memory; a task 30 days before the sign-in
   lapses. The figure matched is Seller Hub's monthly **Total sales**, built from getOrders (created day in the shop's
   zone, cancelled/unpaid out, refunds on their day with estimated tax); days into `sales_daily` (source `ebay`, store =
-  the seller's ID, business save_point, per currency). Orders waiting to ship are tasks (on, silent, no buyer details).
+  the constant `ebay` — the username is only a label —, business save_point, per currency). Orders waiting to ship are tasks (on, silent, no buyer details).
   A month entered by hand (server data, store `ebay`) fills the card while eBay has no days for it; eBay's days win and
   the entry is kept as replaced. The Sales headline is now Total sales for every store. Next: D15 reads
   `sales.monthly()`; D11 reads `sales.totals()`.

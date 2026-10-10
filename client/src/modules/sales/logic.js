@@ -109,7 +109,8 @@ export function parseAmount(text) {
 
 /** One month's line on the eBay page: what counts and where it came from. */
 export function monthLine(m) {
+  if (m.shown === 'real' && m.partial) return { figure: periodText(m.real), from: 'Read in part from eBay (it stopped reading): enter the month by hand' };
   if (m.shown === 'real') return { figure: periodText(m.real), from: m.replaced ? 'From eBay (replaces the month entered by hand)' : 'From eBay' };
-  if (m.shown === 'manual') return { figure: periodText([{ currency: m.manual.currency, total: m.manual.total }]), from: `Entered by hand${m.manual.orders !== null && m.manual.orders !== undefined ? ` · ${m.manual.orders} orders` : ''}` };
+  if (m.shown === 'manual') return { figure: periodText([{ currency: m.manual.currency, total: m.manual.total }]), from: `Entered by hand${m.manual.orders !== null && m.manual.orders !== undefined ? ` · ${m.manual.orders} orders` : ''}${m.partial ? ' (eBay read it only in part)' : ''}` };
   return { figure: '—', from: 'Nothing yet' };
 }

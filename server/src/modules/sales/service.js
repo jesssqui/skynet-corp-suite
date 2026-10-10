@@ -170,7 +170,7 @@ export function createSalesService(ctx) {
       for (const [p, { from, to }] of Object.entries(periods)) {
         let rows = filtered({ from, to, store: s.store, source: s.source });
         // D13: a month the connection has no days for is filled by a month entered by hand (its manual target).
-        if (p === 'month' && s.manualStore && !hasDays(s, today.slice(0, 7))) {
+        if (p === 'month' && s.manualStore && !realWins(s, today.slice(0, 7))) {
           const m = q.manual.get(s.manualStore, today.slice(0, 7));
           if (m) {
             rows = [manualRow(m, s.businessId)];
@@ -204,6 +204,25 @@ export function createSalesService(ctx) {
   function hasDays({ source, store }, month) {
     if (!store) return false;
     return q.monthHasDays.get(source, store, `${month}-01`, monthEnd(month)).n > 0;
+  }
+  /** Has the store a day for every day of the month so far (to its today, in its own zone)? */
+  function covered(st, month) {
+    const today = localDateIn(st.timeZone ?? null, new Date(clock()));
+    const to = [monthEnd(month), today].sort()[0];
+    const from = `${month}-01`;
+    if (to < from) return true;
+    const want = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+    return q.monthHasDays.get(st.source, st.store, from, to).n >= want;
+  }
+  /**
+   * Do the connection's own days count for this month (over a month entered by hand)? Yes when it has days there and
+   * either it is reading now (`delivering`, the default for sources that don't say) or it read the whole month so far.
+   * So a month the connection stopped reading part way (signed out, switched off, forgotten mid-month) can be entered by
+   * hand and counts, until the connection is back and has read it all (review fix).
+   */
+  function realWins(st, month) {
+    if (!st?.store || !hasDays(st, month)) return false;
+    return st.delivering !== false || covered(st, month);
   }
   const manualRow = (m, businessId = null) => ({ ...zeroFigures(), currency: m.currency, total: m.total, orders: m.orders ?? 0, business_id: businessId });
   const manualView = (m) => ({
@@ -240,7 +259,7 @@ export function createSalesService(ctx) {
     const cur = String(currency ?? '').toUpperCase();
     if (!CURRENCY_RE.test(cur)) throw new HttpError(400, 'A currency is three letters (CAD, USD)', undefined, { code: 'bad_currency' });
     if (orders !== null && orders !== undefined && !(Number.isSafeInteger(orders) && orders >= 0)) throw new HttpError(400, 'Orders is a whole number', undefined, { code: 'bad_orders' });
-    if (t.store && hasDays({ source: t.source, store: t.store.store }, month)) {
+    if (realWins(t.store ? { ...t.store, source: t.source } : null, month)) {
       throw new HttpError(409, `${t.label} already has its own figures for that month`, undefined, { code: 'has_data' });
     }
     q.putManual.run({
@@ -270,10 +289,19 @@ export function createSalesService(ctx) {
       store, source: t.source, label: t.label, state: t.store?.state ?? 'not_set_up', liveStore: t.store?.store ?? null,
       thisMonth: latest,
       months: list.map((month) => {
-        const rows = t.store ? filtered({ from: `${month}-01`, to: monthEnd(month), store: t.store.store, source: t.source }) : [];
+        const st = t.store ? { ...t.store, source: t.source } : null;
+        const rows = st ? filtered({ from: `${month}-01`, to: monthEnd(month), store: st.store, source: st.source }) : [];
         const real = rows.length ? figures(sumByCurrency(rows)) : null;
         const m = manual.get(month) ?? null;
-        return { month, real, manual: m ? manualView(m) : null, shown: real ? 'real' : m ? 'manual' : null, replaced: Boolean(real && m) };
+        const wins = realWins(st, month);
+        return {
+          month, real, manual: m ? manualView(m) : null,
+          shown: wins ? 'real' : m ? 'manual' : real ? 'real' : null,
+          replaced: Boolean(wins && m),
+          // The connection read only part of it and isn't reading now: a hand-entered month may count instead.
+          partial: Boolean(real && !wins && !covered(st, month)),
+          canEnter: !wins,
+        };
       }),
     };
   }
@@ -286,13 +314,17 @@ export function createSalesService(ctx) {
     const out = [];
     for (let month = fromMonth; month <= toMonth; month = addMonths(`${month}-01`, 1).slice(0, 7)) {
       const rows = filtered({ from: `${month}-01`, to: monthEnd(month) });
-      for (const [key, rs] of group(rows, (r) => `${r.source}|${r.store}`)) {
-        for (const f of figures(sumByCurrency(rs))) out.push({ month, source: rs[0].source, store: rs[0].store, business_id: rs[0].business_id, from: 'real', ...f, key });
-      }
+      const replacedByHand = new Set();
       for (const t of manualTargets().values()) {
         const m = q.manual.get(t.target, month);
-        if (!m || (t.store && hasDays({ source: t.source, store: t.store.store }, month))) continue;
+        const st = t.store ? { ...t.store, source: t.source } : null;
+        if (!m || realWins(st, month)) continue;
+        if (st) replacedByHand.add(`${st.source}|${st.store}`);
         out.push({ month, source: 'manual', store: t.target, business_id: t.store?.businessId ?? null, from: 'manual', ...manualRow(m), days: 0 });
+      }
+      for (const [key, rs] of group(rows, (r) => `${r.source}|${r.store}`)) {
+        if (replacedByHand.has(key)) continue;
+        for (const f of figures(sumByCurrency(rs))) out.push({ month, source: rs[0].source, store: rs[0].store, business_id: rs[0].business_id, from: 'real', ...f, key });
       }
     }
     return { months: out.map(({ key, ...r }) => r) };

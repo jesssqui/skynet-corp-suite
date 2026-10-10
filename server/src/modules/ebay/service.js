@@ -33,6 +33,8 @@ import { dayRows, zoneMidnightUtc, waitingToShip, shipView } from './figures.js'
 import { registerEbayAutomations, PULLED_EVENT } from './automations.js';
 
 export const CONNECTION_ID = 'ebay';
+/** The eBay store's key in the sales tables (and the target of months entered by hand). */
+export const STORE = 'ebay';
 const SAVE_POINT = BUSINESS_IDS.save_point;
 const MINUTE = 60_000;
 /** Each pull re-reads the orders created in the last WINDOW_DAYS days (and those modified since then). */
@@ -298,10 +300,13 @@ export function createEbayService(ctx) {
   }
 
   // ---- pulls ------------------------------------------------------------------------------------------
-  const storeKey = (row, currency) => {
-    const base = row?.account ?? 'ebay';
-    return !currency || currency === (row?.currency ?? 'CAD') ? base : `${base} ${currency}`;
-  };
+  /**
+   * The store's key in sales_daily (review fix): one constant per connection — 'ebay' for the account's main currency,
+   * 'ebay <CUR>' for another — never the seller's username, which eBay lets a seller change (the new name would have
+   * started a second set of days beside the first). The username is shown as a label only (`account`). Months entered
+   * by hand use the same key ('ebay').
+   */
+  const storeKey = (row, currency) => (!currency || currency === (row?.currency ?? 'CAD') ? STORE : `${STORE} ${currency}`);
   const cardName = (currency, main) => (currency === main ? 'Save Point Shop (eBay)' : `Save Point Shop (eBay, ${currency})`);
   let running = null;
   function pull(opts = {}) {
@@ -472,15 +477,21 @@ export function createEbayService(ctx) {
   sales.registerSource({
     source: 'ebay',
     label: 'eBay',
-    manualStores: ['ebay'],
+    manualStores: [STORE],
     stores: () => {
       const row = q.conn.get();
       const p = q.pull.get() ?? {};
       const main = row?.currency ?? 'CAD';
       const s = state(row, p);
-      const base = { businessId: SAVE_POINT, timeZone: row?.time_zone ?? cfg.timeZone, state: s, lastSuccessAt: p.last_success_at ?? null, lastError: p.failures ? p.last_error : null, link: '/costs/sales/ebay' };
+      const base = {
+        businessId: SAVE_POINT, timeZone: row?.time_zone ?? cfg.timeZone, state: s, lastSuccessAt: p.last_success_at ?? null,
+        lastError: p.failures ? p.last_error : null, link: '/costs/sales/ebay', account: row?.account ?? null,
+        // Is the connection reading eBay now? When not (signed out, off, not set up), a month it didn't finish reading
+        // may be entered by hand and counts (review fix; see sales.months).
+        delivering: ['on', 'not_read', 'failing'].includes(s),
+      };
       const currencies = [...new Set([main, ...JSON.parse(p.currencies ?? '[]')])];
-      return currencies.map((c) => ({ ...base, store: storeKey(row, c), name: cardName(c, main), currency: c, ...(c === main ? { manualStore: 'ebay' } : {}) }));
+      return currencies.map((c) => ({ ...base, store: storeKey(row, c), name: cardName(c, main), currency: c, ...(c === main ? { manualStore: STORE } : {}) }));
     },
   });
 

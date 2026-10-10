@@ -149,11 +149,11 @@ test('DONE WHEN: a past month’s total equals eBay’s own figure (Seller Hub �
   assert.equal(cad.net, cad.total - cad.tax - cad.shipping, 'net = total − tax − shipping, as WooCommerce’s rows');
   const usd = sept.overall.find((o) => o.currency === 'USD');
   assert.equal(usd.total, 1000);
-  assert.deepEqual(sept.stores.map((x) => x.store).sort(), [SELLER, `${SELLER} USD`]);
+  assert.deepEqual(sept.stores.map((x) => x.store).sort(), ['ebay', 'ebay USD'], 'one constant key per connection (review fix), never the username');
   assert.ok(sept.stores.every((x) => x.business_id === SAVE_POINT));
   // August's last day has A; the backfill reached back to Sept 1 2025 (13 months, from the 1st).
   assert.equal(s.sales.totals({ from: '2026-08-31', to: '2026-08-31', source: 'ebay' }).overall[0].total, 10000);
-  assert.equal(s.sales.dayCount({ source: 'ebay', store: SELLER, from: '2025-09-01', to: '2026-10-14' }), 409);
+  assert.equal(s.sales.dayCount({ source: 'ebay', store: 'ebay', from: '2025-09-01', to: '2026-10-14' }), 409);
   // The month list (the eBay card's months) shows September as eBay's own.
   const months = (await s.call('GET', '/api/sales/manual/ebay')).body;
   const m = months.months.find((x) => x.month === '2026-09');
@@ -167,7 +167,7 @@ test('DONE WHEN: a past month’s total equals eBay’s own figure (Seller Hub �
   // Read again: the same totals (upserts), and the next hourly pull reads only the last 90 days.
   s.clock.advance(HOUR + 1000);
   await s.svc.pull();
-  assert.equal(s.sales.totals({ from: '2026-09-01', to: '2026-09-30', source: 'ebay', store: SELLER }).overall[0].total, 20559);
+  assert.equal(s.sales.totals({ from: '2026-09-01', to: '2026-09-30', source: 'ebay', store: 'ebay' }).overall[0].total, 20559);
   assert.ok(s.ebay.requests.some((r) => r.query.filter === 'creationdate:[2026-07-17T04:00:00.000Z..]'), 'the window: 90 days back to Jul 17');
 });
 
@@ -436,11 +436,11 @@ test('settings and forgetting: a new zone reads the days again in it; Forget kee
   assert.equal(r.body.timeZone, 'UTC');
   await s.svc.pull();
   // In UTC, A (Sep 1 03:30 UTC) is September and H (Oct 1 03:00 UTC) is October.
-  assert.equal(s.sales.totals({ from: '2026-09-01', to: '2026-09-01', source: 'ebay', store: SELLER }).overall[0].total, 10000 + 5650);
-  assert.equal(s.sales.totals({ from: '2026-10-01', to: '2026-10-01', source: 'ebay', store: SELLER }).overall[0].total, 2825);
+  assert.equal(s.sales.totals({ from: '2026-09-01', to: '2026-09-01', source: 'ebay', store: 'ebay' }).overall[0].total, 10000 + 5650);
+  assert.equal(s.sales.totals({ from: '2026-10-01', to: '2026-10-01', source: 'ebay', store: 'ebay' }).overall[0].total, 2825);
   await s.call('DELETE', '/api/ebay/connection');
   assert.equal(s.svc.info().state, 'not_set_up');
-  assert.ok(s.sales.dayCount({ source: 'ebay', store: SELLER, from: '2025-01-01', to: '2026-12-31' }) > 0, 'totals stay');
+  assert.ok(s.sales.dayCount({ source: 'ebay', store: 'ebay', from: '2025-01-01', to: '2026-12-31' }) > 0, 'totals stay');
   assert.deepEqual(s.db.prepare('SELECT action FROM ebay_changes ORDER BY at, rowid').all().map((x) => x.action), ['keyset_set', 'signed_in', 'settings', 'forgotten']);
 });
 
@@ -473,4 +473,66 @@ test('the suite only reads: every call it made in a full run was a GET of getOrd
   }
   const client = sources.find(([f]) => f === 'client.js')[1];
   assert.match(client, /const allowed = \(method === 'GET' && path === ORDERS_PATH\) \|\| \(method === 'POST' && path === TOKEN_PATH\);/);
+});
+
+// ---- D13 review fixes -------------------------------------------------------------------------------------------------
+test('review fix: the store key is constant — a seller who changes their eBay username keeps the same totals (nothing doubles)', async (t) => {
+  const s = await setup(t, { orders: septemberOrders() });
+  const rows = () => s.db.prepare("SELECT store, COUNT(*) AS n FROM sales_daily WHERE source = 'ebay' GROUP BY store ORDER BY store").all();
+  const before = rows();
+  assert.deepEqual(before.map((r) => r.store), ['ebay', 'ebay USD']);
+  s.ebay.orders = s.ebay.orders.map((o) => ({ ...o, sellerId: 'savepoint_retro' }));
+  s.clock.advance(HOUR + 1000);
+  await s.svc.pull();
+  assert.equal(s.svc.info().account, 'savepoint_retro', 'the new name, as a label');
+  assert.deepEqual(rows(), before, 'the same rows: no second set under the new name');
+  assert.equal(s.sales.totals({ from: '2026-09-01', to: '2026-09-30', source: 'ebay' }).overall.find((o) => o.currency === 'CAD').total, 20559);
+  const card = (await s.call('GET', '/api/sales/summary')).body.stores.find((x) => x.source === 'ebay' && x.currency === 'CAD');
+  assert.equal(card.store, 'ebay');
+  assert.equal(card.account, 'savepoint_retro');
+});
+
+test('review fix: after Forget, a month eBay read completely can’t be entered by hand again (no double count); its own figure stays', async (t) => {
+  const s = await setup(t, { orders: septemberOrders() });
+  await s.call('DELETE', '/api/ebay/connection');
+  const r = await s.call('PUT', '/api/sales/manual/ebay/2026-09', { body: { total: 50000 } });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, 'has_data');
+  const monthly = (await s.call('GET', '/api/sales/monthly?from=2026-09&to=2026-09')).body.months;
+  assert.deepEqual(monthly.map((x) => [x.source, x.store, x.currency, x.total]), [['ebay', 'ebay', 'CAD', 20559], ['ebay', 'ebay USD', 'USD', 1000]]);
+  const sept = (await s.call('GET', '/api/sales/manual/ebay')).body.months.find((m) => m.month === '2026-09');
+  assert.deepEqual([sept.shown, sept.canEnter, sept.partial], ['real', false, false]);
+});
+
+test('review fix: a month eBay stopped reading part way (signed out) may be entered by hand and counts — until eBay is back and has read it all', async (t) => {
+  const s = await setup(t, { orders: [
+    ebayOrder({ id: '60-A', created: '2026-10-05T15:00:00.000Z', items: [{ title: 'Metroid', sku: 'NES-MET', qty: 1, price: 70 }] }),
+  ] });
+  // Signed out on Oct 14; ten days later October has days only to the 14th.
+  s.ebay.revoked = true;
+  s.clock.advance(2 * HOUR + 1000);
+  await s.svc.pull();
+  assert.equal(s.svc.info().state, 'signed_out');
+  s.clock.advance(10 * 24 * HOUR);
+  let oct = (await s.call('GET', '/api/sales/manual/ebay')).body.months.find((m) => m.month === '2026-10');
+  assert.deepEqual([oct.shown, oct.partial, oct.canEnter], ['real', true, true]);
+  let r = await s.call('PUT', '/api/sales/manual/ebay/2026-10', { body: { total: 25000, orders: 6 } });
+  assert.equal(r.status, 200, r.text);
+  oct = r.body.months.find((m) => m.month === '2026-10');
+  assert.deepEqual([oct.shown, oct.replaced], ['manual', false]);
+  const card = async () => (await s.call('GET', '/api/sales/summary')).body.stores.find((x) => x.source === 'ebay' && x.currency === 'CAD');
+  let c = await card();
+  assert.equal(c.monthFromManual, true);
+  assert.equal(c.month[0].total, 25000);
+  let monthly = (await s.call('GET', '/api/sales/monthly?from=2026-10&to=2026-10')).body.months;
+  assert.deepEqual(monthly.map((x) => [x.source, x.total]), [['manual', 25000]], 'never both');
+  // Signed in again: eBay reads the whole month, its figure wins, the entry is kept as replaced.
+  await s.signInNow();
+  c = await card();
+  assert.ok(!c.monthFromManual);
+  assert.equal(c.month[0].total, 7000);
+  oct = (await s.call('GET', '/api/sales/manual/ebay')).body.months.find((m) => m.month === '2026-10');
+  assert.deepEqual([oct.shown, oct.replaced, oct.partial], ['real', true, false]);
+  monthly = (await s.call('GET', '/api/sales/monthly?from=2026-10&to=2026-10')).body.months;
+  assert.deepEqual(monthly.map((x) => [x.source, x.total]), [['ebay', 7000]]);
 });
