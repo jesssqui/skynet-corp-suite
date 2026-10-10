@@ -78,6 +78,15 @@ export default function EbayConnectionPanel({ offline, onChanged }) {
         </span>
       ) : null}
 
+      {data.ruNameProblem && !showKeys ? (
+        <Notice tone="danger">
+          <div style={{ display: 'grid', gap: 'var(--space-2)' }} data-testid="ebay-runame-problem">
+            <span>The saved RuName can’t be used to sign in. {data.ruNameProblem} Then choose “Enter the keyset again” (the App ID and Cert ID are needed with it).</span>
+            <div><Button onClick={() => setEditKeys(true)} disabled={offline}>Enter the keyset again</Button></div>
+          </div>
+        </Notice>
+      ) : null}
+
       {showKeys ? (
         <div style={{ display: 'grid', gap: 'var(--space-2)' }} data-testid="ebay-keyset">
           <span style={muted}>From developer.ebay.com → Application Keys → <strong>Production</strong> keyset, and User Tokens → your RuName. Set the RuName’s accept URL to <span style={mono}>{accept}</span>.</span>
@@ -97,7 +106,7 @@ export default function EbayConnectionPanel({ offline, onChanged }) {
       {data.set && !showKeys ? (
         <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
           <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-            <Button variant={signedIn ? 'secondary' : 'primary'} onClick={signIn} disabled={offline || busy !== null || data.paused} data-testid="ebay-sign-in">
+            <Button variant={signedIn ? 'secondary' : 'primary'} onClick={signIn} disabled={offline || busy !== null || data.paused || Boolean(data.ruNameProblem)} data-testid="ebay-sign-in">
               {signedIn ? 'Sign in to eBay again' : 'Sign in to eBay'}
             </Button>
             {signedIn ? <Button onClick={pull} disabled={offline || busy !== null || data.paused} data-testid="ebay-pull">{busy === 'pull' ? 'Reading eBay…' : 'Pull now'}</Button> : null}

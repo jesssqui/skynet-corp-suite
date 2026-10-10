@@ -1,4 +1,5 @@
 // The eBay card's words (D13), no React (client/test/ebay.test.js).
+import { KEY_RE, RUNAME_RE, ruNameMixUp } from '@suite/shared/ebay';
 
 /** The accept URL to give the RuName in eBay's developer site: the suite's own page on this address. */
 export const acceptUrlFor = (origin) => `${String(origin ?? '').replace(/\/+$/, '')}/ebay/accepted`;
@@ -28,6 +29,8 @@ export function pastedProblem(text) {
 
 /** What the card says about the connection. */
 export function stateLine(info, formatDate) {
+  // D13b: a keyset saved with the App ID in the RuName box can't sign in (eBay says only invalid_request).
+  if (info?.ruNameProblem && ['not_signed_in', 'signed_out'].includes(info.state)) return 'Keyset saved, but its RuName isn’t right: choose “Enter the keyset again” before signing in.';
   switch (info?.state) {
     case 'not_set_up': return 'Not set up: enter the keyset from eBay’s developer site.';
     case 'not_signed_in': return 'Keyset saved. Next: sign in to eBay (as Save Point Shop).';
@@ -42,9 +45,10 @@ export function stateLine(info, formatDate) {
 
 /** The keyset form's own checks (the server checks again): null or a problem. */
 export function keysetProblem({ appId, certId, ruName }) {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{9,99}$/.test(String(appId ?? '').trim())) return 'The App ID (Client ID) from Application Keys → Production';
+  if (!KEY_RE.test(String(appId ?? '').trim())) return 'The App ID (Client ID) from Application Keys → Production';
   if (/-SBX-/.test(appId)) return 'That is a Sandbox App ID: use the Production keyset';
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{9,99}$/.test(String(certId ?? '').trim())) return 'The Cert ID (Client Secret) from Application Keys → Production';
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{4,99}$/.test(String(ruName ?? '').trim())) return 'The RuName (User Tokens → your eBay Redirect URL name, not the address)';
-  return null;
+  if (!KEY_RE.test(String(certId ?? '').trim())) return 'The Cert ID (Client Secret) from Application Keys → Production';
+  if (!RUNAME_RE.test(String(ruName ?? '').trim())) return 'The RuName (User Tokens → your eBay Redirect URL name, not the address)';
+  // D13b: the App ID (or Cert ID) pasted into the RuName box — the server refuses it too.
+  return ruNameMixUp({ ruName, appId, certId });
 }

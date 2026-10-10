@@ -2,7 +2,10 @@
 // entered by hand while eBay isn't connected fills Save Point Shop's card on Money → Sales; then the keyset on System →
 // Connections, Sign in to eBay (the consent page opens; the Mac comes back through the suite's /ebay/accepted page, the
 // iPhone pastes the address eBay showed), the read: the month becomes eBay's own (the hand-entered one shown as
-// replaced), and the order waiting to ship is a task. Every call to eBay a GET of orders or the token POST.
+// replaced), and the order waiting to ship is a task. Every call to eBay a GET of orders or the token POST. D13b: the
+// breakdown under each total (Items, Shipping, Before tax, Tax) — total only for the hand-entered month —, a second
+// card for an order in USD, at 390 and 320 px wide,
+// and the App ID typed in the RuName box caught before saving.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { startFakeEbay, ebayOrder, APP_ID, CERT_ID, RU_NAME } from '../../server/test/fixtures/ebayFake.js';
@@ -27,6 +30,12 @@ async function walkThrough(page, context, server, ebay, label) {
   await page.locator(`[data-month="${thisMonth()}"][data-shown="manual"]`).getByText('Entered by hand · 12 orders').waitFor(WAIT);
   await page.getByTestId('ebay-card').locator('[data-period="month"]').filter({ hasText: '$999.99' }).waitFor(WAIT);
   await page.getByTestId('ebay-card').getByText(/This month entered by hand/).waitFor(WAIT);
+  // D13b: a hand-entered month has its total only — no breakdown beside it.
+  const handMonth = page.getByTestId('ebay-breakdown').locator('[data-period="month"]');
+  await handMonth.getByText('Entered by hand · 12 orders').waitFor(WAIT);
+  await handMonth.getByTestId('breakdown-total-only').getByText('Total only').waitFor(WAIT);
+  assert.equal(await handMonth.locator('dl').count(), 0, 'no eBay lines beside a hand total');
+  await page.locator(`[data-month="${thisMonth()}"]`).getByTestId('month-breakdown').getByText('Total only', { exact: true }).waitFor(WAIT);
   if (label === 'iPhone') assert.ok((await noSideways(page)) <= 0, 'no sideways scrolling on the eBay page');
   await shot(page, `d13-ebay-manual-${label.toLowerCase()}`);
 
@@ -38,10 +47,30 @@ async function walkThrough(page, context, server, ebay, label) {
   await panel.getByText('Not set up: enter the keyset from eBay’s developer site.').waitFor(WAIT);
   await panel.getByLabel('App ID (Client ID)').fill(APP_ID);
   await panel.getByLabel('Cert ID (Client Secret)').fill(CERT_ID);
+  // D13b: the App ID pasted in the RuName box is caught before saving, with where the RuName is.
+  await panel.getByLabel('RuName (eBay Redirect URL name)').fill(APP_ID);
+  await panel.getByText(/That’s the App ID, not the RuName: on developer\.ebay\.com/).waitFor(WAIT);
+  assert.ok(await panel.getByTestId('ebay-save-keys').isDisabled());
   await panel.getByLabel('RuName (eBay Redirect URL name)').fill(RU_NAME);
   await panel.getByTestId('ebay-save-keys').click();
   await panel.getByText(/Keyset saved\. Next: sign in to eBay/).waitFor(WAIT);
   assert.ok(!(await page.content()).includes(CERT_ID), 'the Cert ID is never shown again');
+  if (label === 'Mac') {
+    // D13b: a keyset saved before the guard with the App ID as its RuName: the card says so and won't open eBay with it.
+    server.db.prepare('UPDATE ebay_connection SET ru_name = app_id').run();
+    await page.reload();
+    await panel.getByTestId('ebay-runame-problem').getByText(/That’s the App ID, not the RuName/).waitFor(WAIT);
+    await panel.getByText(/its RuName isn’t right: choose “Enter the keyset again”/).waitFor(WAIT);
+    assert.ok(await panel.getByTestId('ebay-sign-in').isDisabled());
+    await shot(page, 'd13b-ebay-runame-problem-mac');
+    await panel.getByRole('button', { name: 'Enter the keyset again' }).click();
+    await panel.getByLabel('App ID (Client ID)').fill(APP_ID);
+    await panel.getByLabel('Cert ID (Client Secret)').fill(CERT_ID);
+    await panel.getByLabel('RuName (eBay Redirect URL name)').fill(RU_NAME);
+    await panel.getByTestId('ebay-save-keys').click();
+    await panel.getByText(/Keyset saved\. Next: sign in to eBay/).waitFor(WAIT);
+    assert.equal(await panel.getByTestId('ebay-runame-problem').count(), 0);
+  }
   const popupP = context.waitForEvent('page');
   await panel.getByTestId('ebay-sign-in').click();
   const popup = await popupP;
@@ -73,7 +102,29 @@ async function walkThrough(page, context, server, ebay, label) {
   const row = page.locator(`[data-month="${thisMonth()}"][data-shown="real"]`);
   await row.getByText('From eBay (replaces the month entered by hand)').waitFor(WAIT);
   await row.getByText('$101.50').first().waitFor(WAIT);
-  await page.getByTestId('ebay-card').locator('[data-period="month"]').filter({ hasText: '$101.50' }).waitFor(WAIT);
+  const main = page.locator('[data-testid="ebay-card"][data-store="ebay"]');
+  await main.locator('[data-period="month"]').filter({ hasText: '$101.50' }).waitFor(WAIT);
+  // D13b: what eBay's total is made of — the card's month and the month's line, from eBay's own days.
+  const monthList = main.locator('[data-period="month"] dl');
+  for (const [name, value] of [['Items', '$85'], ['Shipping', '$10'], ['Before tax', '$95'], ['Tax', '$6.50']]) {
+    await monthList.locator('div', { has: page.getByText(name, { exact: true }) }).getByText(value, { exact: true }).waitFor(WAIT);
+  }
+  await main.locator('[data-period="month"]').getByText('Total after tax · 2 orders').waitFor(WAIT);
+  assert.equal(await main.getByText('Total (after tax)').count(), 0, 'each period once: the total is the headline');
+  // The order in USD has its own card here (it links to this page too), with its own breakdown — never added to CAD.
+  const usd = page.locator('[data-testid="ebay-card"][data-store="ebay USD"]');
+  await usd.getByRole('heading', { name: 'Save Point Shop (eBay, USD)' }).waitFor(WAIT);
+  await usd.locator('[data-period="month"] dl').locator('div', { has: page.getByText('Items', { exact: true }) }).getByText('US$30', { exact: true }).waitFor(WAIT);
+  await row.getByTestId('month-breakdown').getByText('Items $85 · Shipping $10 · Before tax $95 · Tax $6.50').waitFor(WAIT);
+  await page.getByTestId('ebay-breakdown-note').getByText(/refunds come off Items/).waitFor(WAIT);
+  if (label === 'iPhone') {
+    assert.ok((await noSideways(page)) <= 0, 'no sideways scrolling with the breakdown (390 px)');
+    const size = page.viewportSize();
+    await page.setViewportSize({ width: 320, height: size.height });
+    assert.ok((await noSideways(page)) <= 0, 'no sideways scrolling with the breakdown (320 px)');
+    await shot(page, 'd13b-ebay-breakdown-320');
+    await page.setViewportSize(size);
+  }
   await shot(page, `d13-ebay-months-${label.toLowerCase()}`);
 
   // 4. The order waiting to ship is a task (synced like any task).
@@ -95,6 +146,7 @@ for (const [label, device] of [['iPhone', () => iphone()], ['Mac', () => ({ view
     const server = await startServer(t, { env: { EBAY_API_URL: ebay.url, EBAY_AUTH_URL: ebay.url, EBAY_TIME_ZONE: 'America/Toronto' } });
     ebay.orders = [
       ebayOrder({ id: '76-SOLD', created: new Date(Date.now() - 60_000).toISOString(), items: [{ title: 'Pokémon Red', sku: 'GB-RED', qty: 2, price: 20 }], shipping: 10, tax: 6.5 }),
+      ebayOrder({ id: '78-USD', created: new Date(Date.now() - 45_000).toISOString(), currency: 'USD', items: [{ title: 'Earthbound', sku: 'SNES-EB', qty: 1, price: 30 }] }),
       ebayOrder({ id: '77-SHIP', created: new Date(Date.now() - 30_000).toISOString(), status: 'NOT_STARTED', shipBy: new Date(Date.now() + 2 * 86_400_000).toISOString() }),
     ];
     const browser = await launch(t);

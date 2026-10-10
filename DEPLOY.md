@@ -530,6 +530,10 @@ until eBay's own figure for the month counts — from then on the entry stays re
    Serve isn't on yet, enter that address anyway (or any https page): after "I agree" the browser won't open it, and you
    paste the address it shows instead (step 4). Declined URL: the same with `/ebay/declined`. Save, and copy the
    **RuName** (a name like `Save_Point_Shop-SavePoin-suite-abcdefgh`, not the address). Leave "OAuth enabled" on.
+   **Not the App ID**: the App ID (`…-PRD-…`) looks similar, and eBay answers a sign-in with it as the RuName only
+   `invalid_request`. The RuName is the value in the **"RuName (eBay Redirect URL name)"** column on the User Tokens
+   page (Application Keysets → Production → User Tokens). The suite refuses the App ID (or Cert ID) in the RuName box,
+   and a keyset saved with it before (D13b) shows "its RuName isn’t right" on the card: *Enter the keyset again*.
 4. **In the suite** (either of you): System → Connections → **eBay (Save Point Shop)** → enter the App ID, Cert ID and
    RuName → *Save the keyset* → **Sign in to eBay**: eBay's page opens; sign in as **Save Point Shop** and agree.
    - If the suite's page opens ("Signed in to eBay as thesavepointshop") you are done.
@@ -541,7 +545,10 @@ until eBay's own figure for the month counts — from then on the entry stays re
 
 **Check one month against Seller Hub** (after the first read):
 6. Seller Hub → **Performance → Sales** → last month → note **Total sales**.
-7. In the suite: Money → Sales → *Save Point Shop (eBay)* → *Months…*: last month's figure must match. Or, signed in, open
+7. In the suite: Money → Sales → *Save Point Shop (eBay)* → *Months…*: last month's figure must match. (D13b: the
+   line under it — Items, Shipping, Before tax, Tax — can be compared with Seller Hub's own breakdown if it shows one;
+   refunds come off Items there, and the tax of a refund is estimated, so those two may differ by a refund's shipping or
+   tax share while the total matches.) Or, signed in, open
    `<suite address>/api/sales/totals?from=<1st>&to=<last day>&source=ebay` — `overall[0].total` is in **cents**.
    If it differs: a day's worth of orders at either end → eBay counts days in another zone: on the eBay card, *Time
    zone…* → `America/Los_Angeles` (the totals are read again), and compare again; a difference about the size of the tax
