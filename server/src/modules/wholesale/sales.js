@@ -1,6 +1,6 @@
 // Wholesale as a sales source (D11): the Order Manager's sales per day — worked out from the holding area with the
 // Order Manager's own P&L rules (salesDays.js) — written into the shared daily sales totals (the sales module,
-// source `wholesale`, store `wholesale`, business wholesale, CAD, UTC days). Every held change marks the days it can
+// source `wholesale`, store `wholesale`, business wholesale, CAD, the business's local days). Every held change marks the days it can
 // move (the order's own day and each of its refunds' / credit notes' days, before and after the change); after each
 // request from the Order Manager those days are worked out again and written (upserts: nothing is ever counted twice).
 // At start every day is written again from the holding area (the backfill on the first start after deploying, and
@@ -10,8 +10,9 @@
 import { BUSINESS_IDS } from '@suite/shared/crm';
 import { addDays } from '@suite/shared/planner';
 import {
-  salesDays, utcDayOf, WHOLESALE_STORE, WHOLESALE_SALES_ZONE, WHOLESALE_CURRENCY,
+  salesDays, localDayOf, orderDayOf, WHOLESALE_STORE, WHOLESALE_SALES_ZONE, WHOLESALE_CURRENCY,
 } from './salesDays.js';
+import { SALES_FIGURES } from '@suite/shared/sales';
 
 export const WHOLESALE_SOURCE = 'wholesale';
 export const WHOLESALE_STORE_NAME = 'Wholesale Order Manager';
@@ -29,27 +30,26 @@ export function createWholesaleSales({ db, log, services, isPaused = () => false
     allMoney: db.prepare("SELECT * FROM wholesale_held_money WHERE kind IN ('refund', 'credit_note', 'return')"),
     anyOrder: db.prepare('SELECT 1 AS x FROM wholesale_held_orders WHERE snapshot IS NOT NULL LIMIT 1'),
   };
-  /** Days whose totals may have moved since they were last written (UTC "YYYY-MM-DD"). In memory: a start rewrites all. */
+  /** Days whose totals may have moved since they were last written (local "YYYY-MM-DD"). In memory: a start rewrites all. */
   const dirty = new Set();
-  const add = (iso) => {
-    const d = utcDayOf(iso);
-    if (d) dirty.add(d);
+  const add = (day) => {
+    if (day) dirty.add(day);
   };
 
   /** An order is about to change, or just changed: its own day and its refunds' and credit notes' days may move. */
   function touchOrder(uid) {
     if (!uid) return;
     const o = q.order.get(uid);
-    if (o) add(o.placed_at);
-    for (const m of q.moneyDaysOfOrder.all(uid)) add(m.at);
+    if (o) add(orderDayOf(o));
+    for (const m of q.moneyDaysOfOrder.all(uid)) add(localDayOf(m.at));
   }
   /** A payment, refund, return or credit note is about to change, or just changed: its day (and, for a return, its refunds'). */
   function touchMoney(uid) {
     if (!uid) return;
     const m = q.money.get(uid);
     if (!m) return;
-    add(m.at);
-    if (m.kind === 'return') for (const r of q.moneyDaysOfReturn.all(uid)) add(r.at);
+    add(localDayOf(m.at));
+    if (m.kind === 'return') for (const r of q.moneyDaysOfReturn.all(uid)) add(localDayOf(r.at));
   }
 
   const sales = () => services.sales ?? null;
@@ -74,10 +74,13 @@ export function createWholesaleSales({ db, log, services, isPaused = () => false
     const returnOf = (uid) => q.money.get(uid) ?? null;
     const heldOrders = [];
     const heldMoney = [];
+    // A local day lies within the UTC days around it (Toronto is 4–5 hours behind UTC; a history-only order is stamped
+    // at noon UTC on its date): read a day either side, salesDays keeps what is on the day asked.
     for (const d of days) {
-      const next = addDays(d, 1);
-      heldOrders.push(...q.ordersOn.all(d, next));
-      heldMoney.push(...q.moneyOn.all(d, next));
+      const from = addDays(d, -1);
+      const to = addDays(d, 2);
+      heldOrders.push(...q.ordersOn.all(from, to));
+      heldMoney.push(...q.moneyOn.all(from, to));
     }
     const figures = salesDays({ orders: heldOrders, money: heldMoney, days, orderOf, returnOf });
     const n = write([...figures].map(([day, f]) => ({ day, ...f })));
@@ -103,11 +106,15 @@ export function createWholesaleSales({ db, log, services, isPaused = () => false
     if (!sales()) return 0;
     const money = q.allMoney.all();
     const figures = salesDays({ orders: q.allOrders.all(), money });
-    for (const d of sales().storeDays?.({ source: WHOLESALE_SOURCE, store: WHOLESALE_STORE }) ?? []) {
+    const stored = new Map((sales().storeRows?.({ source: WHOLESALE_SOURCE, store: WHOLESALE_STORE }) ?? []).map((r) => [r.day, r]));
+    for (const d of stored.keys()) {
       if (!figures.has(d)) figures.set(d, salesDays({ orders: [], money: [], days: [d] }).get(d));
     }
     dirty.clear();
-    return write([...figures].map(([day, f]) => ({ day, ...f })));
+    // Only days whose figures differ from what is stored (review fix): an unchanged day keeps its "updated" time.
+    const same = (row, f) => row && row.currency === WHOLESALE_CURRENCY && row.business_id === BUSINESS_IDS.wholesale
+      && SALES_FIGURES.every((k) => row[k] === f[k]) && (row.raw ?? null) === JSON.stringify(f.raw);
+    return write([...figures].filter(([day, f]) => !same(stored.get(day), f)).map(([day, f]) => ({ day, ...f })));
   }
 
   /** Registers the source with the sales module (from the start hook: sales comes after wholesale in the list). */
@@ -126,7 +133,7 @@ export function createWholesaleSales({ db, log, services, isPaused = () => false
           lastSuccessAt: lastReceivedAt(),
           lastError: null,
           link: '/wholesale',
-          note: 'Days are UTC days, as the Order Manager’s P&L counts them',
+          note: 'Counted as the Order Manager’s P&L counts them: active orders on their day here (Toronto), refunds and credit notes on theirs',
         }];
       },
     });

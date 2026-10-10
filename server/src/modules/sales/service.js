@@ -17,7 +17,7 @@ import { addMonths } from '@suite/shared/crm';
 import { addDays } from '@suite/shared/planner';
 import { isId } from '@suite/shared/ids';
 import {
-  SALES_SOURCES, SALES_FIGURES, ENTRY_KINDS, sumByCurrency, localDateIn, salesPeriods, zeroFigures, handStoreKey, signedAmount,
+  SALES_SOURCES, SALES_FIGURES, RAW_FIGURES, ENTRY_KINDS, NOT_BY_HAND, sumByCurrency, localDateIn, salesPeriods, zeroFigures, handStoreKey, signedAmount,
 } from '@suite/shared/sales';
 import { HttpError } from '../../lib/httpError.js';
 
@@ -35,10 +35,10 @@ export function createSalesService(ctx) {
   const { db, services } = ctx;
   const clock = ctx.now ?? Date.now;
   const q = {
-    put: db.prepare(`INSERT INTO sales_daily (source, store, day, business_id, currency, ${COLS}, fetched_at)
-      VALUES (@source, @store, @day, @business_id, @currency, ${SALES_FIGURES.map((k) => `@${k}`).join(', ')}, @fetched_at)
+    put: db.prepare(`INSERT INTO sales_daily (source, store, day, business_id, currency, ${COLS}, raw, fetched_at)
+      VALUES (@source, @store, @day, @business_id, @currency, ${SALES_FIGURES.map((k) => `@${k}`).join(', ')}, @raw, @fetched_at)
       ON CONFLICT (source, store, day) DO UPDATE SET business_id = excluded.business_id, currency = excluded.currency,
-      ${SALES_FIGURES.map((k) => `${k} = excluded.${k}`).join(', ')}, fetched_at = excluded.fetched_at`),
+      ${SALES_FIGURES.map((k) => `${k} = excluded.${k}`).join(', ')}, raw = excluded.raw, fetched_at = excluded.fetched_at`),
     putStore: db.prepare(`INSERT INTO sales_stores (source, store, name, business_id, currency, time_zone, updated_at)
       VALUES (@source, @store, @name, @business_id, @currency, @time_zone, @at)
       ON CONFLICT (source, store) DO UPDATE SET name = excluded.name, business_id = excluded.business_id,
@@ -58,7 +58,7 @@ export function createSalesService(ctx) {
     markReplaced: db.prepare('UPDATE sales_manual_months SET replaced_at = ? WHERE store = ? AND month = ? AND replaced_at IS NULL'),
     dropManual: db.prepare('DELETE FROM sales_manual_months WHERE store = ? AND month = ?'),
     lastFetched: db.prepare('SELECT source, store, MAX(fetched_at) AS fetched_at, MIN(day) AS first_day, MAX(day) AS last_day FROM sales_daily GROUP BY source, store'),
-    storeDays: db.prepare('SELECT day FROM sales_daily WHERE source = ? AND store = ? ORDER BY day'),
+    storeDays: db.prepare('SELECT * FROM sales_daily WHERE source = ? AND store = ? ORDER BY day'),
     // D11: sales entered by hand.
     entry: db.prepare('SELECT * FROM sales_entries WHERE id = ?'),
     insertEntry: db.prepare(`INSERT INTO sales_entries (id, business_id, day, kind, amount, currency, orders, note,
@@ -105,11 +105,16 @@ export function createSalesService(ctx) {
     for (const d of days) {
       if (!DAY_RE.test(d.day ?? '')) throw new Error(`sales: bad day "${d.day}"`);
       for (const k of SALES_FIGURES) if (!Number.isSafeInteger(d[k] ?? 0)) throw new Error(`sales: ${k} must be whole (cents)`);
+      // D11: optional unrounded figures (dollars) — summed then rounded once (sumByCurrency).
+      if (d.raw !== undefined && d.raw !== null && !RAW_FIGURES.every((k) => Number.isFinite(d.raw[k]))) throw new Error('sales: raw needs every RAW_FIGURES number');
     }
     db.transaction(() => {
       q.putStore.run({ source, store, name: name || store, business_id: businessId, currency, time_zone: timeZone, at: fetchedAt });
       for (const d of days) {
-        q.put.run({ source, store, day: d.day, business_id: businessId, currency, fetched_at: fetchedAt, ...Object.fromEntries(SALES_FIGURES.map((k) => [k, d[k] ?? 0])) });
+        q.put.run({
+          source, store, day: d.day, business_id: businessId, currency, fetched_at: fetchedAt,
+          ...Object.fromEntries(SALES_FIGURES.map((k) => [k, d[k] ?? 0])), raw: d.raw ? JSON.stringify(d.raw) : null,
+        });
       }
       // D13 re-check: a hand-entered month this store's own days now count for is replaced for good (until saved again).
       markReplacedFor(source, store, [...new Set(days.map((d) => d.day.slice(0, 7)))], fetchedAt);
@@ -407,7 +412,7 @@ export function createSalesService(ctx) {
       }
       q.put.run({
         source: 'manual', store, day, business_id: businessId, currency, fetched_at: at,
-        ...zeroFigures(), total: r.total, orders: r.orders,
+        ...zeroFigures(), total: r.total, orders: r.orders, raw: null,
       });
     }
     if (q.handCount.get(businessId, currency).n) {
@@ -425,9 +430,14 @@ export function createSalesService(ctx) {
    * An entry's values checked and cleaned: { businessId, day, kind, amount (cents, > 0 as typed), currency?, orders?,
    * note? } → the row's fields (amount signed). Refunds and credit notes take no orders.
    */
-  function cleanEntry(body = {}) {
+  function cleanEntry(body = {}, prev = null) {
     const { businessId, day, kind, amount, currency = 'CAD', orders = null, note = null } = body ?? {};
-    if (!isId(businessId) || !services.crm?.getBusiness?.(businessId)) throw bad('bad_business', 'Pick one of our businesses');
+    const business = isId(businessId) ? services.crm?.getBusiness?.(businessId) : null;
+    if (!business) throw bad('bad_business', 'Pick one of our businesses');
+    // Review fix: never for a business whose sales come from a connection (counted twice) or Personal; an archived
+    // business only for an entry already on it.
+    if (NOT_BY_HAND[businessId]) throw bad('not_by_hand', NOT_BY_HAND[businessId]);
+    if (business.archived && prev?.business_id !== businessId) throw bad('not_by_hand', `${business.name} is archived`);
     if (!realDay(day) || day < '2000-01-01') throw bad('bad_day', 'A day is YYYY-MM-DD');
     // A day or so ahead is let through (a phone in another time zone); later than that is a typo.
     if (day > addDays(localDate(new Date(clock())), 1)) throw bad('bad_day', 'That day hasn’t come yet');
@@ -466,10 +476,10 @@ export function createSalesService(ctx) {
   }
   /** Change an entry (any field): its old and new days are written again. → { entry } */
   function updateEntry(id, body, { actor }) {
-    const f = cleanEntry(body);
     return db.transaction(() => {
       const prev = q.entry.get(id);
       if (!prev) throw new HttpError(404, 'That entry isn’t here any more', undefined, { code: 'not_found' });
+      const f = cleanEntry(body, prev);
       q.updateEntry.run({ id, ...f, at: nowIso(new Date(clock())), actor });
       rebuildHand(prev.business_id, prev.currency, [prev.day]);
       rebuildHand(f.business_id, f.currency, [f.day]);
@@ -506,9 +516,11 @@ export function createSalesService(ctx) {
 
   /** D11: the days a store has rows for (a source rewriting all its days finds the ones that now have nothing). */
   const storeDays = ({ source, store }) => q.storeDays.all(source, store).map((r) => r.day);
+  /** D11 review: a store's day rows as stored (figures + raw), so a source rewriting every day writes only what changed. */
+  const storeRows = ({ source, store }) => q.storeDays.all(source, store);
 
   return {
     registerSource, putDays, setStore, dayCount, totals, summary, putManualMonth, deleteManualMonth, months, monthly, hasDays,
-    storeDays, addEntry, updateEntry, deleteEntry, listEntries, getEntry,
+    storeDays, storeRows, addEntry, updateEntry, deleteEntry, listEntries, getEntry,
   };
 }
