@@ -93,12 +93,14 @@ test('a signed request is applied; a wrong secret, an old or future timestamp, a
 
   const wrong = await post([om.customerCreated(om.customer())], { sigSecret: 'not-the-shared-secret-at-all' });
   assert.deepEqual([wrong.status, wrong.body.code], [401, 'bad_signature']);
-  const now = Math.floor(Date.now() / 1000);
-  const stale = await post([om.customerCreated(om.customer())], { ts: now - 301 });
+  // Each timestamp from a fresh clock, ±310 s: clear of the ±300 s window with margin (a second or two can pass
+  // between requests on a busy machine — ±301 from one reading made this test flaky).
+  const nowS = () => Math.floor(Date.now() / 1000);
+  const stale = await post([om.customerCreated(om.customer())], { ts: nowS() - 310 });
   assert.deepEqual([stale.status, stale.body.code], [401, 'stale']);
-  const future = await post([om.customerCreated(om.customer())], { ts: now + 301 });
+  const future = await post([om.customerCreated(om.customer())], { ts: nowS() + 310 });
   assert.deepEqual([future.status, future.body.code], [401, 'stale']);
-  assert.equal((await post([om.customerCreated(om.customer())], { ts: now - 250 })).status, 200, 'inside the 5-minute window');
+  assert.equal((await post([om.customerCreated(om.customer())], { ts: nowS() - 250 })).status, 200, 'inside the 5-minute window');
   const noSig = await post([], { signature: '' });
   assert.deepEqual([noSig.status, noSig.body.code], [401, 'no_signature']);
   const noTs = await post([], { ts: '' });

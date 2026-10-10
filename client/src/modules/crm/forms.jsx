@@ -31,11 +31,15 @@ const none = (label = '—') => [{ value: '', label }];
  * created with every field (+ `parent`, e.g. its client_id); an edit sends only the fields changed
  * since the sheet opened (formFields.js), so the other person's changes that arrive meanwhile stay.
  */
-export function useForm(form, record, { entity, parent = {}, onDone, initial = null }) {
+export function useForm(form, record, { entity, parent = {}, onDone, initial = null, guard = null, onSaved = null }) {
   const [start] = useState(() => ({ ...valuesFrom(form, record), ...initial }));
   const [v, setV] = useState(start);
   const [problems, setProblems] = useState({});
+  const [blocked, setBlocked] = useState(null);
   const action = useAction();
+  // D8: a new record saved once stays that record: if what runs after it (onSaved — e.g. clearing the
+  // inbox item it came from) fails, Save again retries that part instead of making a second one.
+  const created = useRef(null);
   const set = (k) => (e) => setV((cur) => ({ ...cur, [k]: e?.target ? e.target.value : e }));
   const save = async () => {
     let id = record?.id ?? null;
@@ -51,13 +55,22 @@ export function useForm(form, record, { entity, parent = {}, onDone, initial = n
       if (Object.keys(r.problems ?? {}).length) return;
       fields = { ...parent, ...r.fields };
     }
+    let stop = null;
     const ok = await action.run(async () => {
-      if (!record) id = await store.create(entity, fields);
-      else if (Object.keys(fields).length) await store.update(entity, record.id, fields);
+      if (!record && !created.current && guard) {
+        stop = await guard(); // e.g. the inbox item was sorted meanwhile: save nothing
+        if (stop) return;
+      }
+      if (!record) {
+        id = created.current ?? await store.create(entity, fields);
+        created.current = id;
+        await onSaved?.(id);
+      } else if (Object.keys(fields).length) await store.update(entity, record.id, fields);
     });
-    if (ok) onDone(id);
+    setBlocked(stop);
+    if (ok && !stop) onDone(id);
   };
-  return { v, setV, set, save, problems, dirty: isDirty(start, v), ...action };
+  return { v, setV, set, save, problems, blocked, dirty: isDirty(start, v), ...action };
 }
 
 export function deleter(run, entity, record, onDeleted) {

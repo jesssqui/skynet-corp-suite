@@ -1,6 +1,6 @@
 // The capture inbox (/inbox): anything captured (here, on Today, later by Siri or the share
 // sheet), newest first, to sort into a task (two taps: Task, then Save on the pre-filled sheet), a
-// note on a client, or nothing (Dismiss, with Undo). Everything is saved on the device first, so it
+// note on a client, a lead (D8), or nothing (Dismiss, with Undo). Everything is saved on the device first, so it
 // works offline.
 import { useMemo, useState } from 'react';
 import { PageHeader, Card, Button, EmptyState, Icon, Notice } from '../../ui/index.js';
@@ -15,11 +15,12 @@ import { usePlannerData } from './data.js';
 import { openInbox, clearedFields, titleFromText, inboxDoubles, inboxOutcomes } from './logic.js';
 import { CaptureBar, CaptureSpacer, muted } from './parts.jsx';
 import { TaskSheet, InboxNoteSheet, newTaskInitial, inboxItemGuard } from './forms.jsx';
+import { LeadForm } from '../crm/leadForms.jsx';
 
 const PAGE = 50;
 const SOURCE_LABELS = { typed: 'Typed', phone: 'Phone', siri: 'Siri', share: 'Share sheet' };
 
-function InboxItem({ item, me, onTask, onNote, onDismiss }) {
+function InboxItem({ item, me, onTask, onNote, onLead, onDismiss }) {
   const who = actorLabel(item._sync?.createdBy ?? (item._sync?.local ? me : null), me);
   return (
     <li className="planner-inbox-item" data-inbox-id={item.id}>
@@ -33,6 +34,7 @@ function InboxItem({ item, me, onTask, onNote, onDismiss }) {
       <div className="planner-actions">
         <Button variant="primary" onClick={() => onTask(item)} aria-label={`Make a task: ${item.text}`}><Icon name="tasks" size={18} />Task</Button>
         <Button onClick={() => onNote(item)}><Icon name="note" size={18} />Note on a client…</Button>
+        <Button onClick={() => onLead(item)} aria-label={`Make a lead: ${item.text}`}><Icon name="target" size={18} />Lead</Button>
         <Button variant="ghost" onClick={() => onDismiss(item)}>Dismiss</Button>
       </div>
     </li>
@@ -66,7 +68,8 @@ function SortedTwice({ items, tasksById, me }) {
                   <li key={`${o.id}-${i}`} data-outcome={o.id ?? 'dismissed'} style={{ fontSize: 'var(--text-sm)' }}>
                     {o.entity === 'task'
                       ? (task ? <>Task by {by}: <Link to={`/tasks?open=${o.id}`}>{task.title}</Link></> : <>Task by {by} (deleted)</>)
-                      : o.entity === 'activity' ? <>A note on a client, by {by}</> : <>Dismissed by {by}</>}
+                      : o.entity === 'activity' ? <>A note on a client, by {by}</>
+                        : o.entity === 'lead' ? <>A lead by {by}: <Link to={`/crm/leads/${o.id}`}>open it</Link></> : <>Dismissed by {by}</>}
                   </li>
                 );
               })}
@@ -95,6 +98,11 @@ export default function InboxPage() {
   const toTask = (item) => {
     const { title, notes } = titleFromText(item.text);
     setSheet({ kind: 'task', item, initial: newTaskInitial({ me, businesses: data.businesses, title, notes: notes || undefined }) });
+  };
+  // D8: an item can become a lead (pre-filled: its first line as the name, the rest as notes).
+  const toLead = (item) => {
+    const { title, notes } = titleFromText(item.text);
+    setSheet({ kind: 'lead', item, initial: { name: title, notes: notes || '', source: 'inbox' } });
   };
   const dismiss = (item) => run(async () => {
     await store.update('inbox_item', item.id, clearedFields({ now: nowIso() }));
@@ -131,6 +139,7 @@ export default function InboxPage() {
                   me={me}
                   onTask={toTask}
                   onNote={(i) => setSheet({ kind: 'note', item: i })}
+                  onLead={toLead}
                   onDismiss={dismiss}
                 />
               ))}
@@ -157,6 +166,16 @@ export default function InboxPage() {
           onDone={close}
           guard={() => inboxItemGuard(sheet.item.id, me)}
           onSaved={(id) => store.update('inbox_item', sheet.item.id, clearedFields({ entity: 'task', id, now: nowIso() }))}
+        />
+      ) : null}
+      {sheet?.kind === 'lead' ? (
+        <LeadForm
+          initial={sheet.initial}
+          businesses={data.businesses}
+          onClose={close}
+          onDone={close}
+          guard={() => inboxItemGuard(sheet.item.id, me)}
+          onSaved={(id) => store.update('inbox_item', sheet.item.id, clearedFields({ entity: 'lead', id, now: nowIso() }))}
         />
       ) : null}
       {sheet?.kind === 'note' ? <InboxNoteSheet item={sheet.item} onClose={close} onDone={close} /> : null}

@@ -31,7 +31,9 @@ pay for, with monthly and yearly totals, reminder tasks 30 days before a client 
 of our costs does, auto-renewing costs rolled forward, resold costs on the client page), and from **D16** stock tasks
 from Stockroom (module `stockroom`: a read-only, signed pull from Stockroom — the Inventory Hub on Fly — that makes
 reorder tasks by supplier, the weekly spot check on the shared list, tasks to receive confirmed purchase orders and to
-investigate big count differences; the suite never changes stock).
+investigate big count differences; the suite never changes stock), and from **D8** leads and the pipeline (module
+`crm`: leads moving lead → talking → quoted → won or lost, a dated next step on each, winning one makes its client and
+relationship, and the monthly cross-sell list of current clients who could use another of our services).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -74,7 +76,9 @@ shared/                    @suite/shared — ids.js (UUIDv7), time.js, hlc.js (s
                            or a CSV: cleanRow, nameKey/similarNames, buildMatchIndex/findMatch/flagRows, planRow,
                            fingerprintText/rowKey, detectMapping/rowFromCells); D6: costs.js (COST_PERIODS, rollForward,
                            effectiveAnchor, costTotals, costState, wantsCostReminder, moneyText/costAmountText, the
-                           reminder lead days);
+                           reminder lead days); D8: leads.js (LEAD_STAGES, LEAD_SOURCES, LOST_REASONS,
+                           LEAD_STAGE_FIELDS, leadNeedsLook, leadsWithoutNextStep, firstYearValue, pipelineTotals,
+                           CROSS_SELL_PAIRS, crossSellList);
                            tests in shared/test
 server/src/
   index.js                 start: open db, createApp, listen, heartbeat, backup schedule, shutdown
@@ -90,11 +94,14 @@ server/src/
   modules/crm/             CRM core records: entities.js (the record types), service.js (registration, seeds, reads),
                            routes.js (read API + C7's import routes), import.js (C7: the CSV import — preview, commit
                            in chunks through applyLocal, remembered rows, batches), migrations/001_create_crm.sql,
-                           002_import.sql (crm_import_batches, crm_import_rows: not synced)
+                           002_import.sql (crm_import_batches, crm_import_rows: not synced); D8: the `lead` and
+                           `lead_activity` record types + checkLead, liveLeads/crossSellInputs, migrations/005_leads.sql
   modules/planner/         tasks + inbox (C4a), goals + workdays (C4b): entities.js, service.js (registration,
                            checkTask/checkGoal/checkWorkday, automatedOwnerFor, goals(), seedWorkdays; C8 reads for
                            its automations), migrations/001_create_planner.sql, 002_goals.sql; no routes.
                            C8: automations.js (friday-review, no-next-step: reviewNumbers, relationshipsToChase)
+                           D8: task.lead_id (migrations/003_task_lead.sql), openLeadTasks; leadAutomations.js
+                           (lead-no-next-step, cross-sell: crossSellLines)
   modules/connections/     C8: service.js (the registry: register/placeholder/setPaused/list, the backup row,
                            PLACEHOLDERS), routes.js (GET /, PUT /:id), migrations/001 (connections_switches, _changes)
   modules/automations/     C8: service.js (registry, execute/runNow/tick/emit, startScheduler, alerts + onAlert),
@@ -189,7 +196,14 @@ client/src/
                            React, tested in client/test/clients.test.js), crm.css (layout media queries).
                            C7: QuickAddPage (/crm/quick-add) + quickAdd.js (the line parser, rows, no React;
                            client/test/quickadd.test.js), ImportPage (/crm/import); both lazy-loaded (React.lazy in crm/index.jsx; the
-                           service worker caches their chunks, so they open offline)
+                           service worker caches their chunks, so they open offline).
+                           D8: CrmTabs.jsx (Clients · Pipeline · Cross-sell), PipelinePage (/crm/pipeline), LeadPage
+                           (/crm/leads/:id), CrossSellPage (/crm/cross-sell) — all lazy; leadForms.jsx (LeadForm,
+                           LostSheet, WinSheet, LeadActivityForm), leads.js (no React: the form, stageChange, pipelineView,
+                           leadDuplicate, planWin/applyWin, keptWinIds, leadNextStepFields, nextStepOf, clientLeads,
+                           leadTimelineItems, crossSellLeadFields, stageClashes/settleStageClashes, leadWins/
+                           extraWinPlan/removeExtraWins; client/test/leads.test.js); LeadNotices.jsx (WonTwice,
+                           StageClash, NeedsLook); data.js usePipelineData/useLeadPageData/useCrossSellData/useWinFixData
   modules/planner/         C4a screens: TodayPage (/), InboxPage (/inbox), TasksPage (/tasks), PlanSheet (Plan my day),
                            ClientTasksCard.jsx (the client page's Tasks card + "No next step · Add"), forms.jsx
                            (TaskSheet, InboxNoteSheet, newTaskInitial), parts.jsx (TaskRow, tick, CaptureBar, useToday),
@@ -543,6 +557,7 @@ import { store, useRecords, useRecord, useSyncStatus, SyncError } from '../../sy
 import { ClashPanel, SyncBadges } from '../../sync/components.jsx';
 const id = await store.create('task', { title: 'Call Lefty’s', done: false }); // new UUIDv7, made here; works offline
 await store.update('task', id, { done: true });     // sends only fields that changed; false when nothing did
+await store.update('lead', id, fields, { send: Object.keys(fields) }); // D8: these go out even if unchanged here
 await store.remove('task', id);
 await store.list('task', { where: { done: false } /* or (rec) => bool */, sort: 'due' /* '-due', or (a, b) => n */ });
 await store.get('task', id);                         // null when this device doesn't have it
@@ -972,7 +987,7 @@ only its own tables and has **no HTTP routes**: devices use their offline copy, 
   `topField(actor)` in `@suite/shared/planner`; a pick from another day is simply stale).
 - `inbox_item` (`planner_inbox_items`; create/update/delete): text* (≤ 5000), source (`typed|phone|siri|share`;
   Siri and share arrive in C5), captured_at* (datetime), cleared_at (datetime; null = still in the inbox),
-  became_entity (text: `task` | `activity`; null when dismissed — free text so D8 can add `lead`), became_id (id, no
+  became_entity (text: `task` | `activity` | `lead` (D8); null when dismissed), became_id (id, no
   ref: what it became may be deleted later).
 
 **Rules**
@@ -1211,6 +1226,7 @@ it uses.
   ctx.services.automations.register({
     id: 'friday-review', name, description, module: 'planner',
     trigger: { type: 'schedule', every: 'week', day: 'fri', at: '08:00' }   // or every: 'day', at: '07:30'
+          // or every: 'month', at: '08:05' (D8: the first workday — Monday–Friday — of each month; key "2026-11")
           // or { type: 'event', event: 'order.placed', key: (data) => data.orderId, label? }
           // or { type: 'event', events: ['order.packed', 'order.shipped'], key, accept: (data) => bool, label? } (D3)
     defaults: { enabled: true, alert: false }, alertLink?: '/plan/review',
@@ -2015,6 +2031,166 @@ and against a `git archive` of the hub's B10 branch and of master.
 Stockroom's `/orders` (B8) as tasks; per-supplier or per-product overrides; editing anything in Stockroom from the suite
 (never: it stays in Stockroom). Pruning `stockroom_reorder_episodes` (one small row per supplier need).
 
+## Leads and the pipeline (crm module, D8)
+Shared facts `shared/leads.js` (tests `shared/test/leads.test.js`); records in `server/src/modules/crm/entities.js` +
+`service.js` (`checkLead`), migration `crm/005_leads.sql`; `task.lead_id` in the planner (`003_task_lead.sql`); the two
+automations `server/src/modules/planner/leadAutomations.js`; client `client/src/modules/crm/` (`leads.js`, `leadForms.jsx`,
+`PipelinePage.jsx`, `LeadPage.jsx`, `CrossSellPage.jsx`, `CrmTabs.jsx`, the client page's Leads card and timeline) and the
+planner's Today, Tasks, task sheet and inbox. Tests `server/test/leads.test.js` (TZ Toronto), `client/test/leads.test.js`
+(logic + two devices), `test/e2e/leads.e2e.test.js` (iPhone and Mac, in an outage).
+
+**Record types** (synced, UUIDv7, `created_*`/`updated_*`, `flagged`; ⇧ parent, → plain ref, * required):
+- `lead` (`crm_leads`; create/update/delete — delete is for mistakes, a lead that went nowhere is **lost**): name* (their
+  business or the person), contact_name, email (format email), phone (format phone), source (`LEAD_SOURCES`: referral,
+  website, social, inbox, event, outreach, cross_sell, other), business_id*⇧ (one of ours — never deleted, so a lead is
+  never hidden), kind (a relationship kind: what we'd do), stage* (`lead|talking|quoted|won|lost`), lost_reason
+  (`LOST_REASONS`: price, timing, went_elsewhere, no_reply, not_a_fit, other) + lost_note, value_cents + value_period
+  (`once|monthly|quarterly|yearly`) + currency (null = CAD), owner (`OWNERS`; null reads as shared), notes,
+  client_id→ + account_id→ (**a current client**: a cross-sell lead), won_client_id→ + won_relationship_id→ (what
+  winning made), stage_changed_at, closed_at (datetime: won or lost). All refs to clients are **plain** (deleting a
+  client never hides the lead).
+- `lead_activity` (`crm_lead_activities`; **append-only**): lead_id*⇧, type* (`note|call|email|meeting|stage`), body,
+  stage_from, stage_to, at*, and on a win's own row (stage → won) won_client_id→, won_relationship_id→ and won_made
+  (text: what that win made — `client:<id> account:<id> contact:<id> relationship:<id> activity:<id>`, or
+  `restarted:relationship:<id>` — so a lead won on two devices at once can be found and its extra win taken back). **Decision — stage history**: every stage change writes a `stage` row (from → to; a loss
+  carries its reason in body) beside the lead's `stage`/`stage_changed_at`, so the history survives edits and syncs
+  like any append-only record; the lead's own notes and calls are the same entity. Not the CRM's `activity`: that one
+  needs a client, which most leads never get.
+- **`checkLead`** (the step's own values; arrival order can't matter): `stage: 'lost'` needs a `lost_reason` — in the
+  step, or **any stored one** the step doesn't clear (review fix: keeping "Lost" from a stage clash applies the stage
+  alone, onto a row the other device moved); `stage: 'won'` likewise needs `won_client_id`; currency three capital
+  letters; value ≥ 0. Refused steps land in Needs attention.
+- `task.lead_id` → lead (plain ref, nullable; additive column). `inbox_item.became_entity` may be `'lead'`.
+
+**Rules**
+- **No next step** (`leadsWithoutNextStep`, shared — C4a's shape): an **open** lead (lead, talking, quoted) with no open
+  task naming it (`lead_id`) that has a due date (overdue still counts). Any owner's task counts; won and lost leads
+  are never flagged. Shown on the pipeline (a badge per card + "N open leads have no next step · Show only those",
+  `?flag=1`), the lead's page and **Today's "No next step" card** (both people's leads, like relationships; archived
+  businesses left out; "+ Next step" opens the task sheet with the lead). **Add note / Log call** on a lead takes an
+  optional next step (title + day) → a task for whoever logs it, with `lead_id`, the lead's business, client and
+  account; saved once (refs), so a retry doesn't repeat the note or the task.
+- **Stages** move with buttons (never through the edit sheet): Move to Lead/Talking/Quoted, **Won…**, **Lost…** (a reason
+  from the list + a few words; "other" asks what happened), **Reopen** on a lost lead (back to the stage it was lost
+  from; `closed_at` cleared). A won lead isn't reopened from here: its client exists (undo by hand). **Quoted is set by
+  hand** — the seam for **D17 (quotes)**: D17 should set `stage: 'quoted'` (and a `stage` row) when a quote is sent and
+  may put the quote's total in `value_cents`; nothing else here knows about quotes.
+- **Winning** (`planWin` → `applyWin`, one save, offline): for a **new** client — client (active) → account (the lead's
+  name) → a contact when the lead has a person, email or phone → relationship (our business + kind, active, start date
+  picked, default today) → a `milestone` activity "Won the lead …" on the client's timeline → the lead (`won`,
+  `won_client_id`, `won_relationship_id`, `closed_at`) → its `stage` row. For a **current client** (the lead names one,
+  or the person picks the likely duplicate): only what it lacks — the account picked (or a new one under it), a contact
+  only when none of the client's has the lead's email/phone (or, without them, its name), and the relationship — or
+  the account's existing one with that business and kind, made active again — then it **restarts**: `status: active` and
+  `start_date` = the day picked are sent (only those), and the milestone says "(restarted)". **Ids are made once per
+  lead and choice** (`keptWinIds`; localStorage `suite.crm.winIds.<lead id>` until the win is saved, keyed by
+  `winChoiceKey`: a new client, or add-to-<client>:<account or new>, and the kind): a retry after a failure part-way, a
+  double tap or a reload re-uses them, a create already made answers `already_exists` and counts as done — never a
+  second client (tested: a failure after three writes, then a retry and a double tap → one client, account, contact,
+  relationship). **Another choice gets new ids** (review fix: reusing them would skip, as already made, what the first
+  choice made elsewhere — a relationship on another account); what a failed first try made stays (a client with no
+  relationship, say) and is tidied by hand. The win's own `stage` row records the client, relationship and `won_made`.
+- **Before a new client** the win sheet looks for a likely one on the device's copy (C7's `buildMatchIndex`/`findMatch`):
+  same clean email or phone on a contact → "Already here: X" (pre-selected "Add to X"); a similar client/account name →
+  "Maybe the same as X" (the new client stays selected). The person chooses; nothing is merged.
+- **The lead's history stays with the lead** and is shown on the client: the client page's timeline merges the
+  `lead_activity` rows of leads pointing at it or won into it (`leadTimelineItems`: business = the lead's, account =
+  the lead's or the won relationship's; stage rows as milestones "Lead “X”: Talking → Won"; "on the lead" links back).
+  Nothing is copied. The client page also has a **Leads** card (stage, value, next step or the flag, "+ New lead" for
+  this client — the lead names it, so winning adds the relationship).
+- **Concurrent moves (review fix)**: every stage move sends the whole `LEAD_STAGE_FIELDS` set — stage, stage_changed_at,
+  closed_at, lost_reason, lost_note, won_client_id, won_relationship_id, what doesn't apply as null — **even fields
+  unchanged on the device** (`store.update(entity, id, fields, { send: [...] })`, an engine option added for this: listed
+  fields go out with the step whenever something does). So two devices moving one lead at once clash on all of the set
+  together, and the later move wins all of it: never "Talking" with a close date. The lead page settles a stage clash
+  as one (`StageClash`, `settleStageClashes`): **Keep <now>** (keep_winner on each) or **Use <other> instead**
+  (keep_loser on each, the stage last so "Lost" arrives after its reason); the generic panel then leaves those fields
+  out. Clashes on the set without a stage clash (two lost reasons) settle field by field as usual. Readers flag a row
+  that still doesn't add up (`leadNeedsLook`: an open stage with a close date, lost reason or won client; won with no
+  client; lost with no reason — old steps, or a field settled alone) with a "needs a look" banner on the lead page, and
+  `clientLeads` counts a lead as won into a client only while it **is** won.
+- **Won twice (review fix)**: two devices winning the same lead offline each make their win (two clients, or two
+  relationships); the lead's own fields clash and the later win is the one it names. `leadWins` finds it from the win
+  rows whose client (and relationship) are still on the device: more than one = **won twice**. Shown on the lead page and
+  on **both** clients' Leads cards (`WonTwice`, with links to each client). **Remove the extra** (needs a connection)
+  takes back each extra win (`extraWinPlan` → `removeExtraWins(engine, leadId)`, D2's undo in spirit, on the device): the
+  client it made is deleted (its account, contact, relationship and milestone go with it, hidden) only if none of them
+  was edited and nothing else was added — another account or contact, a timeline entry, a service, consent, a link, a
+  task naming them, a resold cost, an Order Manager customer, another lead; else the account it made, else the
+  relationship (and a contact it made). **"Edited" includes this device's unsent changes** (`_sync.pending` / `local`),
+  and it **syncs and re-reads before planning** (re-review fix: an offline edit to the extra client keeps it). After the
+  removals it syncs again and **re-reads each removed record**: one the server kept (edited on the other device
+  meanwhile — a delete-vs-edit clash keeps it, flagged) is reported "Kept: … was changed on the other device". A note
+  goes on a client that stays only when something was removed from it or its removal was undone, saying which (the
+  milestone is append-only). The button is **offered only when the plan removes something**; otherwise the card just
+  lists what stays and why ("tidy it by hand") — no button, so no repeated note. Then the lead's clashes are settled
+  keep_winner (the win it names). A win vs a lost (or another move) is a stage clash, settled with `StageClash`, which
+  says that using the other stage over a win leaves the client it made (for a person to judge).
+- **Value**: an amount per period; the pipeline adds **first-year value** (`firstYearValue`: once × 1, monthly × 12,
+  quarterly × 4, yearly × 1) **per currency** (never across currencies, as D6).
+
+**Screens** (all offline; writes through `store`; edits send only what changed — `leadForm` with `editChanges`, tested
+with two devices):
+- **Where it lives (decision)**: the phone's tab bar already has eight tabs, so Pipeline and Cross-sell are **tabs of the
+  Clients entry** (`CrmTabs`: Clients · Pipeline · Cross-sell, at the top of `/crm`, `/crm/pipeline`, `/crm/leads/:id`,
+  `/crm/cross-sell`) — leads become clients there, the client list and a client's leads are one tap apart, and the
+  nav's Clients link stays active on all of them. Today's card and the inbox link in too.
+- **`/crm/pipeline`**: business, whose (mine / partner's / shared) and words in the URL; wide screens (≥ 1000 px): Lead,
+  Talking, Quoted side by side, then Won this month and Lost this month; phones: a stage switch (`?stage=`, with counts)
+  shows one column. Each column: count and first-year value per currency; cards (most recently moved first, 50 at a
+  time): name, value, business, kind, client, next step (overdue in red) or **No next step**, days in the stage.
+- **`/crm/leads/:id`**: header (stage, business, kind, value, days at this stage; a current client's link; won → its
+  client; lost → reason), the stage buttons, Next step (the open tasks naming it, + Add next step), Details, the
+  timeline (Add note / Log call with a next step), RecordSync. Won… goes to the new client's page.
+- **The inbox**: an item → **Lead** (the sheet pre-filled: first line = name, the rest notes, source inbox); the item
+  is cleared with `became_entity: 'lead'` after the lead is saved, guarded like tasks (`inboxItemGuard`: sorted
+  meanwhile → nothing saved, a link to what it became); "Sorted twice" lists leads too. (`useForm` gained `guard` /
+  `onSaved` and the save-once ref for this.)
+- Tasks show "Lead: <name>" (link) in their row; the task sheet shows the lead and "Not for this lead".
+
+**The cross-sell list** (`crossSellList` + `CROSS_SELL_PAIRS` in `shared/leads.js` — the one table; the server's
+automation and the page use the same function):
+| pair | has (active) | lacks (any status) |
+|---|---|---|
+| `website-social` | GWND · website | GWND · social |
+| `social-website` | GWND · social | GWND · website |
+| `consulting-website` | Business consulting · consulting | GWND · website |
+| `website-consulting` | GWND · website | Business consulting · consulting |
+- **Who**: an **active** client's live account with an **active** relationship of the pair's "has", and **no**
+  relationship of its "lacks" (any status: an ended one is a "no thanks"). Left off while a lead for that account (or,
+  for a lead with no account, that client) and service is open, or was **lost in the last 180 days**
+  (`LOST_COOLDOWN_DAYS`). One line per account and pair.
+- **Wholesale is never in a pair** (decision): its accounts buy from us already and are age-restricted (nicotine); Save
+  Point Shop, the retail stores and Personal aren't sold this way either.
+- **The age-restricted rule, strictly**: an `age_restricted` account is never selected for a business that has **no
+  relationship (any status) with that account** — so a vape shop with only wholesale is on no list, and one that has a
+  website from GWND can be offered GWND's social media but never consulting. Its contacts follow it: a line lists only
+  the account's own contacts, plus the client's contacts with no account **only when** none of the client's
+  age-restricted accounts lacks a relationship with the selling business.
+- **Consent**: each person shows whether the **selling** business may email them (`consentStatus` for that business on
+  the day: "May email" / "No email consent" / no email). Another business's consent never counts.
+- **Tasks only, nothing sent**: automation **`cross-sell`** (`every: 'month'`, the **first workday** — Monday–Friday — of
+  each month at 8:05; **on**, **silent**): one task per selling business (archived skipped) "Cross-sell for November
+  2026: N clients for <business>", owner = the business's default owner, due that day, the list in its notes (at most
+  25 lines, then "…and N more on the Cross-sell page"; each line: client — account, why, people with "(may email)" /
+  "(no email consent: call or ask)"), and "Nothing has been sent". Key `<YYYY-MM>:<business id>`: once per month and
+  business (the scheduler again, Run now, a restart). Like every scheduled automation it catches up once in the
+  current period after downtime — so the **first start after deploying makes this month's lists** that day; a month that
+  went by entirely isn't replayed. Capped by nature (one task per business a month; notes capped).
+- **`/crm/cross-sell`**: the same list on the device's copy, grouped by pair, with the business filter; **Make a lead**
+  creates a lead for that account (name = the account, client + account, the selling business and kind, source
+  `cross_sell`, the account's contact as contact name, owner me) and opens it — the line leaves the list (open lead).
+- **`lead-no-next-step`** (daily 07:35; **off** and silent by default, like C8's no-next-step): for each flagged open lead
+  of a non-archived business, "Set the next step for <lead> (<business>)" due today for the lead's owner (else the
+  business's default owner) with `lead_id` — at most 10 a run, oldest leads first; never a second while its task is
+  open and still names the lead; finished without a real next step → the flag comes back and the next run makes one.
+- **The monthly trigger** (`schedule.js`): `{ every: 'month', at }` → period key `YYYY-MM`, day = `firstWorkday` of the
+  month (`triggerText`: "The first workday of each month at 8:05 a.m."); no "missed" runs (those are weekly only).
+
+**Not built / open**: quotes (D17, above); a lead's own attachments or emails; merging two leads; taking back a win
+of a lead now lost (by hand); a relationship two wins both restarted stays as it is; per-person pipeline
+targets (D15); the pull scope (closed leads accumulate on devices like done tasks).
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
@@ -2091,6 +2267,15 @@ Stockroom's `/orders` (B8) as tasks; per-supplier or per-product overrides; edit
   the difference limit is Stockroom's own (for new tasks; an open difference keeps its task until investigated);
   delivery tasks say how the order ended from B10's `ended` when the hub has it. Next: D15's
   stock card reads `/v1/suite/summary` through this connection.
+- **D8 (leads and the pipeline)**: done — see "Leads and the pipeline". Leads are CRM records (`lead`, own timeline
+  `lead_activity`, append-only, stage changes included) — not clients with a status: a lead may have no client yet and
+  most never become one. A lead may point at a current client (cross-sell). Winning is one offline step with ids made
+  once (client, account, contact, relationship, milestone, the lead won); a likely duplicate client is offered first.
+  "No next step" for leads has C4a's shape (`task.lead_id`). A stage move sends its whole field set so concurrent moves
+  settle consistently; a lead won twice is found from its win rows and its untouched extra taken back. The pipeline lives under the Clients nav entry (tabs), not
+  a ninth phone tab. The cross-sell pairs are one table in shared code, wholesale is never in it, and the age-restricted
+  rule is applied to accounts and their contacts; a new `every: 'month'` trigger runs it on the first workday. Quotes
+  are D17: "quoted" is set by hand. Next: D17 sets `quoted` from a sent quote and puts the quote's value on the lead.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -2105,8 +2290,8 @@ shift their counts; `startServer(t, config, { crm: true })` includes them. A res
 works with `--force`: carrying the switches is best effort (a warning, then the backup's switches) and the restored
 copy must pass `integrity_check`. Tests that depend on local time set
 `process.env.TZ = 'America/Toronto'` at the top (automations.test.js, wholesale-automations.test.js, wholesale-notes.test.js,
-costs.test.js, stockroom.test.js). automations.test.js
-switches D3's two scheduled wholesale automations and D6's two renewal reminders off in its setup (they're on by default)
+costs.test.js, stockroom.test.js, leads.test.js). automations.test.js
+switches D3's two scheduled wholesale automations, D6's two renewal reminders and D8's cross-sell list off in its setup (they're on by default)
 so its ticks stay about C8; costs.test.js switches every other scheduled automation off. The e2e `startServer(t, { extraModules })` adds
 test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager checkout>` (D1) runs the real Order
 Manager (needs `npm ci` in its `server/`) against a real suite and checks the timeline and spend against its own;

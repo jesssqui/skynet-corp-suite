@@ -7,6 +7,7 @@ import { buildClientIndex, filterClients, pickableBusinesses } from './logic.js'
 import { BusinessChip } from './parts.jsx';
 import { ClientForm } from './forms.jsx';
 import { useToday } from '../planner/parts.jsx';
+import CrmTabs from './CrmTabs.jsx';
 import './crm.css';
 
 // The client list (/crm): search and filters over the device's offline copy. The index (one row
@@ -87,6 +88,7 @@ export default function ClientListPage() {
 
   return (
     <>
+      <CrmTabs />
       <PageHeader
         title="Clients"
         subtitle={data ? `${rows.length} ${rows.length === 1 ? 'client' : 'clients'}${filtered ? ' found' : ' active'}` : ' '}

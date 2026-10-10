@@ -196,7 +196,7 @@ test('the goal_id migration on a database with C4a tasks: rows kept, old devices
   fs.mkdirSync(oldDir);
   fs.copyFileSync(path.join(planner.migrationsDir, '001_create_planner.sql'), path.join(oldDir, '001_create_planner.sql'));
   const c4a = PLANNER_ENTITIES.filter((e) => ['task', 'inbox_item'].includes(e.entity)).map((e) => {
-    const { goal_id: _drop, ...fields } = e.fields;
+    const { goal_id: _drop, lead_id: _d8, ...fields } = e.fields;
     return { ...e, fields };
   });
   const oldPlanner = {
@@ -224,7 +224,7 @@ test('the goal_id migration on a database with C4a tasks: rows kept, old devices
   const next = await startApp(t, config, { modules });
   holder.env = { ...next, users };
   const migrated = next.db.prepare("SELECT name FROM schema_migrations WHERE module = 'planner' ORDER BY name").all().map((m) => m.name);
-  assert.deepEqual(migrated, ['001_create_planner.sql', '002_goals.sql']);
+  assert.deepEqual(migrated, ['001_create_planner.sql', '002_goals.sql', '003_task_lead.sql']);
   const before = row(next.db, 'planner_tasks', kept);
   assert.deepEqual([before.title, before.due_date, before.estimate_minutes, before.goal_id], ['Renew the domain', '2026-10-09', 15, null], 'rows kept, goal_id empty');
   assert.equal(next.db.prepare('SELECT count(*) AS n FROM planner_workdays').get().n, 2);

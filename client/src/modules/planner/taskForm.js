@@ -10,7 +10,7 @@ export { editChanges, isDirty, changedFields } from '../crm/formFields.js';
 
 export const taskForm = {
   defaults: {
-    title: '', notes: '', owner: '', business_id: '', client_id: '', account_id: '', relationship_id: '', goal_id: '',
+    title: '', notes: '', owner: '', business_id: '', client_id: '', account_id: '', relationship_id: '', goal_id: '', lead_id: '',
     due_date: '', due_time: '', estimate: '', done: false, done_at: '', top: false, top_prev: '', today: '', me: 'owner',
   },
   // estimate is typed/picked as text; done and top are ticks over done_at / the person's top field.
@@ -45,6 +45,7 @@ export const taskForm = {
         account_id: v.account_id || null,
         relationship_id: v.relationship_id || null,
         goal_id: v.goal_id || null,
+        lead_id: v.lead_id || null, // D8: the lead it is the next step for (kept as it is: the sheet only shows it)
         due_date: v.due_date || null,
         due_time: v.due_date ? (v.due_time || null) : null,
         estimate_minutes: Number.isSafeInteger(estimate) ? estimate : null,

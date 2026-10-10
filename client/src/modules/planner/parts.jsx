@@ -57,7 +57,7 @@ export function TaskTick({ task, onError }) {
  * client (a deleted client is named as such), estimate, its goal (C4b) and whether it's one of
  * today's top 3.
  */
-export function TaskRow({ task, me, today, businessesById, clientsById, accountsById, goalsById, onOpen, showClient = true, showOwner = true, actions = null }) {
+export function TaskRow({ task, me, today, businessesById, clientsById, accountsById, goalsById, leadsById = null, onOpen, showClient = true, showOwner = true, actions = null }) {
   const [error, setError] = useState(null);
   const state = dueState(task, today);
   const due = dueLabel(task, today);
@@ -65,6 +65,7 @@ export function TaskRow({ task, me, today, businessesById, clientsById, accounts
   const client = task.client_id ? clientsById?.get(task.client_id) : null;
   const account = task.account_id ? accountsById?.get(task.account_id) : null;
   const goal = task.goal_id ? goalsById?.get(task.goal_id) : null;
+  const lead = task.lead_id ? leadsById?.get(task.lead_id) : null; // D8
   const done = Boolean(task.done_at);
   return (
     <li className={`planner-task${done ? ' done' : ''}`} data-task-id={task.id} data-owner={task.owner}>
@@ -88,6 +89,7 @@ export function TaskRow({ task, me, today, businessesById, clientsById, accounts
             ) : <span style={{ fontStyle: 'italic' }}>Deleted client</span>
           ) : null}
           {!showClient && account ? <span>{account.name}</span> : null}
+          {lead ? <Link to={`/crm/leads/${lead.id}`} className="planner-client-link" data-testid="task-lead">Lead: {lead.name}</Link> : null}
           {task.estimate_minutes ? <span><Icon name="clock" size={13} style={{ verticalAlign: '-2px' }} /> {formatMinutes(task.estimate_minutes)}</span> : null}
           {goal ? (
             <span className="planner-goal-tag" title={goal.kind === 'month' ? 'Month priority' : 'Week goal'}>

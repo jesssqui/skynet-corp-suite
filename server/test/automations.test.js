@@ -64,6 +64,8 @@ async function setup(t, { config = testConfig(tmpDir(t)), clock = testClock(), w
   if (!wholesale) for (const id of ['wholesale-check-in', 'wholesale-balances']) autos.setSettings(id, { enabled: false }, { actor: 'owner' });
   // D6's renewal reminders likewise (server/test/costs.test.js has them).
   for (const id of ['service-renewals', 'cost-renewals']) autos.setSettings(id, { enabled: false }, { actor: 'owner' });
+  // D8's monthly cross-sell list likewise (server/test/leads.test.js has it).
+  autos.setSettings('cross-sell', { enabled: false }, { actor: 'owner' });
   return { ...env, config, clock, users, owner, sync, make, update, remove, call, setNow, autos };
 }
 
@@ -98,7 +100,7 @@ test('triggers: checked, in plain English; periods and ISO weeks; 8:00 stays 8:0
   assert.equal(triggerText(checkTrigger({ type: 'event', event: 'order.placed' })), 'When order.placed happens');
   assert.deepEqual(['00:15', '12:00', '13:05', '23:59'].map(clockText), ['12:15 a.m.', '12:00 p.m.', '1:05 p.m.', '11:59 p.m.']);
   for (const bad of [{}, { type: 'schedule', every: 'day', at: '7:30' }, { type: 'schedule', every: 'week', day: 'friday', at: '08:00' },
-    { type: 'schedule', every: 'month', at: '08:00' }, { type: 'event', event: 'Order Placed' }, { type: 'cron' }]) {
+    { type: 'schedule', every: 'year', at: '08:00' }, { type: 'event', event: 'Order Placed' }, { type: 'cron' }]) {
     assert.throws(() => checkTrigger(bad), Error, JSON.stringify(bad));
   }
   assert.deepEqual(['2026-10-05', '2026-10-11', '2026-12-28', '2027-01-03', '2025-12-29', '2026-01-04'].map(isoWeekKey),
@@ -119,6 +121,13 @@ test('triggers: checked, in plain English; periods and ISO weeks; 8:00 stays 8:0
   const day = periodOf({ type: 'schedule', every: 'day', at: '07:30' }, new Date(at('2026-10-31 12:00')));
   assert.equal(day.nextDueAt - day.dueAt, DAY + 60 * MIN, 'Oct 31 7:30 EDT to Nov 1 7:30 EST is 25 hours');
   assert.equal(local(day.nextDueAt.getTime()), '2026-11-01 07:30');
+  // D8: monthly — the month's first workday (Nov 1 2026 is a Sunday → Mon Nov 2; Dec 1 is a Tuesday).
+  const monthly = checkTrigger({ type: 'schedule', every: 'month', at: '08:05' });
+  assert.equal(triggerText(monthly), 'The first workday of each month at 8:05 a.m.');
+  const nov = periodOf(monthly, new Date(at('2026-11-01 12:00')));
+  assert.deepEqual([nov.key, nov.start, nov.day, local(nov.dueAt.getTime()), local(nov.nextDueAt.getTime())],
+    ['2026-11', '2026-11-01', '2026-11-02', '2026-11-02 08:05', '2026-12-01 08:05']);
+  assert.equal(periodOf(monthly, new Date(at('2026-11-30 23:00'))).key, '2026-11');
 });
 
 // ---- the scheduler -------------------------------------------------------------------------------
@@ -259,7 +268,7 @@ test('switches: off skips the scheduler but Run now still works; who changed it 
   assert.equal((await env.call('POST', '/api/automations/probe-off/run', {}, { session: null })).status, 401);
   const list = await env.call('GET', '/api/automations');
   assert.deepEqual(list.body.automations.map((a) => a.id),
-    ['friday-review', 'no-next-step', 'wholesale-check-in', 'wholesale-balances', 'wholesale-ready-to-ship', 'wholesale-follow-ups', 'wholesale-auto-link',
+    ['friday-review', 'no-next-step', 'lead-no-next-step', 'cross-sell', 'wholesale-check-in', 'wholesale-balances', 'wholesale-ready-to-ship', 'wholesale-follow-ups', 'wholesale-auto-link',
       'service-renewals', 'cost-renewals',
       'stockroom-reorders', 'stockroom-spot-check', 'stockroom-deliveries', 'stockroom-differences', 'probe-off']);
   assert.equal(list.body.timeZone, 'America/Toronto');

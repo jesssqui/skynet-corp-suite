@@ -144,6 +144,7 @@ export default function TasksPage() {
               today={today}
               businessesById={data.businessesById}
               clientsById={data.clientsById}
+              leadsById={data.leadsById}
               accountsById={data.accountsById}
               goalsById={data.goalsById}
               onOpen={(task) => setSheet({ record: task })}

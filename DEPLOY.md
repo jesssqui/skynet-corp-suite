@@ -432,6 +432,27 @@ never calls the Mac.
    be read (the card says so). In Stockroom use *Make a new secret* (or Connect the suite again) and paste the new code
    here (step 2).
 
+## 10. Leads and the pipeline (D8)
+
+Nothing to set up. After this version starts:
+
+- **Where**: **Clients** → the **Pipeline** and **Cross-sell** tabs at the top (no new tab on the phone's bar). **New lead**
+  on the Pipeline; an inbox item → **Lead**; a client's page → *Leads* → **New lead** (for that client: winning it adds the
+  service there).
+- **Every open lead wants a dated next step**: one without an open task with a day shows **No next step** on the
+  Pipeline, on its page and in Today's *No next step* card. *Log call* / *Add note* on a lead can set the next step in
+  the same save. To get a task made for each such lead every morning, switch on **System → Automations → Leads with no
+  next step** (off by default; at most 10 a day).
+- **Won…** makes the client, its account, the contact and the relationship (offline too) and shows the client; if a
+  likely client is already here (same email or phone, similar name) the sheet offers *Add to …* instead. **Lost…** asks
+  why. **Quoted** is set by hand for now (quotes come later).
+- **The monthly cross-sell list**: on the first workday of each month at 8:05 each business that could sell more gets one
+  task on its default owner's Today with the list in its notes (nothing is sent). **At the first start of this version**
+  (about 15 seconds after it) this month's lists are made at once. Wholesale accounts (age-restricted) are never listed for
+  a business that doesn't already work with them. The **Cross-sell** tab shows the same list live, with **Make a lead**.
+  To switch it off or get an alert: **System → Automations → Monthly cross-sell list**.
+- Devices need nothing (no *Download everything again*): leads are new record types and arrive with the next sync.
+
 ## Troubleshooting
 
 Offline:

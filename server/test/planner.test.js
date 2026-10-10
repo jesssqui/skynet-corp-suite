@@ -80,7 +80,7 @@ test('the planner registers task, inbox_item, goal and workday with sync: fields
   }
   assert.deepEqual(
     Object.fromEntries(Object.entries(by.task.fields).filter(([, f]) => f.ref).map(([k, f]) => [k, f.ref])),
-    { business_id: 'business', client_id: 'client', account_id: 'account', relationship_id: 'relationship', goal_id: 'goal' },
+    { business_id: 'business', client_id: 'client', account_id: 'account', relationship_id: 'relationship', goal_id: 'goal', lead_id: 'lead' },
   );
   assert.deepEqual(by.task.fields.due_date, { type: 'date' });
   assert.deepEqual(by.task.fields.due_time, { type: 'text', max: 5 });

@@ -16,6 +16,9 @@ import {
   OWNERS, CLIENT_STATUSES, RELATIONSHIP_KINDS, RELATIONSHIP_STATUSES, SERVICE_STATUSES, SERVICE_BILLING,
   SERVICE_PERIODS, ACTIVITY_TYPES, CONTACT_CHANNELS, CONSENT_KINDS, LINK_MATCHED_BY, LINK_APPS,
 } from '@suite/shared/crm';
+import {
+  LEAD_STAGES, LEAD_SOURCES, LOST_REASONS, LEAD_ACTIVITY_TYPES, LEAD_VALUE_PERIODS,
+} from '@suite/shared/leads';
 
 const NOTES = { type: 'text', max: 20_000 };
 const TAGS = { type: 'text', max: 1000, format: 'tags' };
@@ -149,6 +152,62 @@ export const CRM_ENTITIES = [
       matched_by: { type: 'enum', values: LINK_MATCHED_BY, required: true },
       // D2: why it was made, in a few words ("same email", "same phone", "similar name") — shown beside it.
       match_reason: { type: 'text', max: 200 },
+    },
+  },
+  {
+    // D8: someone who might become a client (or a current client who might take another service —
+    // client_id set). Moves lead → talking → quoted → won | lost; winning makes (or reuses) the client,
+    // account and relationship and records them here. Delete is for mistakes; lost is the normal end.
+    entity: 'lead',
+    table: 'crm_leads',
+    ops: ['create', 'update', 'delete'],
+    fields: {
+      name: { type: 'text', max: 200, required: true }, // their business (or the person, when there is no business)
+      contact_name: { type: 'text', max: 200 },
+      email: { type: 'text', max: 254, format: 'email' },
+      phone: { type: 'text', max: 20, format: 'phone' },
+      source: { type: 'enum', values: LEAD_SOURCES },
+      business_id: { type: 'id', ref: 'business', parent: true, required: true }, // which of ours it is for
+      kind: { type: 'enum', values: RELATIONSHIP_KINDS }, // what we'd do for them (as relationships say)
+      stage: { type: 'enum', values: LEAD_STAGES, required: true },
+      lost_reason: { type: 'enum', values: LOST_REASONS }, // required with stage lost (checkLead)
+      lost_note: { type: 'text', max: 500 },
+      value_cents: { type: 'integer' }, // estimated amount per value_period
+      value_period: { type: 'enum', values: LEAD_VALUE_PERIODS },
+      currency: { type: 'text', max: 3 }, // three capital letters; null = CAD
+      owner: { type: 'enum', values: OWNERS }, // whose lead (optional; screens default to the maker)
+      notes: NOTES,
+      // A current client (cross-sell): winning adds a relationship there instead of a new client.
+      // Plain refs: deleting that client never hides the lead.
+      client_id: { type: 'id', ref: 'client' },
+      account_id: { type: 'id', ref: 'account' },
+      // What winning made or reused.
+      won_client_id: { type: 'id', ref: 'client' },
+      won_relationship_id: { type: 'id', ref: 'relationship' },
+      stage_changed_at: { type: 'datetime' },
+      closed_at: { type: 'datetime' }, // when it was won or lost (null while open)
+    },
+  },
+  {
+    // D8: a lead's own timeline — notes, calls, emails, meetings, and each stage change (append-only,
+    // like activities; not the CRM's `activity`, which needs a client the lead may not have yet). Once
+    // the lead is won, the client page shows these with its own activities.
+    entity: 'lead_activity',
+    table: 'crm_lead_activities',
+    appendOnly: true,
+    fields: {
+      lead_id: { type: 'id', ref: 'lead', parent: true, required: true },
+      type: { type: 'enum', values: LEAD_ACTIVITY_TYPES, required: true },
+      body: { type: 'text', max: 20_000 },
+      stage_from: { type: 'enum', values: LEAD_STAGES },
+      stage_to: { type: 'enum', values: LEAD_STAGES },
+      at: { type: 'datetime', required: true },
+      // A win's own record (stage row → won): the client and relationship it went to, and what it made
+      // ("client:<id> account:<id> contact:<id> relationship:<id> activity:<id>", "restarted:relationship:<id>")
+      // — so a lead won on two devices at once can be found and its extra win taken back (D8 review).
+      won_client_id: { type: 'id', ref: 'client' },
+      won_relationship_id: { type: 'id', ref: 'relationship' },
+      won_made: { type: 'text', max: 2000 },
     },
   },
 ];

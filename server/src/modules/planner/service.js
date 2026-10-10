@@ -9,6 +9,7 @@ import {
 import { ACTORS } from '@suite/shared/actors';
 import { PLANNER_ENTITIES } from './entities.js';
 import { registerPlannerAutomations } from './automations.js';
+import { registerLeadAutomations } from './leadAutomations.js';
 
 /**
  * Rules for a task step that are right in any arrival order: they look only at the step's own
@@ -102,7 +103,10 @@ export function createPlannerService({ db, services, log }) {
       WHERE deleted_at IS NULL AND done_at IS NULL AND due_date IS NOT NULL AND due_date < ?`),
     relTasks: db.prepare(`SELECT id, relationship_id, due_date, done_at FROM planner_tasks
       WHERE deleted_at IS NULL AND done_at IS NULL AND relationship_id IS NOT NULL`),
-    task: db.prepare('SELECT id, deleted_at, done_at, relationship_id, client_id, account_id, title, due_date, notes FROM planner_tasks WHERE id = ?'),
+    task: db.prepare('SELECT id, deleted_at, done_at, relationship_id, client_id, account_id, lead_id, title, due_date, notes FROM planner_tasks WHERE id = ?'),
+    // D8: open tasks naming a lead (its "no next step" rule).
+    leadTasks: db.prepare(`SELECT id, lead_id, due_date, done_at FROM planner_tasks
+      WHERE deleted_at IS NULL AND done_at IS NULL AND lead_id IS NOT NULL`),
     feed: db.prepare(`SELECT id, title, owner, business_id, due_date, due_time, estimate_minutes, created_at, updated_at
       FROM planner_tasks
       WHERE deleted_at IS NULL AND done_at IS NULL AND due_date IS NOT NULL
@@ -149,6 +153,8 @@ export function createPlannerService({ db, services, log }) {
     overdueCount: (today) => q.overdue.get(today).n,
     /** Open tasks that name a relationship (for C4a's "no next step" rule on the server). */
     openRelationshipTasks: () => q.relTasks.all(),
+    /** D8: open tasks that name a lead (for leadsWithoutNextStep on the server). */
+    openLeadTasks: () => q.leadTasks.all(),
     /**
      * C6a (the task calendar feed): open, live tasks with a due date from `from` to `to`
      * ("YYYY-MM-DD", both included) that are this person's (`owner`: owner | partner) or the shared
@@ -173,12 +179,14 @@ export function createPlannerService({ db, services, log }) {
       const live = t.deleted_at === null;
       return {
         live, open: live && t.done_at === null, relationshipId: t.relationship_id, title: t.title, dueDate: t.due_date,
-        notes: t.notes, doneAt: t.done_at, clientId: t.client_id, accountId: t.account_id,
+        notes: t.notes, doneAt: t.done_at, clientId: t.client_id, accountId: t.account_id, leadId: t.lead_id,
       };
     },
   };
 
   // C8: the Friday review list and "no next step" (when the automations module is registered).
   if (services.automations) registerPlannerAutomations({ automations: services.automations, crm: services.crm, planner: service, services });
+  // D8: leads with no next step, and the monthly cross-sell list.
+  if (services.automations) registerLeadAutomations({ automations: services.automations, crm: services.crm, planner: service });
   return service;
 }
