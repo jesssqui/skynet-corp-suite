@@ -93,7 +93,7 @@ function ConnectionCard({ c, me, offline, onSwitch, busy, onChanged }) {
 export default function ConnectionsPage() {
   const { session } = useAuth();
   const me = session?.user?.actor;
-  const { data, error, loading, offline, reload, replace } = useServerData('/api/connections');
+  const { data, error, loading, offline, reload, replace, checking, checkAgain } = useServerData('/api/connections');
   const [busy, setBusy] = useState(null);
   const [problem, setProblem] = useState(null);
 
@@ -117,7 +117,7 @@ export default function ConnectionsPage() {
       <PageHeader
         title="Connections"
         subtitle="Everything the suite talks to, and how it is doing"
-        actions={<Button onClick={reload} disabled={loading}>Check again</Button>}
+        actions={<Button onClick={checkAgain} disabled={loading || checking}>{checking ? 'Checking…' : 'Check again'}</Button>}
       />
       {offline ? (
         <Notice tone="warn" style={{ marginBottom: 'var(--space-4)' }}>
