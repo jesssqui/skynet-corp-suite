@@ -448,8 +448,11 @@ function capturingLog(lines = []) {
 }
 
 test('a feed that fails answers 503 and logs nothing of its token; the app’s error handler redacts feed paths too', async (t) => {
-  assert.equal(redactPath('/api/calendar/feed/AbC_-123.ics?x=1'), '/api/calendar/feed/[link]?x=1');
-  assert.equal(redactPath('/api/crm/clients?q=1'), '/api/crm/clients?q=1');
+  assert.equal(redactPath('/api/calendar/feed/AbC_-123.ics?x=1'), '/api/calendar/feed/[link]?…');
+  assert.equal(redactPath('/api/crm/clients'), '/api/crm/clients');
+  // D13: no query string reaches the log (a client's name in a search, eBay's sign-in code).
+  assert.equal(redactPath('/api/crm/clients?q=Pat%20Lefty'), '/api/crm/clients?…');
+  assert.equal(redactPath('/ebay/accepted?state=s&code=v%5E1.1'), '/ebay/accepted?…');
   assert.equal(redactPath('/API/Calendar/FEED/AbC_-123.ics'), '/API/Calendar/FEED/[link]', 'routing is case-insensitive, so is redaction');
   const config = testConfig(tmpDir(t), { CALENDAR_TIME_ZONE: ZONE });
   const db = openDb(config.dbPath);

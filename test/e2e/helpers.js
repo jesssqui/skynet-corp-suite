@@ -26,14 +26,15 @@ export async function shot(page, name, { fullPage = true } = {}) {
 /**
  * A server on a copy of the built client (so a test can change the files under it), with a proxy
  * in front: `base` is the proxy's address, `direct` the server's; `outage()` / `restored()` cut and
- * restore the proxy. `extraModules`: test-only modules beside syncdemo (e.g. the conndemo connection).
+ * restore the proxy. `extraModules`: test-only modules beside syncdemo (e.g. the conndemo connection); `env`: extra
+ * settings (D13: the fake eBay's address).
  */
-export async function startServer(t, { extraModules = [] } = {}) {
+export async function startServer(t, { extraModules = [], env: settings = {} } = {}) {
   assert.ok(fs.existsSync(path.join(DIST, 'sw.js')), 'build the client first (npm run build)');
   const dir = tmpDir(t, 'suite-e2e-');
   const dist = path.join(dir, 'dist');
   fs.cpSync(DIST, dist, { recursive: true });
-  const config = testConfig(dir, { CLIENT_DIST: dist });
+  const config = testConfig(dir, { CLIENT_DIST: dist, ...settings });
   const env = await startApp(t, config, { modules: [...modules, syncdemo, ...extraModules] });
   const users = await ensureTestUsers(env.ctx);
   const proxy = await startProxy(env.base);

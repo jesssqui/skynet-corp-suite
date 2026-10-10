@@ -49,9 +49,11 @@ export function offsetZone(hours) {
 
 /**
  * "YYYY-MM-DD" in a time zone: an IANA name, or a fixed offset "+05:30" (counted from its minutes, no DST); null = this
- * machine's zone. Invalid zone → this machine's zone.
+ * machine's zone. Invalid zone → this machine's zone. Invalid date → null.
  */
 export function localDateIn(timeZone, date = new Date()) {
+  // An invalid Date has no day (it used to recurse forever through the fallback below): null.
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
   const m = OFFSET_RE.exec(timeZone ?? '');
   if (m) {
     const minutes = (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3]));

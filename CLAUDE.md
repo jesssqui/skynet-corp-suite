@@ -37,7 +37,10 @@ relationship, and the monthly cross-sell list of current clients who could use a
 **D12** the WooCommerce stores, read-only (module `sales`: the shared daily sales totals every sales source writes, with
 the Money → Sales tab; module `woocommerce`: each retail store connected with its own read-only REST key on System →
 Connections, its Analytics → Revenue totals read hourly with a 13-month backfill, and live order lookups that store
-nothing).
+nothing), and from **D13** eBay totals (module `ebay`: Save Point Shop's eBay account signed in once with OAuth,
+read-only, its orders read hourly into the same daily totals with a 13-month backfill, its orders waiting to ship as
+tasks with no buyer details; and in `sales`, a month's total entered by hand that fills the eBay card while eBay isn't
+connected).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -144,6 +147,12 @@ server/src/
                            storeKey, parseKeys, WooError), service.js (stores: add/verify/replaceKey/update/remove; pulls:
                            window + backfill + backoff + startPuller; lookups + orderView; the 'woocommerce' and 'woo-<id>'
                            Connections rows; the sales source), routes.js (/api/woocommerce/stores…), migrations/001
+                           (D13 in sales: migrations/002_manual_months.sql, putManualMonth/deleteManualMonth/months/monthly)
+  modules/ebay/            D13: client.js (getOrders GETs + the token endpoint's POST only; parseKeyset, consentUrl,
+                           codeFromUrl, SCOPES), figures.js (pure: orderFigures, refundFigures, dayRows, zoneMidnightUtc,
+                           shipView, shipEndedWhy), service.js (keyset, sign-in with state, tokens, pulls + backfill +
+                           backoff + startPuller, the 'ebay' Connections row, the sales source), plans.js + automations.js
+                           (ebay-orders-to-ship, ebay-sign-in), routes.js (/api/ebay…), migrations/001_create_ebay.sql
   backup/                  backup.js, restore.js (D5: runs this version's migrations on the restored copy, then
                            carryKeptTables: modules' keepOnRestore), schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file), redact.js (C6a), sealed.js (D16: AES-GCM
@@ -158,7 +167,8 @@ server/test/               node --test; helpers.js: tmpDir/testConfig/startApp/t
                            followUpChanged), wom-captured-events.json = a real Order Manager's events and (D5)
                            wom-captured-notes.json its A11 events (scripts/wom-e2e.mjs --capture); fixtures/stockroomHub.js =
                            a fake Stockroom implementing B5's read-only API (D16); fixtures/wooStore.js = a fake
-                           WooCommerce (index, currency, Analytics → Revenue worked out from its orders, orders, tracking; D12)
+                           WooCommerce (index, currency, Analytics → Revenue worked out from its orders, orders, tracking; D12);
+                           fixtures/ebayFake.js = a fake eBay (token endpoint, getOrders with filters and pages; D13)
 client/src/
   main.jsx, App.jsx        providers + router built from the module list, behind AuthGate and SyncProvider;
                            main.jsx registers the service worker (production builds)
@@ -199,6 +209,9 @@ client/src/
   modules/woocommerce/     D12: no page — HubPanel.jsx ("WooCommerce stores" card: Add a store), StorePanel.jsx (each
                            store's card: Pull now, rename / business, replace the key, remove; the 'woo-*' prefix panel),
                            logic.js (storeIdOf, businessChoices, the key steps and the read-only note)
+  modules/ebay/            D13: ConnectionPanel.jsx (the eBay card: keyset, Sign in to eBay, the pasted address, zone,
+                           Pull now, Forget), AcceptedPage (/ebay/accepted: where eBay sends the browser back), logic.js
+                           (client/test/ebay.test.js); the sales module's EbayPage (/costs/sales/ebay: months + entry by hand)
   modules/wholesale/       D1: WholesalePage (/wholesale: waiting for a client / linked; lazy), ConnectionPanel.jsx (the
                            wom card's address + secret, via connections/panels.js; lazy), parts.jsx (timeline rows,
                            account and client figures on the client page; D3: QuietRegularBadge; D5: note rows, the
@@ -308,8 +321,9 @@ One folder per module on each side, same name on both (`server/src/modules/healt
   "Check in with …"), so those appear in Apple Calendar on the phone and the Mac, including the lock screen and
   notifications. Notes, contacts, clients' details and everything else are not sent. **The token never reaches a log**:
   the feed handler catches its own errors (503, logged without the path), and app.js's error handler and its 404
-  message pass paths through `redactPath` (`server/src/lib/redact.js`: `/api/calendar/feed/[link]`); add any future
-  request logging through it too.
+  message pass paths through `redactPath` (`server/src/lib/redact.js`: `/api/calendar/feed/[link]`; since D13 it also
+  drops **every query string** — "?…" —, so a search for a client's name, an email or eBay's sign-in code on
+  `/ebay/accepted?code=…` never reaches the log); add any future request logging through it too.
 - **Outbound connections** — the only calls the server makes to anything outside (nothing calls in except the Order
   Manager's signed outbox, D1); each is read-only by construction (one client per module, method fixed to GET, no body,
   a path allowlist, redirects not followed — proved by tests), HTTPS only, with its secret encrypted with its own key
@@ -322,7 +336,13 @@ One folder per module on each side, same name on both (`server/src/modules/healt
     Order lookups are answered to the person and **never stored or logged** (no customer data in the suite from the
     stores — they sell age-restricted products, so nothing from them may ever feed a marketing list: the CRM's
     age rule, "Age-restricted" under "CRM"); the totals are totals only.
-  Nothing else in the suite calls out. (D13's eBay calls will join this list.)
+  - **eBay** (D13): `https://api.ebay.com` only — GETs of `/sell/fulfillment/v1/order` (getOrders) with the seller's
+    access token, and the one POST there is: `/identity/v1/oauth2/token` (a code or the refresh token for an access
+    token; OAuth needs it, and nothing else is ever POSTed). The consent page (`auth.ebay.com`) is opened by the
+    person's browser, not the server. Scope `sell.fulfillment.readonly` only. Key file `ebay-secret.key` (the Cert ID
+    and the refresh token; the access token stays in memory). No buyer details are kept (no username, name, address,
+    email or phone): totals, and for orders to ship only their id, items, total and ship-by date.
+  Nothing else in the suite calls out.
 - **No HSTS** (helmet's is off): browsers apply it to the whole ts.net hostname on every port, which would force the
   Order Manager's plain-http port on the same Mac to https. Tailscale Serve already makes the suite HTTPS-only.
 
@@ -2249,10 +2269,35 @@ one table — D12's WooCommerce stores now, **D13's eBay next** (source `ebay`),
   `GET /api/sales/totals?from&to&business&store&source`.
 - **Screens (placement decision)**: the phone tab bar keeps eight tabs — the **Costs** entry became **Money**, with tabs
   Costs · Sales (`MoneyTabs`). `/costs/sales`: all stores together, per business (when more than one), each store's card
-  (net sales and orders today / this week / this month, last updated, its day and zone, state: paused / failing / not
-  read / removed) and a line on what net sales means. `/costs/sales/woo/:id`: the store's totals and the **order lookup**
-  (see below). Headline figure = Analytics' **Net sales** (gross − coupons − returns, before tax and shipping). Plain on
+  (total sales and orders today / this week / this month, last updated, its day and zone, state: paused / failing / not
+  read / removed) and a line on what the figure means. `/costs/sales/woo/:id`: the store's totals and the **order lookup**
+  (see below). Headline figure (**D13 decision**, changed from D12's net sales): **Total sales** — items, shipping and
+  tax, after discounts and refunds — the one figure WooCommerce Analytics and eBay's Seller Hub both call Total sales
+  and the only one a month entered by hand has, so cards and the all-stores total compare like with like. Plain on
   purpose: D15's overview is where sales meet costs and goals.
+- **Months entered by hand** (D13; `sales_manual_months`, migration 002): for a store whose connection is off or not
+  set up — eBay's card names `manualStore: 'ebay'` (`registerSource({ manualStores: ['ebay'], stores: () => [{ …,
+  manualStore }] })`). A month = { total cents, currency, orders?, note? } (Seller Hub's Total sales); store `ebay`,
+  source `manual`. It **fills the same card**: `summary()`'s `month` for that store is the hand-entered month whenever
+  the connection's own days don't count for it (`monthFromManual: true`, `manualEntry`), and it adds into per-business
+  and all-stores totals the same way; today / this week stay real only. **When the connection's days count**
+  (`realWins`): it has days in that month **and** either it is reading now (the store's `delivering`: eBay on, not read
+  yet, or **failing for a while — that still counts as reading**, so a month doesn't flip to the hand entry during an
+  outage; sources that don't say count as reading) **or** it has every day of the month so far (`covered`, to the
+  store's today). So a month eBay **stopped reading part way** — signed out by eBay, switched off or forgotten
+  mid-month — can be entered by hand and counts (review fix; `months()` marks it `partial`, the page says "Read in part
+  from eBay"), until eBay's days count for it: then **its figure wins**, and (re-check fix, migration 003) the entry is
+  **marked replaced for good** (`replaced_at`, set by `putDays` the first time the store's own days count for that
+  month) — it never counts again, even if eBay later stops reading (paused, signed out) and the month is only part
+  read: the card, `months()` and `monthly()` then show eBay's days ("read in part"). **Saving the month again by hand**
+  clears the mark (a person's newer figure counts again while eBay's days don't). Entering a month whose days count is
+  refused (409 `has_data`) — after a Forget too, for a month eBay read completely (no double count); future months
+  refused. Never both: `summary`, `months` and `monthly` all decide with `manualCounts` (not replaced, and the store's
+  days don't count).
+  **Server data, not synced** (like the totals): entering one needs a connection to the suite. Not kept across
+  restores (data, rolled back with the rest). API: `GET /api/sales/manual/:store` (13 months: real, manual, shown,
+  replaced), `PUT|DELETE /api/sales/manual/:store/:month`; `totals()` stays days only, and **D15 reads
+  `sales.monthly({ fromMonth, toMonth })`** (`GET /api/sales/monthly`): per store and month, real or `from: 'manual'`.
 
 ## WooCommerce stores (woocommerce module, D12)
 Code `server/src/modules/woocommerce/` (`client.js`, `service.js`, `routes.js`, migration `001_create_woocommerce.sql`),
@@ -2335,6 +2380,120 @@ client `client/src/modules/woocommerce/` (the Connections panels) + the sales pa
   `wc_order_stats`; DEPLOY.md step 11 checks one week by hand), hosts that strip the `Authorization` header (some
   Apache/CGI setups — the key check then fails with "refused the key"), Analytics' cache under `force_cache_refresh`,
   and real shipment-tracking plugins.
+
+## eBay (ebay module, D13)
+Code `server/src/modules/ebay/` (`client.js`, `figures.js`, `service.js`, `plans.js`, `automations.js`, `routes.js`,
+migration `001_create_ebay.sql`), client `client/src/modules/ebay/` (the Connections panel, `/ebay/accepted`) + the sales
+module's `/costs/sales/ebay`; tests `server/test/ebay.test.js` (TZ Toronto, against `server/test/fixtures/ebayFake.js`),
+`client/test/ebay.test.js`, `client/test/sales.test.js`, `test/e2e/ebay.e2e.test.js`. Registered last (after sales,
+connections and the planner). Save Point Shop (business `save_point`, default owner partner) sells on eBay only (ebay.ca
+store "thesavepointshop").
+- **The keyset**: App ID (Client ID), Cert ID (Client Secret) and RuName from the owner's eBay developer account
+  (Application Keys → **Production**; User Tokens → the RuName), on System → Connections → eBay. The Cert ID is sealed
+  (AES-256-GCM, `lib/sealed.js`, key file `config.ebay.keyFile` = `<data>/ebay-secret.key`, `EBAY_KEY_FILE`) and never
+  shown again; the App ID and RuName are kept as they are (not secret: they are in the consent page's address). A
+  Sandbox App ID is refused. A new keyset ends the sign-in (a refresh token belongs to its App ID). `ebay_connection` and
+  `ebay_changes` are **keepOnRestore**.
+- **Scopes (decision: the minimum)**: only `https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly` — getOrders
+  (orders, their totals, refunds, cancellations, ship-by dates) accepts it, and it is enough for both jobs. Not asked:
+  `sell.finances` (payouts — a different figure — and eBay has **no read-only finances scope**: it is "view and manage …
+  initiate refunds"), `sell.analytics.readonly` (traffic reports have no sales amounts), `commerce.identity.readonly`
+  (the account name comes from the orders' `sellerId`).
+- **The sign-in** (OAuth authorization code grant): *Sign in to eBay* → the server makes a random `state` (32 bytes;
+  only its SHA-256 kept in `ebay_sign_ins`, **30 minutes, used once**) and the consent address
+  (`auth.ebay.com/oauth2/authorize?client_id&redirect_uri=<RuName>&response_type=code&scope&state`), which the browser
+  opens. After "I agree" eBay sends the browser to the RuName's **accept URL** (eBay requires https) with `code`,
+  `state`, `expires_in` (the code lasts ~5 minutes, once). **Two ways back**, both checked against the state: (1) the
+  accept URL is the suite's own page `https://<ts.net address>/ebay/accepted` (once Tailscale Serve is on) — a public
+  app shell route whose page takes the code and state out of the address and posts them with the session (`POST
+  /api/ebay/sign-in/finish`; a cross-site redirect carries no SameSite=Strict cookie, so the server never takes the code
+  on a GET); (2) **no inbound route needed**: the accept URL is any https page (or the ts.net address before Serve is
+  on, so the browser shows an error), and the person copies the whole address from the browser and pastes it on the
+  card. Then: `POST api.ebay.com/identity/v1/oauth2/token` (Basic App ID:Cert ID, `grant_type=authorization_code`,
+  the code — decoded once from the address, encoded once in the form — and `redirect_uri` = the RuName). The **refresh
+  token** (~18 months, `refresh_token_expires_in` 47,304,000 s) is sealed with its expiry; the **access token** (2 h) is
+  kept **in memory only** and renewed with `grant_type=refresh_token` (+ the scope) when under 5 minutes are left or a
+  read answers 401 (once). eBay refusing the refresh token (`invalid_grant`: lapsed, taken back) → **signed out**: no
+  more calls until a new sign-in; the card and Connections row say so.
+- **Remind before it lapses**: automation **`ebay-sign-in`** (daily 08:10; on, silent): **one** task "Sign in to eBay
+  again before <day>" for Save Point Shop's default owner 30 days before the refresh token lapses (due a week before;
+  key `lapse:<day>`), or at once "Sign in to eBay again: the suite’s eBay connection stopped" when eBay refused it (key
+  `signed-out:<when>`); finished by the next sign-in ("Signed in to eBay again on …").
+- **What "eBay's own figure" is (decision)**: **Seller Hub → Performance → Sales, "Total sales" for a calendar month.**
+  eBay's definition (as shown in Seller Hub, quoted on eBay's community; not in the API docs): "Includes item price,
+  shipping and handling paid by buyers to you, taxes and government fees such as recycling fees. Returns and canceled
+  transactions are reflected." The suite builds it from **getOrders** (`fieldGroups=TAX_BREAKDOWN`, so eBay-collected
+  tax is in `pricingSummary.total` and `tax`): an order counts on the day it was **created** (`creationDate`, UTC → the
+  shop's zone) unless **cancelled** (`cancelStatus.cancelState` CANCELED — the order *and* its refunds are left out) or
+  **unpaid** (`orderPaymentStatus` PENDING / FAILED); its row: gross = `priceSubtotal`, discounts = what `priceDiscount` +
+  `adjustment` took off, shipping = `deliveryCost` + `deliveryDiscount`, tax = `tax`, total = `pricingSummary.total`,
+  items = Σ `lineItems[].quantity`. Each refund (`paymentSummary.refunds[]` with `refundStatus` REFUNDED; the line
+  items' `refunds[]` only when the order has none, so none is counted twice) counts **on its `refundDate`**, negative:
+  refunds = its `amount` — which eBay says is the seller's net, **without eBay-collected tax** — and the tax refunded
+  with it **estimated** in proportion (order tax × refund ÷ (order total − order tax), at most the order's tax); total
+  −= refund + that tax. net = total − tax − shipping on every row (WooCommerce's identity). Not used: the Finances API
+  (net payouts after fees — another figure) and the Analytics API (no sales amounts).
+  **Unconfirmed** (no real account here): that Seller Hub's Total sales includes eBay-collected tax for ebay.ca sales
+  (the definition says taxes are included); the day a cancelled order leaves Seller Hub's figure (here: entirely, from
+  its creation day); that refunds count on the refund day there; the enum values `REFUNDED`, `CANCELED`, `PENDING`,
+  `FAILED`, `FULLY_REFUNDED` (eBay's enum pages weren't reachable; the OpenAPI spec gives the fields, not every value);
+  and which **zone** Seller Hub's months use. **Zone decision**: the shop's days are counted in a zone set on the card,
+  **America/Toronto** by default (`EBAY_TIME_ZONE`; the business is in Ontario); DEPLOY.md step 12 compares one month,
+  and if eBay's day boundaries turn out to be Pacific time, set the card to America/Los_Angeles (changing it re-reads
+  the 13 months in the new zone).
+- **Totals**: `sales.putDays({ source: 'ebay', store: 'ebay', business save_point })`. **The store key is a constant
+  per connection** (review fix): `ebay` for the account's main currency, `ebay <CUR>` for another — **never the
+  seller's username**, which eBay lets a seller change (the new name would have started a second 13 months of days
+  beside the first, and a month entered by hand could have counted against the old key's real days). The username
+  (`sellerId` from the orders) is only a label (`info().account`, the card's `account`). Months entered by hand use the
+  same key (`ebay`). **Currency**: each order's own (`pricingSummary.total.currency`); eBay.ca orders are CAD; an order in
+  another currency (a listing on another marketplace) goes to `ebay USD` and its own card ("Save Point Shop (eBay,
+  USD)") — never added to CAD.
+- **Pulls**: the puller (`startPuller`, `EBAY_PULL_ENABLED`, on in production) looks once a minute and reads when due:
+  every `EBAY_PULL_EVERY_MIN` (60) minutes, getOrders `creationdate:[<window start>..]` **and**
+  `lastmodifieddate:[<window start>..]` (refunds and cancellations of older orders), 200 a page (`limit` max; `offset`
+  until `total`), merged by orderId (latest `lastModifiedDate` wins). **Window = 90 days** (`WINDOW_DAYS`; also getOrders'
+  default reach); **backfill** once: back to the **1st of the month 13 months ago** (`BACKFILL_MONTHS`; getOrders goes
+  back two years at most), in the same two reads; every day of the range written (zeros too), so a month with days is
+  "covered"; a finished backfill with days missing (a restore of an older backup) is read again. Failures back off
+  2, 4 … 60 minutes; a 401 renews the access token once; **a cancellation (or refund) more than 90 days after its order
+  isn't reflected** once the backfill is done — the hourly reads go back 90 days by creation and by last change, so an
+  order changed later than that is never read again; paused (its Connections row, `ebay`) = **no calls at all**
+  (pulls, Pull now, sign-in); switched on = read at once. After each successful read `automations.emit('ebay.pulled')`.
+- **Orders to ship** — automation **`ebay-orders-to-ship`** (event `ebay.pulled`; **on, silent**): for each order created
+  in the window and **waiting to ship** (`orderFulfillmentStatus` NOT_STARTED | IN_PROGRESS, not cancelled, paid, not
+  fully refunded) a task "Ship eBay order <orderId>: N items" for Save Point Shop's default owner (partner), due the local
+  day of its earliest `lineItemFulfillmentInstructions.shipByDate`, notes: items (quantity × title, SKU), total, ship by,
+  "(part shipped)", and the order's Seller Hub link `https://www.ebay.ca/sh/ord/details?orderid=<id>` — and the line that
+  the buyer's name and address aren't kept here. Key `order:<id>`. **Finished** when the order stops waiting, saying how
+  (`shipEndedWhy`: "Shipped on eBay", "Cancelled on eBay", "Refunded on eBay", else "No longer waiting to ship on eBay").
+  D16's rules (`plans.js`): a task a person finished or deleted is final; one the suite finished is reopened if the order
+  waits again; title, notes and due date follow the order only while still the suite's. At most **25 new a read**
+  (`SHIP_CAP`, earliest ship-by first; the rest with the next reads). **On and silent (decision)**: shipping on time is
+  the shop's job every day, so the tasks are wanted from the first read, and the task on Today is the reminder (an
+  in-app alert would repeat it); switch to alert on System → Automations. What is kept for it (`ebay_ship_orders`):
+  order id, created, statuses, ship-by, total, currency, items (title, SKU, quantity) — **no buyer details**: no username,
+  name, address, email, phone or checkout notes (a test scans every table).
+- **Nothing personal in an address that reaches a log** (the D12 review's lookup issue, checked here): every eBay route
+  with a value in it is a POST (`/sign-in/finish` takes the code and state in the body); the one GET with a code in its
+  address is the browser's `/ebay/accepted?code=…&state=…` (the app shell) — **main.jsx takes them out of the address
+  before anything renders** (`client/src/modules/ebay/acceptedParams.js`, review fix: before the sign-in screen, so they
+  never sit in the address bar or history; kept in memory and this tab's sessionStorage until the accepted page takes
+  them, once) — and `redactPath` drops query strings from every logged path. No eBay data about a buyer is ever requested by
+  number or email.
+- **Read-only by construction**: `client.js`'s `call()` is the module's one network call and allows exactly `GET
+  /sell/fulfillment/v1/order` and `POST /identity/v1/oauth2/token` (grant types authorization_code / refresh_token);
+  anything else throws before a request; no redirect followed; https only (http just for localhost, tests). Tests check
+  every request the fake saw in a full run and that the module's sources hold one `fetch`.
+- **Screens**: System → Connections → **eBay (Save Point Shop)**: state line (not set up → keyset saved → signed in as
+  <account> until <day> / signed out / failing), the keyset form (the accept URL to give the RuName, and a warning on a
+  non-https address), *Sign in to eBay* (opens eBay's page in a new tab), *Paste the address eBay showed…*, *Pull now*,
+  *Time zone…*, *New keyset…*, *Forget…* (keyset and sign-in go; totals and tasks stay). Money → Sales: the eBay card
+  (always listed: "Not connected: set it up …, or enter a month by hand"), with "Months, and entering one by hand" →
+  `/costs/sales/ebay`: the card, the last 13 months (eBay's figure / entered by hand / replaced) and the entry form.
+- **Not exercised here (no real eBay account)**: real tokens and consent pages, the real RuName redirect, Seller Hub's
+  figure itself and the unconfirmed points above, eBay's rate limits (getOrders: thousands a day; the suite makes a few
+  an hour), `offset` beyond 10,000 orders, multi-currency accounts.
 
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
@@ -2429,6 +2588,15 @@ client `client/src/modules/woocommerce/` (the Connections panels) + the sales pa
   a key's permission can't be read from WooCommerce, so the person confirms "Read"; order lookups are live and store
   nothing (first name only); Sales is a tab under Money (no ninth phone tab). Next: D13 registers source `ebay` with
   `registerSource` and writes `putDays`; D15 reads `totals`.
+- **D13 (eBay totals + manual fallback)**: done — see "eBay" and "Sales totals". OAuth authorization code with the one
+  read-only scope `sell.fulfillment.readonly`; the code comes back through the suite's `/ebay/accepted` page or a pasted
+  address (state checked either way); refresh token sealed, access token in memory; a task 30 days before the sign-in
+  lapses. The figure matched is Seller Hub's monthly **Total sales**, built from getOrders (created day in the shop's
+  zone, cancelled/unpaid out, refunds on their day with estimated tax); days into `sales_daily` (source `ebay`, store =
+  the constant `ebay` — the username is only a label —, business save_point, per currency). Orders waiting to ship are tasks (on, silent, no buyer details).
+  A month entered by hand (server data, store `ebay`) fills the card while eBay has no days for it; eBay's days win and
+  the entry is kept as replaced. The Sales headline is now Total sales for every store. Next: D15 reads
+  `sales.monthly()`; D11 reads `sales.totals()`.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -2443,8 +2611,8 @@ shift their counts; `startServer(t, config, { crm: true })` includes them. A res
 works with `--force`: carrying the switches is best effort (a warning, then the backup's switches) and the restored
 copy must pass `integrity_check`. Tests that depend on local time set
 `process.env.TZ = 'America/Toronto'` at the top (automations.test.js, wholesale-automations.test.js, wholesale-notes.test.js,
-costs.test.js, stockroom.test.js, leads.test.js, sales.test.js, woocommerce.test.js). automations.test.js
-switches D3's two scheduled wholesale automations, D6's two renewal reminders and D8's cross-sell list off in its setup (they're on by default)
+costs.test.js, stockroom.test.js, leads.test.js, sales.test.js, woocommerce.test.js, ebay.test.js). automations.test.js
+switches D3's two scheduled wholesale automations, D6's two renewal reminders, D8's cross-sell list and D13's eBay sign-in reminder off in its setup (they're on by default)
 so its ticks stay about C8; costs.test.js switches every other scheduled automation off. The e2e `startServer(t, { extraModules })` adds
 test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager checkout>` (D1) runs the real Order
 Manager (needs `npm ci` in its `server/`) against a real suite and checks the timeline and spend against its own;
@@ -2458,7 +2626,9 @@ made, 304s, then Stockroom's own actions (an order confirmed, received, cancelle
 check applied) finishing them — with how each order ended when the hub has B10 —, nothing made twice, 405 for a POST,
 and Disconnect (revoked). D12's stores are tested only against the fake WooCommerce (`fixtures/wooStore.js`: Analytics
 worked out from its orders with statuses, refunds, date types, zones and pages); the "done when" test compares a past
-week of two stores with the fake's own Analytics answer and with numbers worked out by hand. Run it against a
+week of two stores with the fake's own Analytics answer and with numbers worked out by hand. D13's eBay is tested only
+against the fake eBay (`fixtures/ebayFake.js`); its "done when" compares a past month with Seller Hub's Total sales
+worked out by hand from the fake's orders. Run it against a
 `git archive` export of the hub, never by changing the hub repo. `npm run test:e2e` runs the built app in Chromium (iPhone emulation) — run it when
 touching the engine, the service worker or the sync UI. Write a test with every module and every bug fix.
 

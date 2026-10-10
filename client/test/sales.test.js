@@ -3,18 +3,18 @@
 // connection ids → store ids, and the prefix panels on Connections.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { periodText, ordersText, stateText, updatedText, lookupQuery, orderStatus, trackingText, orderMoneyLines, addStoreProblem, backfillText } from '../src/modules/sales/logic.js';
+import { periodText, ordersText, stateText, updatedText, lookupQuery, orderStatus, trackingText, orderMoneyLines, addStoreProblem, backfillText, monthText, parseAmount, monthLine } from '../src/modules/sales/logic.js';
 import { storeIdOf, businessChoices, KEY_STEPS, READ_ONLY_NOTE } from '../src/modules/woocommerce/logic.js';
 import { registerConnectionPanel, connectionPanel } from '../src/modules/connections/panels.js';
 
 const KEY = `ck_${'0123456789'.repeat(4)}`;
 const SECRET = `cs_${'abcdef0123'.repeat(4)}`;
 
-test('periodText / ordersText: net sales per currency (never added across), orders counted', () => {
+test('periodText / ordersText: total sales per currency (never added across), orders counted', () => {
   assert.equal(periodText([]), '$0');
   assert.equal(periodText(undefined), '$0');
-  assert.equal(periodText([{ currency: 'CAD', net: 123450, orders: 3 }]), '$1,234.50');
-  assert.match(periodText([{ currency: 'CAD', net: 1000, orders: 1 }, { currency: 'USD', net: 500, orders: 2 }]), /^\$10 \+ .*5 USD$/);
+  assert.equal(periodText([{ currency: 'CAD', total: 123450, net: 1, orders: 3 }]), '$1,234.50', 'D13: total sales is the headline');
+  assert.match(periodText([{ currency: 'CAD', total: 1000, orders: 1 }, { currency: 'USD', total: 500, orders: 2 }]), /^\$10 \+ .*5 USD$/);
   assert.equal(ordersText([{ orders: 1 }]), '1 order');
   assert.equal(ordersText([{ orders: 2 }, { orders: 3 }]), '5 orders');
   assert.equal(ordersText(undefined), '0 orders');
@@ -80,4 +80,22 @@ test('storeIdOf / businessChoices / prefix panels', () => {
   assert.equal(connectionPanel('test-hub'), Hub, 'exact id first');
   assert.equal(connectionPanel('test-hub-abc'), Store);
   assert.equal(connectionPanel('test-other'), null);
+});
+
+test('D13: months — their names, amounts typed, and which figure a month shows', () => {
+  assert.equal(monthText('2026-10'), 'October 2026');
+  assert.equal(parseAmount('$1,234.56'), 123456);
+  assert.equal(parseAmount('1234'), 123400);
+  assert.equal(parseAmount('12.5'), 1250);
+  assert.equal(parseAmount('-3'), null);
+  assert.equal(parseAmount('1.234'), null);
+  assert.equal(parseAmount(''), null);
+  assert.deepEqual(monthLine({ shown: 'real', real: [{ currency: 'CAD', total: 7000 }], replaced: true }), { figure: '$70', from: 'From eBay (replaces the month entered by hand)' });
+  assert.deepEqual(monthLine({ shown: 'manual', manual: { currency: 'CAD', total: 123456, orders: 31 } }), { figure: '$1,234.56', from: 'Entered by hand · 31 orders' });
+  assert.deepEqual(monthLine({ shown: null }), { figure: '—', from: 'Nothing yet' });
+  assert.match(monthLine({ shown: 'real', partial: true, real: [{ currency: 'CAD', total: 500 }] }).from, /Read in part.*enter the month by hand/);
+  assert.match(monthLine({ shown: 'real', partial: true, replaced: true, real: [{ currency: 'CAD', total: 500 }] }).from, /replaced: save it again/);
+  assert.match(monthLine({ shown: 'manual', partial: true, manual: { currency: 'CAD', total: 900, orders: null } }).from, /Entered by hand \(eBay read it only in part\)/);
+  assert.match(stateText({ state: 'not_set_up' }).text, /enter a month by hand/);
+  assert.equal(stateText({ state: 'signed_out' }).tone, 'danger');
 });

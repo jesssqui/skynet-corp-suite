@@ -14,6 +14,7 @@ import costs from './costs/index.js';
 import stockroom from './stockroom/index.js';
 import sales from './sales/index.js';
 import woocommerce from './woocommerce/index.js';
+import ebay from './ebay/index.js';
 
 // auth comes first: app.js puts its guard in front of every route.
 // sync comes before every module that registers synced entities with it (crm, planner, …);
@@ -27,5 +28,6 @@ import woocommerce from './woocommerce/index.js';
 // stockroom (D16) after the planner and automations: it registers the 'stockroom' connection and its
 // automations make tasks.
 // sales (D12) holds the daily sales totals every source writes (woocommerce now, ebay with D13); it comes
-// before them. woocommerce (D12) after connections (each store is a row) and sales (it writes totals there).
-export const modules = [auth, health, sync, connections, automations, crm, planner, wholesale, calendar, costs, stockroom, sales, woocommerce];
+// before them. woocommerce (D12) after connections (each store is a row) and sales (it writes totals there);
+// ebay (D13) after sales and the planner (its totals go to sales, its automations make tasks).
+export const modules = [auth, health, sync, connections, automations, crm, planner, wholesale, calendar, costs, stockroom, sales, woocommerce, ebay];

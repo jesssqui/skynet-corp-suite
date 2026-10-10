@@ -413,7 +413,7 @@ test('Connections: a “WooCommerce stores” row and one row per store under it
   const b = await s.add(off);
   let list = (await s.call('GET', '/api/connections')).body.connections;
   const ids = list.map((c) => c.id);
-  assert.deepEqual(ids.slice(ids.indexOf('woocommerce')), ['woocommerce', a.connectionId, b.connectionId]);
+  assert.deepEqual(ids.slice(ids.indexOf('woocommerce'), ids.indexOf('woocommerce') + 3), ['woocommerce', a.connectionId, b.connectionId], 'the stores right under their row');
   const hub = list.find((c) => c.id === 'woocommerce');
   assert.equal(hub.state, 'always_on');
   assert.equal(hub.queueLabel, '2 stores');

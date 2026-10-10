@@ -503,6 +503,61 @@ Afterwards:
   file is gone, so each store's card says its key can't be read — make a new key in each store (step 1) and **Replace the
   key…**.
 
+## 12. eBay: Save Point Shop's sales and orders to ship (D13)
+
+The suite signs in to Save Point Shop's eBay account once (read-only: orders only) and reads its orders every hour:
+the daily **Total sales** on Money → Sales and a task for each order waiting to ship (no buyer details are kept). Until
+it is connected — or whenever it is off — a month's total can be entered by hand.
+
+**A month by hand (any time eBay isn't connected)**: Money → Sales → *Save Point Shop (eBay)* → *Months, and entering
+one by hand*. In Seller Hub: **Performance → Sales**, pick the month, copy **Total sales** (and orders if you like), save.
+It fills the eBay card for that month. Once eBay is connected and has that month, eBay's own figure counts and the
+entry is kept, shown as replaced. A month eBay read only in part before it was signed out or switched off can be
+entered by hand too (the page says "Read in part"; eBay merely failing for a while doesn't count as stopped); it counts
+until eBay's own figure for the month counts — from then on the entry stays replaced, unless you save the month again. Needs a connection to the suite.
+
+**Connecting (once)**:
+1. **Developer account** (free): sign in at **developer.ebay.com** with Save Point Shop's eBay account (or the owner's;
+   the *sign-in* in step 4 must be Save Point Shop's) → *Join* / register → accept the API licence. eBay may take a
+   day to approve a new developer account.
+2. **Production keyset**: developer.ebay.com → **Application Keys** → create an application (name it *Skynet suite*) →
+   under **Production** note the **App ID (Client ID)** and **Cert ID (Client Secret)**. (If eBay asks about Marketplace
+   Account Deletion notifications for the production keyset, choose the exemption — the suite stores no eBay user data:
+   no buyer names, addresses, emails or usernames — or follow eBay's form.)
+3. **RuName and accept URL**: Application Keys → **User Tokens** (next to the Production keyset) → *Get a Token from eBay
+   via Your Application* → **Add eBay Redirect URL**: privacy policy URL (any of our https pages), **Your auth accepted
+   URL** = `https://<the suite's ts.net address>/ebay/accepted` (step 3's address; eBay requires https). If Tailscale
+   Serve isn't on yet, enter that address anyway (or any https page): after "I agree" the browser won't open it, and you
+   paste the address it shows instead (step 4). Declined URL: the same with `/ebay/declined`. Save, and copy the
+   **RuName** (a name like `Save_Point_Shop-SavePoin-suite-abcdefgh`, not the address). Leave "OAuth enabled" on.
+4. **In the suite** (either of you): System → Connections → **eBay (Save Point Shop)** → enter the App ID, Cert ID and
+   RuName → *Save the keyset* → **Sign in to eBay**: eBay's page opens; sign in as **Save Point Shop** and agree.
+   - If the suite's page opens ("Signed in to eBay as thesavepointshop") you are done.
+   - Otherwise copy the **whole address** from the browser's address bar (it contains `code=` and `state=`), back on
+     the card choose *Paste the address eBay showed…*, paste, **Finish the sign-in** — within 5 minutes (eBay's code
+     expires; start again if it says so).
+5. Within a minute or two the card shows *Read …*, the totals back to the 1st of the month 13 months ago, and the orders
+   to ship (tasks on the partner's Today: Save Point Shop's default owner).
+
+**Check one month against Seller Hub** (after the first read):
+6. Seller Hub → **Performance → Sales** → last month → note **Total sales**.
+7. In the suite: Money → Sales → *Save Point Shop (eBay)* → *Months…*: last month's figure must match. Or, signed in, open
+   `<suite address>/api/sales/totals?from=<1st>&to=<last day>&source=ebay` — `overall[0].total` is in **cents**.
+   If it differs: a day's worth of orders at either end → eBay counts days in another zone: on the eBay card, *Time
+   zone…* → `America/Los_Angeles` (the totals are read again), and compare again; a difference about the size of the tax
+   on a refund → the suite's estimate of refunded tax (eBay's refund amounts leave out eBay-collected tax); cancelled
+   orders → Seller Hub may still show a cancelled order on its day. Note what you find (it decides which way to adjust).
+
+Afterwards:
+- The sign-in lasts about **18 months**; 30 days before it lapses a task "Sign in to eBay again before …" lands on the
+  partner's Today: Sign in to eBay again (step 4). If eBay stops accepting it earlier (a password change, access taken
+  back), the card and a task say so.
+- **Switch it off** on its card: no calls to eBay at all until it is switched on again. **Forget…** removes the keyset and
+  sign-in (totals and tasks stay); to take the access back on eBay too: eBay → Account → *Sign in and security* →
+  *Third-party app access*.
+- **After restoring the suite from a backup**: nothing to do (the connection is kept as it is now; missing totals are
+  read again). **On a new Mac with the volume lost**: the key file is gone — enter the keyset again and sign in again.
+
 ## Troubleshooting
 
 Offline:

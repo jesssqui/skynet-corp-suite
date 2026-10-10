@@ -1,10 +1,14 @@
 // The Sales page's and the store page's words (D12), no React (client/test/sales.test.js).
 import { salesMoney } from '@suite/shared/sales';
 
-/** One period's figures (a list per currency) → "$1,234.50 · 12 orders" (each currency on its own; never added). */
+/**
+ * One period's figures (a list per currency) → "$1,234.50" (each currency on its own; never added). D13: the headline
+ * is **total sales** — what each store's own report calls Total sales (WooCommerce Analytics; eBay Seller Hub): items,
+ * shipping and tax, after refunds — the one figure a month entered by hand also has.
+ */
 export function periodText(list) {
   if (!list?.length) return '$0';
-  return list.map((f) => `${salesMoney(f.net, f.currency)}${f.currency === 'CAD' ? '' : ` ${f.currency}`}`).join(' + ');
+  return list.map((f) => `${salesMoney(f.total, f.currency)}${f.currency === 'CAD' ? '' : ` ${f.currency}`}`).join(' + ');
 }
 export function ordersText(list) {
   const n = (list ?? []).reduce((a, f) => a + (f.orders || 0), 0);
@@ -19,6 +23,9 @@ export function stateText(store) {
     case 'unreadable': return { tone: 'danger', text: 'Its key can’t be read on this server: replace the key on Connections' };
     case 'not_read': return { tone: 'neutral', text: 'Not read yet' };
     case 'removed': return { tone: 'neutral', text: 'Not connected (removed): totals up to when it was' };
+    case 'not_set_up': return { tone: 'neutral', text: 'Not connected: set it up on System → Connections, or enter a month by hand' };
+    case 'not_signed_in': return { tone: 'neutral', text: 'Not signed in to eBay yet (System → Connections)' };
+    case 'signed_out': return { tone: 'danger', text: 'eBay stopped accepting the sign-in: sign in again on System → Connections' };
     default: return null;
   }
 }
@@ -85,4 +92,25 @@ export function backfillText(store) {
   if (store.backfill.error) return `Older totals: ${store.backfill.error} — tried again later, ${store.backfill.chunkDays} days at a time${store.backfill.before ? ` (back to ${store.backfill.before} so far)` : ''}`;
   if (store.backfill.before) return `Reading older totals: back to ${store.backfill.before} so far (to ${store.backfill.target})`;
   return 'Older totals not read yet';
+}
+
+/** "October 2026" for "2026-10". */
+export function monthText(month) {
+  const [y, m] = String(month).split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, 15)).toLocaleDateString('en-CA', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+
+/** "$1,234.56" / "1234.56" / "1,234" typed → cents, or null when it isn't an amount ≥ 0. */
+export function parseAmount(text) {
+  const t = String(text ?? '').trim().replace(/^\$/, '').replace(/,/g, '');
+  if (!/^\d+(\.\d{1,2})?$/.test(t)) return null;
+  return Math.round(Number(t) * 100);
+}
+
+/** One month's line on the eBay page: what counts and where it came from. */
+export function monthLine(m) {
+  if (m.shown === 'real' && m.partial) return { figure: periodText(m.real), from: `Read in part from eBay (signed out, switched off or forgotten)${m.replaced ? ' · the hand-entered month was replaced: save it again to use it' : ': enter the month by hand'}` };
+  if (m.shown === 'real') return { figure: periodText(m.real), from: m.replaced ? 'From eBay (replaces the month entered by hand)' : 'From eBay' };
+  if (m.shown === 'manual') return { figure: periodText([{ currency: m.manual.currency, total: m.manual.total }]), from: `Entered by hand${m.manual.orders !== null && m.manual.orders !== undefined ? ` · ${m.manual.orders} orders` : ''}${m.partial ? ' (eBay read it only in part)' : ''}` };
+  return { figure: '—', from: 'Nothing yet' };
 }
