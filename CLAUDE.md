@@ -2280,7 +2280,8 @@ one table — D12's WooCommerce stores now, **D13's eBay next** (source `ebay`),
   manualStore }] })`). A month = { total cents, currency, orders?, note? } (Seller Hub's Total sales); store `ebay`,
   source `manual`. It **fills the same card**: `summary()`'s `month` for that store is the hand-entered month whenever
   the connection's own days don't count for it (`monthFromManual: true`, `manualEntry`), and it adds into per-business
-  and all-stores totals the same way; today / this week stay real only. **When the connection's days count**
+  and all-stores totals the same way (its figures marked `totalOnly: true` — D13b: only total and orders are known);
+  today / this week stay real only. **When the connection's days count**
   (`realWins`): it has days in that month **and** either it is reading now (the store's `delivering`: eBay on, not read
   yet, or **failing for a while — that still counts as reading**, so a month doesn't flip to the hand entry during an
   outage; sources that don't say count as reading) **or** it has every day of the month so far (`covered`, to the
@@ -2383,7 +2384,8 @@ client `client/src/modules/woocommerce/` (the Connections panels) + the sales pa
 
 ## eBay (ebay module, D13)
 Code `server/src/modules/ebay/` (`client.js`, `figures.js`, `service.js`, `plans.js`, `automations.js`, `routes.js`,
-migration `001_create_ebay.sql`), client `client/src/modules/ebay/` (the Connections panel, `/ebay/accepted`) + the sales
+migration `001_create_ebay.sql`), shared `shared/ebay.js` (D13b: key shapes, `ruNameMixUp`), client
+`client/src/modules/ebay/` (the Connections panel, `/ebay/accepted`) + the sales
 module's `/costs/sales/ebay`; tests `server/test/ebay.test.js` (TZ Toronto, against `server/test/fixtures/ebayFake.js`),
 `client/test/ebay.test.js`, `client/test/sales.test.js`, `test/e2e/ebay.e2e.test.js`. Registered last (after sales,
 connections and the planner). Save Point Shop (business `save_point`, default owner partner) sells on eBay only (ebay.ca
@@ -2392,7 +2394,18 @@ store "thesavepointshop").
   (Application Keys → **Production**; User Tokens → the RuName), on System → Connections → eBay. The Cert ID is sealed
   (AES-256-GCM, `lib/sealed.js`, key file `config.ebay.keyFile` = `<data>/ebay-secret.key`, `EBAY_KEY_FILE`) and never
   shown again; the App ID and RuName are kept as they are (not secret: they are in the consent page's address). A
-  Sandbox App ID is refused. A new keyset ends the sign-in (a refresh token belongs to its App ID). `ebay_connection` and
+  Sandbox App ID is refused. **RuName guard (D13b)**: `ruNameMixUp` (`shared/ebay.js`, used by `parseKeyset` and the
+  card's form) refuses a RuName equal to the App ID or Cert ID, or shaped like one — App ID `…-(PRD|SBX)-<hex>-<hex>`
+  at its end (`APP_ID_SHAPE_RE`; the generic `KEY_RE` matches any RuName too, so it isn't used for this), Cert ID
+  `(PRD|SBX)-<hex>-…` — with `bad_runame` "That’s the App ID, not the RuName: on developer.ebay.com → Application
+  Keysets → Production → User Tokens, copy the value in the “RuName (eBay Redirect URL name)” column." (eBay answers a
+  sign-in with the App ID as `redirect_uri` only `invalid_request`). A real RuName (`Jessy_Rho-JessyRho-GWNLIS-abcdefgh`,
+  even with "PRD" as a word in it) is accepted. A keyset **saved before the guard** with such a RuName: `info().ruNameProblem`
+  says so, `POST /sign-in` refuses it (409 `bad_runame`, the same words + "save the keyset again") without making a
+  state or the consent address, the card shows a red notice with *Enter the keyset again* and disables Sign in, its
+  state line says "its RuName isn’t right", and the Connections row's queue reads "Save the keyset again: the RuName
+  isn’t right" (while not signed in / signed out). A refresh already held keeps working (the refresh grant doesn't send
+  the RuName). A new keyset ends the sign-in (a refresh token belongs to its App ID). `ebay_connection` and
   `ebay_changes` are **keepOnRestore**.
 - **Scopes (decision: the minimum)**: only `https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly` — getOrders
   (orders, their totals, refunds, cancellations, ship-by dates) accepts it, and it is enough for both jobs. Not asked:
@@ -2491,6 +2504,19 @@ store "thesavepointshop").
   *Time zone…*, *New keyset…*, *Forget…* (keyset and sign-in go; totals and tasks stay). Money → Sales: the eBay card
   (always listed: "Not connected: set it up …, or enter a month by hand"), with "Months, and entering one by hand" →
   `/costs/sales/ebay`: the card, the last 13 months (eBay's figure / entered by hand / replaced) and the entry form.
+- **The breakdown (D13b; the owner asked for before- and after-tax amounts and shipping)**: the eBay page shows, for
+  today, this week and this month (`Breakdown`, three side by side, stacked under 640 px) — **Items** (= `net`: item
+  prices after discounts and refunds), **Shipping**, **Before tax** (= Items + Shipping = `total − tax`), **Tax** (the
+  tax eBay collected) and **Total (after tax)** (the headline, Seller Hub's Total sales) — and under each of the 13
+  months one muted line "Items · Shipping · Before tax · Tax" (no line for a month of zeros). Logic `BREAKDOWN_LINES`,
+  `breakdownOf`, `periodBreakdown`, `monthBreakdown` in `client/src/modules/sales/logic.js`; each currency on its own,
+  never added. **Same source as the figure shown**: a period or month whose figure is a hand entry shows "Entered by
+  hand: total only" — `summary()` marks a period filled by a hand-entered month `totalOnly: true` on its figures (its
+  other figures are 0, not known; today and this week are always eBay's own days), and `months()`'s `shown: 'manual'`
+  uses the entry; when eBay's figure is shown (`realWins`, or a replaced entry), its breakdown is shown — never a hand
+  total beside eBay's lines. A muted note on the card: refunds come off Items (eBay doesn't say what part of a refund
+  was shipping) and the tax refunded with a refund is estimated in proportion; tax is the tax eBay collected. No new
+  read was needed: `summary()` and `months()` already returned every `SALES_FIGURES` column per currency.
 - **Not exercised here (no real eBay account)**: real tokens and consent pages, the real RuName redirect, Seller Hub's
   figure itself and the unconfirmed points above, eBay's rate limits (getOrders: thousands a day; the suite makes a few
   an hour), `offset` beyond 10,000 orders, multi-currency accounts.
