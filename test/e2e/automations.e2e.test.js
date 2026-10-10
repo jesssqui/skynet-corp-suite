@@ -51,6 +51,9 @@ async function connections(page, server, label) {
   assert.equal(server.ctx.services.connections.isPaused('conndemo'), true);
   server.ctx.services.conndemo.enqueue(`${label} job`);
   await page.getByRole('button', { name: 'Check again' }).click();
+  // The tap shows it is checking (even when the answer is instant), then the button comes back.
+  await page.getByRole('button', { name: 'Checking…' }).waitFor(WAIT);
+  await page.getByRole('button', { name: 'Check again' }).waitFor(WAIT);
   await demo.getByTestId('queue-conndemo').filter({ hasText: '1 waiting' }).waitFor(WAIT);
   await shot(page, `connections-${label}`);
   assert.equal(await noSideways(page), 0, 'no sideways scrolling');

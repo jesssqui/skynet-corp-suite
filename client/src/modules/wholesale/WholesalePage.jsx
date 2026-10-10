@@ -189,7 +189,7 @@ export default function WholesalePage() {
   const me = session?.user?.actor ?? null;
   const listTab = tab === 'suggestions' ? 'waiting' : tab;
   const url = `/api/wholesale/${listTab}?limit=200${q.trim() && tab !== 'suggestions' ? `&q=${encodeURIComponent(q.trim())}` : ''}`;
-  const { data, error, loading, offline, reload } = useServerData(url);
+  const { data, error, loading, offline, reload, checking, checkAgain } = useServerData(url);
   const matchCounts = useServerData('/api/wholesale/matches/counts');
   const suggestionCount = matchCounts.data ? matchCounts.data.pairs + matchCounts.data.duplicates : null;
   const tabs = [
@@ -226,7 +226,7 @@ export default function WholesalePage() {
       <PageHeader
         title="Wholesale"
         subtitle="Order Manager customers: link each to a client, and its orders show on their timeline"
-        actions={<Button onClick={() => { reload(); matchCounts.reload(); setMatchesKey((k) => k + 1); }} disabled={loading}>Check again</Button>}
+        actions={<Button onClick={() => { checkAgain(); matchCounts.reload(); setMatchesKey((k) => k + 1); }} disabled={loading || checking}>{checking ? 'Checking…' : 'Check again'}</Button>}
       />
       <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
         <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap', alignItems: 'flex-end' }}>

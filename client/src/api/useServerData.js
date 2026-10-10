@@ -6,6 +6,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './client.js';
 
+/** How long "Checking…" shows at least after a tap on Check again. */
+export const MIN_CHECK_MS = 600;
+
 export function useServerData(url, { everyMs = 30_000 } = {}) {
   const [state, setState] = useState({ data: null, error: null, loading: true, offline: false });
   const alive = useRef(true);
@@ -44,5 +47,14 @@ export function useServerData(url, { everyMs = 30_000 } = {}) {
 
   /** Put a fresh answer in place (after a change the server answered with). */
   const replace = useCallback((fn) => setState((s) => ({ ...s, data: fn(s.data) })), []);
-  return { ...state, reload: load, replace };
+
+  // "Check again" (a person's tap): shown as "Checking…" for at least a moment, so a fast answer that changes nothing
+  // still visibly did something; `checkedAt` = when that check finished.
+  const [check, setCheck] = useState({ checking: false, checkedAt: null });
+  const checkAgain = useCallback(async () => {
+    setCheck((c) => ({ ...c, checking: true }));
+    await Promise.all([load(), new Promise((r) => setTimeout(r, MIN_CHECK_MS))]);
+    if (alive.current) setCheck({ checking: false, checkedAt: Date.now() });
+  }, [load]);
+  return { ...state, ...check, reload: load, checkAgain, replace };
 }

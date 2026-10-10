@@ -58,7 +58,7 @@ function StoreCard({ store, businessName }) {
 }
 
 export default function SalesPage() {
-  const { data, error, loading, offline, reload } = useServerData('/api/sales/summary', { everyMs: 60_000 });
+  const { data, error, loading, offline, checking, checkAgain } = useServerData('/api/sales/summary', { everyMs: 60_000 });
   const stores = data?.stores ?? [];
   const names = new Map((data?.businesses ?? []).map((b) => [b.businessId, b.name]));
   const connected = stores.filter((s) => s.connected && s.state !== 'not_set_up');
@@ -68,7 +68,7 @@ export default function SalesPage() {
       <PageHeader
         title="Sales"
         subtitle="Total sales and orders per store, as each store’s own report shows them"
-        actions={<Button onClick={reload} disabled={loading}>Check again</Button>}
+        actions={<Button onClick={checkAgain} disabled={loading || checking}>{checking ? 'Checking…' : 'Check again'}</Button>}
       />
       {offline ? (
         <Notice tone="warn" style={{ marginBottom: 'var(--space-4)' }}>
