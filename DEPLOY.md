@@ -565,6 +565,30 @@ Afterwards:
 - **After restoring the suite from a backup**: nothing to do (the connection is kept as it is now; missing totals are
   read again). **On a new Mac with the volume lost**: the key file is gone — enter the keyset again and sign in again.
 
+## 13. Wholesale sales, sales entered by hand and the overview (D11)
+
+Nothing to set up: at the **first start of this version** the suite writes every day of the Order Manager's sales from
+what it already holds (the holding area — every order, refund and credit note the Order Manager has sent), and the
+overview is in the sidebar (on a phone: Today → *Overview*). Then check once:
+
+1. **Wholesale matches the Order Manager's P&L.** In the Order Manager (admin): **Reports → P&L**, pick one past day (From
+   = To) that had orders and a refund or credit note. In the suite: **Money → Sales** → the *Wholesale Order Manager*
+   card shows today / week / month; for one day, compare with `GET /api/sales/totals?from=<day>&to=<day>&source=wholesale`
+   (signed in, in the browser): `net` = the P&L's **Net Revenue** (×100, cents), `orders` = *Total Orders*, `gross` =
+   *Revenue*, `discounts` = *Discounts*, `refunds` = *Refunds* + *Credit notes*. **Days are UTC days, as the P&L counts
+   them**: an order entered after 8 p.m. (7 p.m. in winter) is on the next day in both. The card's headline is *Total
+   sales* (with tax and shipping, after refunds), like every other store's — not the P&L's Net Revenue.
+   If the Order Manager was connected **before** some orders were made and they never reached the suite (e.g. an older
+   connection was forgotten), use the Order Manager's *Send existing* (step 6) — sales are upserts, nothing doubles.
+2. **Sales entered by hand**: **Money → Sales → Sales entered by hand → Enter a sale** — invoices (consulting, website
+   work) and anything no connection brings in; refunds and credit notes are entered as amounts and count down. Needs a
+   connection to the suite.
+3. **The overview** (`/overview`): sales per business and *To deal with*. Support emails show "Not connected yet ·
+   comes with the helpdesk (D14)" until D14. E-transfers that matched no customer stay in the Order Manager (Customers →
+   E-transfers): it doesn't send them to the suite.
+- **After restoring the suite from a backup**: nothing to do — the wholesale days are written again from the holding
+  area (kept across restores) at start; sales entered by hand roll back with the backup (like the rest of the data).
+
 ## Troubleshooting
 
 Offline:
