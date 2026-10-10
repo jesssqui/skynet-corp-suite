@@ -16,7 +16,8 @@
     "./csv": "./csv.js",
     "./intake": "./intake.js",
     "./costs": "./costs.js",
-    "./leads": "./leads.js"
+    "./leads": "./leads.js",
+    "./sales": "./sales.js"
   },
   "scripts": {
     "test": "node --test \"test/*.test.js\""

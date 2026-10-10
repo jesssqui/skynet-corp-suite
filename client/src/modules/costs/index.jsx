@@ -7,8 +7,10 @@ import CostsPage from './CostsPage.jsx';
 //            and yearly totals, add / edit / cancel
 // Client services' renewals (30 days ahead) and these costs' (14 days) become tasks through the
 // server's automations; the Friday review lists both, and the client page shows resold costs.
+// D12: the nav entry is "Money" — Costs and Sales (/costs/sales, the sales module) as tabs, so phones keep
+// eight tabs.
 export default {
   id: 'costs',
-  nav: { label: 'Costs', icon: 'card', order: 25, path: '/costs' },
+  nav: { label: 'Money', icon: 'card', order: 25, path: '/costs' },
   routes: [{ path: '/costs', element: <CostsPage /> }],
 };

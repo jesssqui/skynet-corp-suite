@@ -14,6 +14,7 @@ import { useToday } from '../planner/parts.jsx';
 import { useCostsData } from './data.js';
 import { filterCosts, groupCosts, totalsText, resoldTotalsText, renewalLabel, STATUS_FILTERS } from './logic.js';
 import { CostForm } from './CostForm.jsx';
+import MoneyTabs from './MoneyTabs.jsx';
 import './costs.css';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
@@ -102,6 +103,7 @@ export default function CostsPage() {
 
   return (
     <>
+      <MoneyTabs />
       <PageHeader
         title="Costs"
         subtitle={data ? `What our businesses and the home pay for · a reminder ${COST_REMINDER_DAYS} days before each renewal` : ' '}

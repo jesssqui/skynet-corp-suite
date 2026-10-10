@@ -453,6 +453,53 @@ Nothing to set up. After this version starts:
   To switch it off or get an alert: **System → Automations → Monthly cross-sell list**.
 - Devices need nothing (no *Download everything again*): leads are new record types and arrive with the next sync.
 
+## 11. WooCommerce stores: sales totals and order lookups (D12)
+
+The suite reads each retail store's **WooCommerce Analytics → Revenue** (net sales, orders, refunds, tax, shipping per
+day) and looks orders up live, each store with **its own read-only REST key**. It never changes anything in a store and
+keeps no customer details (only totals). Each store needs: pretty permalinks (Settings → Permalinks: anything but
+*Plain*), **Analytics switched on** (WooCommerce → Settings → Advanced → Features) and its **historical data imported**
+(Analytics → Settings → *Import historical data* → *Start*; otherwise Analytics — and the suite — miss older orders).
+
+For **each store**:
+1. **In the store's WordPress admin** (as an administrator): **WooCommerce → Settings → Advanced → REST API → Add key**.
+   Description *Skynet suite (read only)*; User: a shop manager or administrator; **Permissions: Read** (the suite can't
+   see a key's permission, so make sure it is *Read*). **Generate API key**. Keep the page open: the consumer secret is
+   shown once.
+2. **In the suite** (either of you): **System → Connections → WooCommerce stores → Add a store…**: the store's address
+   (`https://tinsxpress.com`), the consumer key (`ck_…`) and secret (`cs_…`), our business (*Retail stores* unless it
+   belongs to another), tick **This key was made with permission “Read”** → **Add the store**. The suite reads the store
+   with the key first (its name, time zone, currency, one day of Analytics, one order) and saves nothing if that fails:
+   *refused the key* = wrong key/secret, or a host that strips the `Authorization` header (ask the host to pass it
+   through; on Apache, `SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1`); *Analytics is off* = see the start of this step; *sends this
+   address elsewhere* = use the exact address the shop redirects to (e.g. with or without `www`).
+3. The store gets its own card under *WooCommerce stores*. The first read takes a minute or two (60 days, then 13 months
+   back in 90-day reads); after that its last 60 days are read again every hour. **Money → Sales** shows each store's
+   today / this week / this month (in the store's own time zone), per business and all together per currency.
+
+**Check one week against WooCommerce** (once per store, after the first read):
+4. In WooCommerce: **Analytics → Revenue** → date range **Last week** (Monday–Sunday; if the store's week starts on
+   Sunday, pick the Monday–Sunday dates under *Custom*), *Compare* off. Note **Orders**, **Net sales**, **Returns**,
+   **Taxes**, **Shipping** and **Total sales** from the summary at the top.
+5. In the suite: in a browser where you are signed in, open the suite's address (step 3) followed by
+   `/api/sales/totals?from=<Monday>&to=<Sunday>&store=<the store's address without https://>` (e.g.
+   `…/api/sales/totals?from=2026-10-05&to=2026-10-11&store=tinsxpress.com`).
+   `overall[0]`: `orders`, `net`, `refunds`, `tax`, `shipping`, `total` are in **cents** — they must equal WooCommerce's
+   figures × 100. A difference usually means Analytics' cache: in WooCommerce reload the report (or Analytics → Settings
+   → *Clear analytics cache*), then **Pull now** on the store's card and compare again; or historical data not imported.
+6. **Order lookup**: the store's name on **Money → Sales** → its page → *Look up an order* by number or email. It shows the
+   status, items, totals, dates, shipping method, tracking (with the Shipment Tracking plugin) and the customer's **first
+   name only**; nothing is kept.
+
+Afterwards:
+- **Switch a store off** on its card: no calls at all to that store until it is switched on again (then it is read at
+  once). **Replace the key…** on its card when you make a new one (then revoke the old one in WooCommerce: REST API →
+  the key → *Revoke*). **Remove…** forgets the store here (its totals so far stay on Sales); revoke its key in WooCommerce.
+- **After restoring the suite from a backup** (step 5, same Mac): nothing to do — the stores are kept as they are now, and
+  any totals the restored copy is missing are read again at the next pull. **On a new Mac with the volume lost**: the key
+  file is gone, so each store's card says its key can't be read — make a new key in each store (step 1) and **Replace the
+  key…**.
+
 ## Troubleshooting
 
 Offline:

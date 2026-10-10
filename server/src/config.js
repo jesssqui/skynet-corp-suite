@@ -150,6 +150,17 @@ export function loadConfig(env = process.env) {
       // like the automation scheduler; "Pull now" on the Connections card works either way.
       scheduled: bool(env.STOCKROOM_PULL_ENABLED, production),
     },
+    woocommerce: {
+      // D12: the key that encrypts each store's REST consumer secret in the database — a file in the data
+      // folder, like D16's (never in the database or the backups). Made on first use.
+      keyFile: path.resolve(env.WOO_KEY_FILE || path.join(dataDir, 'woocommerce-secret.key')),
+      // Each call to a store gives up after this long (Analytics over 90 days can take a few seconds on a busy shop).
+      timeoutMs: int(env.WOO_TIMEOUT_MS, 20_000, 'WOO_TIMEOUT_MS'),
+      // How often each store's rolling window (the last 60 days) is read again.
+      everyMinutes: int(env.WOO_PULL_EVERY_MIN, 60, 'WOO_PULL_EVERY_MIN'),
+      // The pull loop: on by default in production; "Pull now" on a store's card works either way.
+      scheduled: bool(env.WOO_PULL_ENABLED, production),
+    },
     automations: {
       // The minute scheduler (C8): on by default in production only, like the backup schedule.
       // "Run now" on the Automations page works either way.

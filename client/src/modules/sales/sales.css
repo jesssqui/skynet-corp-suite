@@ -1,0 +1,47 @@
+/* Sales (D12): period figures side by side, wrapping on phones. */
+.sales-periods {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 480px) {
+  .sales-periods {
+    gap: var(--space-2);
+  }
+  .sales-figure {
+    font-size: var(--text-md);
+  }
+}
+@media (max-width: 340px) {
+  .sales-periods {
+    grid-template-columns: 1fr;
+  }
+}
+.sales-figure {
+  font-size: var(--text-lg);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.sales-stores {
+  display: grid;
+  gap: var(--space-4);
+}
+@media (min-width: 1100px) {
+  .sales-stores {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+}
+.sales-orders {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+.sales-lines {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px var(--space-3);
+  font-size: var(--text-sm);
+}
