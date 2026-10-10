@@ -1,18 +1,18 @@
 {
- "capturedAt": "2026-10-10T17:26:16.705Z",
+ "capturedAt": "2026-10-10T18:21:26.786Z",
  "from": "scripts/wom-e2e.mjs",
  "events": [
   {
    "name": "customer.created",
    "version": 1,
-   "key": "01a126d8-fa62-759d-84d0-fd882662f5ab",
+   "key": "01a1270b-7a26-735e-a3fb-1472039197c5",
    "source": "wom",
-   "time": "2026-10-10T17:25:16.000Z",
+   "time": "2026-10-10T18:20:25.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "customer": {
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "number": 1,
      "business_name": "Lefty’s Vape Shop",
      "contact_name": "Lefty",
@@ -30,27 +30,27 @@
      "notes": null,
      "tax_exempt": false,
      "group": null,
-     "created_at": "2026-10-10T17:25:16.000Z"
+     "created_at": "2026-10-10T18:20:25.000Z"
     }
    }
   },
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d8-fa65-723f-b212-76bc59befca1",
+   "key": "01a1270b-7a28-777d-8c78-93c988109438",
    "source": "wom",
-   "time": "2026-10-10T17:25:16.000Z",
+   "time": "2026-10-10T18:20:25.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "source": "backfill",
     "order": {
-     "order_uid": "01a126d8-fa2c-77b0-9752-75c7b5575212",
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
      "number": 1,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -61,7 +61,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:16.000Z",
+     "created_at": "2026-10-10T18:20:25.000Z",
      "lines": [
       {
        "sku": "ZYN-CM6",
@@ -109,18 +109,18 @@
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d8-fa65-7240-b49e-845850191d8f",
+   "key": "01a1270b-7a29-7506-a527-46677694709e",
    "source": "wom",
-   "time": "2026-10-10T17:25:16.000Z",
+   "time": "2026-10-10T18:20:25.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d8-fa3b-75ef-8537-c551f817696b",
+     "payment_uid": "01a1270b-7a04-7438-949d-c32739327641",
      "number": 1,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "order_uid": "01a126d8-fa2c-77b0-9752-75c7b5575212",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
      "order_number": 1,
      "amount_cents": 7345,
      "method": "cash",
@@ -129,26 +129,26 @@
      "notes": "POS order #1",
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:16.000Z"
+     "created_at": "2026-10-10T18:20:25.000Z"
     }
    }
   },
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-0079-71a5-91a9-ccc94e8bc267",
+   "key": "01a1270b-803d-76f3-9931-f4e317b905d2",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.073Z",
+   "time": "2026-10-10T18:20:27.581Z",
    "data": {
     "by": "admin",
     "source": "order",
     "order": {
-     "order_uid": "01a126d9-0078-77c0-86d0-862038a792b7",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
      "number": 2,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -159,7 +159,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:27.000Z",
      "lines": [
       {
        "sku": "ZYN-CM6",
@@ -218,17 +218,17 @@
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-0080-7792-be0f-d45934cbb462",
+   "key": "01a1270b-8046-716e-9ee4-70642783e77c",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.080Z",
+   "time": "2026-10-10T18:20:27.590Z",
    "data": {
     "by": "admin",
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d9-0080-7791-abb5-1fcbf5933a32",
+     "payment_uid": "01a1270b-8046-716d-818f-fc5a36c4ca2b",
      "number": 2,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "order_uid": "01a126d9-0078-77c0-86d0-862038a792b7",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
      "order_number": 2,
      "amount_cents": 4520,
      "method": "etransfer",
@@ -237,16 +237,16 @@
      "notes": null,
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z"
+     "created_at": "2026-10-10T18:20:27.000Z"
     }
    }
   },
   {
    "name": "order.changed",
    "version": 1,
-   "key": "01a126d9-008c-7629-89e8-f9a2f7c50ed4",
+   "key": "01a1270b-8054-76ef-94d8-6054917bc226",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.092Z",
+   "time": "2026-10-10T18:20:27.604Z",
    "data": {
     "by": "admin",
     "change": "edited",
@@ -277,14 +277,14 @@
       "to": "Two more Zyn"
      }
     ],
-    "change_uid": "01a126d9-008c-7628-b43f-56a52bf7ea16",
+    "change_uid": "01a1270b-8053-7635-9771-f128f2038127",
     "order": {
-     "order_uid": "01a126d9-0078-77c0-86d0-862038a792b7",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
      "number": 2,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -295,7 +295,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:27.000Z",
      "lines": [
       {
        "sku": "ZYN-CM6",
@@ -354,20 +354,20 @@
   {
    "name": "order.packed",
    "version": 1,
-   "key": "01a126d9-0094-71e8-b7a4-96cb8afb3049",
+   "key": "01a1270b-805e-7363-ba4a-f80cb48d6def",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.100Z",
+   "time": "2026-10-10T18:20:27.614Z",
    "data": {
     "by": "admin",
     "change": "packed",
     "note": null,
     "order": {
-     "order_uid": "01a126d9-0078-77c0-86d0-862038a792b7",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
      "number": 2,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -378,7 +378,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:27.000Z",
      "lines": [
       {
        "sku": "ZYN-CM6",
@@ -421,7 +421,7 @@
      },
      "packing": {
       "state": "packed",
-      "packed_at": "2026-10-10T17:25:18.000Z",
+      "packed_at": "2026-10-10T18:20:27.000Z",
       "packed_by": "admin",
       "shipped_at": null,
       "shipped_by": null,
@@ -437,21 +437,21 @@
   {
    "name": "order.shipped",
    "version": 1,
-   "key": "01a126d9-0098-752b-879c-1949d32a29be",
+   "key": "01a1270b-8064-720e-adfa-4b895de85b7c",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.104Z",
+   "time": "2026-10-10T18:20:27.620Z",
    "data": {
     "by": "admin",
     "change": "shipped",
     "via": "delivered",
     "note": null,
     "order": {
-     "order_uid": "01a126d9-0078-77c0-86d0-862038a792b7",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
      "number": 2,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -462,7 +462,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:27.000Z",
      "lines": [
       {
        "sku": "ZYN-CM6",
@@ -505,9 +505,9 @@
      },
      "packing": {
       "state": "shipped",
-      "packed_at": "2026-10-10T17:25:18.000Z",
+      "packed_at": "2026-10-10T18:20:27.000Z",
       "packed_by": "admin",
-      "shipped_at": "2026-10-10T17:25:18.000Z",
+      "shipped_at": "2026-10-10T18:20:27.000Z",
       "shipped_by": "admin",
       "shipped_via": "delivered",
       "tracking_number": null,
@@ -521,19 +521,19 @@
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-009c-7725-9249-88b60bef3aea",
+   "key": "01a1270b-8069-7094-bc6d-4fb9e2f6745a",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.108Z",
+   "time": "2026-10-10T18:20:27.625Z",
    "data": {
     "by": "admin",
     "source": "order",
     "order": {
-     "order_uid": "01a126d9-009b-7569-8f2f-c2089a908137",
+     "order_uid": "01a1270b-8068-743f-9632-6cd177e511b9",
      "number": 3,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -544,7 +544,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:27.000Z",
      "lines": [
       {
        "sku": "VELO-F10",
@@ -592,9 +592,9 @@
   {
    "name": "order.cancelled",
    "version": 1,
-   "key": "01a126d9-00a1-7394-be1e-fa3263126ddf",
+   "key": "01a1270b-806f-77c3-bb3c-c6f697675fcd",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.113Z",
+   "time": "2026-10-10T18:20:27.631Z",
    "data": {
     "by": "admin",
     "changes": [
@@ -604,14 +604,14 @@
       "to": "cancelled"
      }
     ],
-    "change_uid": "01a126d9-00a0-77be-a27e-3584aac8b192",
+    "change_uid": "01a1270b-806e-7508-8e5c-1dd953e83ad7",
     "order": {
-     "order_uid": "01a126d9-009b-7569-8f2f-c2089a908137",
+     "order_uid": "01a1270b-8068-743f-9632-6cd177e511b9",
      "number": 3,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -620,9 +620,9 @@
      },
      "order_date": "2026-10-10",
      "status": "cancelled",
-     "cancelled_at": "2026-10-10T17:25:18.000Z",
+     "cancelled_at": "2026-10-10T18:20:27.000Z",
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:27.000Z",
      "lines": [
       {
        "sku": "VELO-F10",
@@ -670,18 +670,18 @@
   {
    "name": "return.received",
    "version": 1,
-   "key": "01a126d9-00ab-76a1-985b-236b2c65353c",
+   "key": "01a1270b-807c-74df-86c9-96c45901bdf2",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
+   "time": "2026-10-10T18:20:27.000Z",
    "data": {
     "by": "admin",
     "return": {
-     "return_uid": "01a126d9-00a9-7306-84c6-6bce248d284d",
+     "return_uid": "01a1270b-8079-752f-8439-57a16e3e39e8",
      "number": 1,
-     "order_uid": "01a126d9-0078-77c0-86d0-862038a792b7",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
      "order_number": 2,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "received_at": "2026-10-10T17:25:18.000Z",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "received_at": "2026-10-10T18:20:27.000Z",
      "items": [
       {
        "sku": "ZYN-CM6",
@@ -700,7 +700,7 @@
      "reason": "Crushed tins",
      "outcome": "credit_note",
      "amount_cents": 1469,
-     "credit_note_uid": "01a126d9-00aa-726f-b50d-a5145a095c80",
+     "credit_note_uid": "01a1270b-807b-74ff-99ef-483782e55600",
      "subtotal_cents": 1300,
      "tax_cents": 169,
      "shipping_cents": 0
@@ -710,17 +710,17 @@
   {
    "name": "credit_note.issued",
    "version": 1,
-   "key": "01a126d9-00ab-76a2-9337-b944ec45cf1c",
+   "key": "01a1270b-807c-74e0-adde-d990dc5c0626",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
+   "time": "2026-10-10T18:20:27.000Z",
    "data": {
     "by": "admin",
     "credit_note": {
-     "credit_note_uid": "01a126d9-00aa-726f-b50d-a5145a095c80",
+     "credit_note_uid": "01a1270b-807b-74ff-99ef-483782e55600",
      "number": "CN-0001",
-     "order_uid": "01a126d9-0078-77c0-86d0-862038a792b7",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
      "order_number": 2,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "amount_cents": 1469,
      "lines": [
       {
@@ -733,8 +733,8 @@
       }
      ],
      "reason": "Crushed tins",
-     "issued_at": "2026-10-10T17:25:18.000Z",
-     "return_uid": "01a126d9-00a9-7306-84c6-6bce248d284d",
+     "issued_at": "2026-10-10T18:20:27.000Z",
+     "return_uid": "01a1270b-8079-752f-8439-57a16e3e39e8",
      "subtotal_cents": 1300,
      "tax_cents": 169,
      "shipping_cents": 0
@@ -744,25 +744,25 @@
   {
    "name": "refund.issued",
    "version": 1,
-   "key": "01a126d9-00b0-71ad-96a2-bffce05352b4",
+   "key": "01a1270b-8082-7518-835d-3f7706bab40d",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.128Z",
+   "time": "2026-10-10T18:20:27.650Z",
    "data": {
     "by": "admin",
     "change": "issued",
     "refund": {
-     "refund_uid": "01a126d9-00af-72a0-81c1-ff75fdba7a7b",
+     "refund_uid": "01a1270b-8082-7517-ace4-eb5978346128",
      "number": 1,
-     "order_uid": "01a126d8-fa2c-77b0-9752-75c7b5575212",
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
      "order_number": 1,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "kind": "refund",
      "amount_cents": 735,
      "amount_raw": 7.35,
      "items": [],
      "reason": "One tin short",
      "issued_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:27.000Z",
      "method": "etransfer",
      "return_uid": null
     }
@@ -771,19 +771,19 @@
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-00b4-75f5-81e2-47a3abf328ef",
+   "key": "01a1270b-8088-7678-9e06-353b54888265",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.132Z",
+   "time": "2026-10-10T18:20:27.656Z",
    "data": {
     "by": "admin",
     "source": "order",
     "order": {
-     "order_uid": "01a126d9-00b3-76a1-8268-7aa0d0325eb7",
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
      "number": 4,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -794,7 +794,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:27.000Z",
      "lines": [
       {
        "sku": "ALP-MF",
@@ -842,17 +842,17 @@
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-00b4-75f6-b0f2-062e17b52516",
+   "key": "01a1270b-8088-7679-9b0e-8cbf17b1f15a",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.132Z",
+   "time": "2026-10-10T18:20:27.656Z",
    "data": {
     "by": "admin",
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d9-00b3-76a2-a4e7-6a85fc54e811",
+     "payment_uid": "01a1270b-8087-700d-a7a1-b4f335fbf874",
      "number": 3,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "order_uid": "01a126d9-00b3-76a1-8268-7aa0d0325eb7",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
      "order_number": 4,
      "amount_cents": 3955,
      "method": "cash",
@@ -861,16 +861,16 @@
      "notes": "POS order #4",
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z"
+     "created_at": "2026-10-10T18:20:27.000Z"
     }
    }
   },
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-00bf-76e2-aa5e-18aa6c168372",
+   "key": "01a1270b-8093-72ec-96d7-343b53238b33",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.143Z",
+   "time": "2026-10-10T18:20:27.667Z",
    "data": {
     "by": "admin",
     "change": "removed",
@@ -878,10 +878,10 @@
     "reason": "order_deleted",
     "moved_to": "store_credit",
     "payment": {
-     "payment_uid": "01a126d9-00b3-76a2-a4e7-6a85fc54e811",
+     "payment_uid": "01a1270b-8087-700d-a7a1-b4f335fbf874",
      "number": 3,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "order_uid": "01a126d9-00b3-76a1-8268-7aa0d0325eb7",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
      "order_number": 4,
      "amount_cents": 3955,
      "method": "cash",
@@ -890,26 +890,26 @@
      "notes": "POS order #4",
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z"
+     "created_at": "2026-10-10T18:20:27.000Z"
     }
    }
   },
   {
    "name": "order.deleted",
    "version": 1,
-   "key": "01a126d9-00c0-7365-a19c-b595ade85b05",
+   "key": "01a1270b-8094-729e-a065-925c0331e7fa",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.144Z",
+   "time": "2026-10-10T18:20:27.668Z",
    "data": {
     "by": "admin",
-    "order_uid": "01a126d9-00b3-76a1-8268-7aa0d0325eb7",
+    "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
     "order": {
-     "order_uid": "01a126d9-00b3-76a1-8268-7aa0d0325eb7",
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
      "number": 4,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -920,7 +920,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:27.000Z",
      "lines": [
       {
        "sku": "ALP-MF",
@@ -968,18 +968,18 @@
   {
    "name": "order.restored",
    "version": 1,
-   "key": "01a126d9-02ac-70f6-9350-1df584ee8c60",
+   "key": "01a1270b-8276-729c-baae-1d74da054603",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.636Z",
+   "time": "2026-10-10T18:20:28.150Z",
    "data": {
     "by": "admin",
     "order": {
-     "order_uid": "01a126d9-00b3-76a1-8268-7aa0d0325eb7",
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
      "number": 4,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -990,7 +990,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:27.000Z",
      "lines": [
       {
        "sku": "ALP-MF",
@@ -1038,18 +1038,18 @@
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-02ac-70f7-93cd-ed9b41e33524",
+   "key": "01a1270b-8276-729d-8075-fd340ad12ce4",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.636Z",
+   "time": "2026-10-10T18:20:28.150Z",
    "data": {
     "by": "admin",
     "change": "recorded",
     "reason": "order_restored",
     "payment": {
-     "payment_uid": "01a126d9-00b3-76a2-a4e7-6a85fc54e811",
+     "payment_uid": "01a1270b-8087-700d-a7a1-b4f335fbf874",
      "number": 3,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "order_uid": "01a126d9-00b3-76a1-8268-7aa0d0325eb7",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
      "order_number": 4,
      "amount_cents": 3955,
      "method": "cash",
@@ -1058,23 +1058,23 @@
      "notes": "POS order #4",
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z"
+     "created_at": "2026-10-10T18:20:27.000Z"
     }
    }
   },
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-02b0-7559-997c-7a5a573e446f",
+   "key": "01a1270b-8279-77ad-ac8c-b1184add10b4",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.640Z",
+   "time": "2026-10-10T18:20:28.153Z",
    "data": {
     "by": "admin",
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d9-02b0-7558-981d-e000ca8e73a7",
+     "payment_uid": "01a1270b-8279-77ac-ad71-4728c8fb1e70",
      "number": 4,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "order_uid": null,
      "order_number": null,
      "amount_cents": 2000,
@@ -1084,26 +1084,26 @@
      "notes": "On account",
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z"
+     "created_at": "2026-10-10T18:20:28.000Z"
     }
    }
   },
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-03fc-7398-94aa-3d9439e6e717",
+   "key": "01a1270b-8456-7661-aa22-5b392793acc1",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.972Z",
+   "time": "2026-10-10T18:20:28.630Z",
    "data": {
     "by": "admin",
     "source": "order",
     "order": {
-     "order_uid": "01a126d9-03fb-70c6-b0e9-95c817b8d82e",
+     "order_uid": "01a1270b-8455-7008-9b8e-c021e014dbb2",
      "number": 5,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -1114,7 +1114,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:28.000Z",
      "lines": [
       {
        "sku": "VELO-F10",
@@ -1162,17 +1162,17 @@
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-03fc-7399-bf2f-0fb90ab94d89",
+   "key": "01a1270b-8456-7662-bf93-1d9f292cb0a1",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.972Z",
+   "time": "2026-10-10T18:20:28.630Z",
    "data": {
     "by": "admin",
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d9-03fb-70c7-8723-7e9115660945",
+     "payment_uid": "01a1270b-8455-7009-b6bf-7724c9fddf0f",
      "number": 5,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "order_uid": "01a126d9-03fb-70c6-b0e9-95c817b8d82e",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-8455-7008-9b8e-c021e014dbb2",
      "order_number": 5,
      "amount_cents": 565,
      "method": "cash",
@@ -1181,21 +1181,21 @@
      "notes": "POS order #5",
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z"
+     "created_at": "2026-10-10T18:20:28.000Z"
     }
    }
   },
   {
    "name": "customer.created",
    "version": 1,
-   "key": "01a126d9-09f8-7676-8d33-f8f150fae9ed",
+   "key": "01a1270b-8a56-75ae-8f16-f98a1b779d7e",
    "source": "wom",
-   "time": "2026-10-10T17:25:16.000Z",
+   "time": "2026-10-10T18:20:25.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "customer": {
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "number": 1,
      "business_name": "Lefty’s Vape Shop",
      "contact_name": "Lefty",
@@ -1213,27 +1213,27 @@
      "notes": null,
      "tax_exempt": false,
      "group": null,
-     "created_at": "2026-10-10T17:25:16.000Z"
+     "created_at": "2026-10-10T18:20:25.000Z"
     }
    }
   },
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-09f8-7677-850d-90ce76eeab56",
+   "key": "01a1270b-8a56-75af-a82f-7ca6d702351e",
    "source": "wom",
-   "time": "2026-10-10T17:25:16.000Z",
+   "time": "2026-10-10T18:20:25.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "source": "backfill",
     "order": {
-     "order_uid": "01a126d8-fa2c-77b0-9752-75c7b5575212",
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
      "number": 1,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -1244,7 +1244,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:16.000Z",
+     "created_at": "2026-10-10T18:20:25.000Z",
      "lines": [
       {
        "sku": "ZYN-CM6",
@@ -1292,18 +1292,18 @@
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-09f8-7678-9c1c-d26696aed64a",
+   "key": "01a1270b-8a56-75b0-82f8-6f0888345f9e",
    "source": "wom",
-   "time": "2026-10-10T17:25:16.000Z",
+   "time": "2026-10-10T18:20:25.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d8-fa3b-75ef-8537-c551f817696b",
+     "payment_uid": "01a1270b-7a04-7438-949d-c32739327641",
      "number": 1,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "order_uid": "01a126d8-fa2c-77b0-9752-75c7b5575212",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
      "order_number": 1,
      "amount_cents": 7345,
      "method": "cash",
@@ -1312,27 +1312,27 @@
      "notes": "POS order #1",
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:16.000Z"
+     "created_at": "2026-10-10T18:20:25.000Z"
     }
    }
   },
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-09f8-7679-acb6-926a3c63fa2f",
+   "key": "01a1270b-8a57-7292-8eac-b3e926db76ac",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
+   "time": "2026-10-10T18:20:27.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "source": "backfill",
     "order": {
-     "order_uid": "01a126d9-0078-77c0-86d0-862038a792b7",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
      "number": 2,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -1343,7 +1343,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:27.000Z",
      "lines": [
       {
        "sku": "ZYN-CM6",
@@ -1386,9 +1386,9 @@
      },
      "packing": {
       "state": "shipped",
-      "packed_at": "2026-10-10T17:25:18.000Z",
+      "packed_at": "2026-10-10T18:20:27.000Z",
       "packed_by": "admin",
-      "shipped_at": "2026-10-10T17:25:18.000Z",
+      "shipped_at": "2026-10-10T18:20:27.000Z",
       "shipped_by": "admin",
       "shipped_via": "delivered",
       "tracking_number": null,
@@ -1402,20 +1402,20 @@
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-09f9-76c5-8d89-015e0bc7a488",
+   "key": "01a1270b-8a57-7293-9921-5f402230660a",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
+   "time": "2026-10-10T18:20:27.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "source": "backfill",
     "order": {
-     "order_uid": "01a126d9-009b-7569-8f2f-c2089a908137",
+     "order_uid": "01a1270b-8068-743f-9632-6cd177e511b9",
      "number": 3,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -1424,9 +1424,9 @@
      },
      "order_date": "2026-10-10",
      "status": "cancelled",
-     "cancelled_at": "2026-10-10T17:25:18.000Z",
+     "cancelled_at": "2026-10-10T18:20:27.000Z",
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:27.000Z",
      "lines": [
       {
        "sku": "VELO-F10",
@@ -1474,20 +1474,20 @@
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-09f9-76c6-ae61-4a770a3fc7bc",
+   "key": "01a1270b-8a57-7294-a1a1-ae51bb3444ad",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
+   "time": "2026-10-10T18:20:27.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "source": "backfill",
     "order": {
-     "order_uid": "01a126d9-00b3-76a1-8268-7aa0d0325eb7",
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
      "number": 4,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -1498,7 +1498,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:27.000Z",
      "lines": [
       {
        "sku": "ALP-MF",
@@ -1544,22 +1544,180 @@
    }
   },
   {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-8a57-7295-b8e9-5350d1f0c937",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8046-716d-818f-fc5a36c4ca2b",
+     "number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "order_number": 2,
+     "amount_cents": 4520,
+     "method": "etransfer",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": null,
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z"
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-8a57-7296-841c-b872c508c19a",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8087-700d-a7a1-b4f335fbf874",
+     "number": 3,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
+     "order_number": 4,
+     "amount_cents": 3955,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": "POS order #4",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z"
+    }
+   }
+  },
+  {
+   "name": "return.received",
+   "version": 1,
+   "key": "01a1270b-8a57-7297-8fd6-f50f13592c09",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "return": {
+     "return_uid": "01a1270b-8079-752f-8439-57a16e3e39e8",
+     "number": 1,
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "order_number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "received_at": "2026-10-10T18:20:27.000Z",
+     "items": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 1,
+       "restocked": true
+      },
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 1,
+       "restocked": false
+      }
+     ],
+     "note": "Crushed tins",
+     "reason": "Crushed tins",
+     "outcome": "credit_note",
+     "amount_cents": 1469,
+     "credit_note_uid": "01a1270b-807b-74ff-99ef-483782e55600",
+     "subtotal_cents": 1300,
+     "tax_cents": 169,
+     "shipping_cents": 0
+    }
+   }
+  },
+  {
+   "name": "refund.issued",
+   "version": 1,
+   "key": "01a1270b-8a57-7298-9a5f-c68a385246e3",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "issued",
+    "refund": {
+     "refund_uid": "01a1270b-8082-7517-ace4-eb5978346128",
+     "number": 1,
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
+     "order_number": 1,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "kind": "refund",
+     "amount_cents": 735,
+     "amount_raw": 7.35,
+     "items": [],
+     "reason": "One tin short",
+     "issued_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "method": "etransfer",
+     "return_uid": null
+    }
+   }
+  },
+  {
+   "name": "credit_note.issued",
+   "version": 1,
+   "key": "01a1270b-8a58-76c9-a220-0aab442f26de",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "credit_note": {
+     "credit_note_uid": "01a1270b-807b-74ff-99ef-483782e55600",
+     "number": "CN-0001",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "order_number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "amount_cents": 1469,
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 2,
+       "amount_cents": 1469,
+       "subtotal_cents": 1300,
+       "tax_cents": 169
+      }
+     ],
+     "reason": "Crushed tins",
+     "issued_at": "2026-10-10T18:20:27.000Z",
+     "return_uid": "01a1270b-8079-752f-8439-57a16e3e39e8",
+     "subtotal_cents": 1300,
+     "tax_cents": 169,
+     "shipping_cents": 0
+    }
+   }
+  },
+  {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-09f9-76c7-9ee9-c0f5985d1b2b",
+   "key": "01a1270b-8a58-76ca-852b-2d8755bd9cda",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
+   "time": "2026-10-10T18:20:28.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "source": "backfill",
     "order": {
-     "order_uid": "01a126d9-03fb-70c6-b0e9-95c817b8d82e",
+     "order_uid": "01a1270b-8455-7008-9b8e-c021e014dbb2",
      "number": 5,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -1570,7 +1728,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:28.000Z",
      "lines": [
       {
        "sku": "VELO-F10",
@@ -1618,71 +1776,17 @@
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-09f9-76c8-81ea-4a70a7276b1b",
+   "key": "01a1270b-8a58-76cb-bc10-b6c6546a3024",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
+   "time": "2026-10-10T18:20:28.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d9-0080-7791-abb5-1fcbf5933a32",
-     "number": 2,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "order_uid": "01a126d9-0078-77c0-86d0-862038a792b7",
-     "order_number": 2,
-     "amount_cents": 4520,
-     "method": "etransfer",
-     "payment_date": "2026-10-10",
-     "reference_number": null,
-     "notes": null,
-     "history_entry": false,
-     "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z"
-    }
-   }
-  },
-  {
-   "name": "payment.recorded",
-   "version": 1,
-   "key": "01a126d9-09f9-76c9-959b-e7029ca5dcf3",
-   "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
-   "data": {
-    "by": "admin",
-    "backfill": true,
-    "change": "recorded",
-    "payment": {
-     "payment_uid": "01a126d9-00b3-76a2-a4e7-6a85fc54e811",
-     "number": 3,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "order_uid": "01a126d9-00b3-76a1-8268-7aa0d0325eb7",
-     "order_number": 4,
-     "amount_cents": 3955,
-     "method": "cash",
-     "payment_date": "2026-10-10",
-     "reference_number": null,
-     "notes": "POS order #4",
-     "history_entry": false,
-     "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z"
-    }
-   }
-  },
-  {
-   "name": "payment.recorded",
-   "version": 1,
-   "key": "01a126d9-09f9-76ca-b987-a56b730c9d4e",
-   "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
-   "data": {
-    "by": "admin",
-    "backfill": true,
-    "change": "recorded",
-    "payment": {
-     "payment_uid": "01a126d9-02b0-7558-981d-e000ca8e73a7",
+     "payment_uid": "01a1270b-8279-77ac-ad71-4728c8fb1e70",
      "number": 4,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "order_uid": null,
      "order_number": null,
      "amount_cents": 2000,
@@ -1692,25 +1796,25 @@
      "notes": "On account",
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z"
+     "created_at": "2026-10-10T18:20:28.000Z"
     }
    }
   },
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-09fa-778b-a9c5-52da8026fc35",
+   "key": "01a1270b-8a58-76cc-95b6-f72b2313acec",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
+   "time": "2026-10-10T18:20:28.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d9-03fb-70c7-8723-7e9115660945",
+     "payment_uid": "01a1270b-8455-7009-b6bf-7724c9fddf0f",
      "number": 5,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "order_uid": "01a126d9-03fb-70c6-b0e9-95c817b8d82e",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-8455-7008-9b8e-c021e014dbb2",
      "order_number": 5,
      "amount_cents": 565,
      "method": "cash",
@@ -1719,124 +1823,20 @@
      "notes": "POS order #5",
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z"
-    }
-   }
-  },
-  {
-   "name": "return.received",
-   "version": 1,
-   "key": "01a126d9-09fa-778c-a752-dc2e6d5f018e",
-   "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
-   "data": {
-    "by": "admin",
-    "backfill": true,
-    "return": {
-     "return_uid": "01a126d9-00a9-7306-84c6-6bce248d284d",
-     "number": 1,
-     "order_uid": "01a126d9-0078-77c0-86d0-862038a792b7",
-     "order_number": 2,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "received_at": "2026-10-10T17:25:18.000Z",
-     "items": [
-      {
-       "sku": "ZYN-CM6",
-       "name": "Zyn Cool Mint 6mg",
-       "quantity": 1,
-       "restocked": true
-      },
-      {
-       "sku": "ZYN-CM6",
-       "name": "Zyn Cool Mint 6mg",
-       "quantity": 1,
-       "restocked": false
-      }
-     ],
-     "note": "Crushed tins",
-     "reason": "Crushed tins",
-     "outcome": "credit_note",
-     "amount_cents": 1469,
-     "credit_note_uid": "01a126d9-00aa-726f-b50d-a5145a095c80",
-     "subtotal_cents": 1300,
-     "tax_cents": 169,
-     "shipping_cents": 0
-    }
-   }
-  },
-  {
-   "name": "refund.issued",
-   "version": 1,
-   "key": "01a126d9-09fa-778d-983b-a8cd7f8bdf3b",
-   "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
-   "data": {
-    "by": "admin",
-    "backfill": true,
-    "change": "issued",
-    "refund": {
-     "refund_uid": "01a126d9-00af-72a0-81c1-ff75fdba7a7b",
-     "number": 1,
-     "order_uid": "01a126d8-fa2c-77b0-9752-75c7b5575212",
-     "order_number": 1,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "kind": "refund",
-     "amount_cents": 735,
-     "amount_raw": 7.35,
-     "items": [],
-     "reason": "One tin short",
-     "issued_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z",
-     "method": "etransfer",
-     "return_uid": null
-    }
-   }
-  },
-  {
-   "name": "credit_note.issued",
-   "version": 1,
-   "key": "01a126d9-09fa-778e-803f-83b84b04faa0",
-   "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
-   "data": {
-    "by": "admin",
-    "backfill": true,
-    "credit_note": {
-     "credit_note_uid": "01a126d9-00aa-726f-b50d-a5145a095c80",
-     "number": "CN-0001",
-     "order_uid": "01a126d9-0078-77c0-86d0-862038a792b7",
-     "order_number": 2,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "amount_cents": 1469,
-     "lines": [
-      {
-       "sku": "ZYN-CM6",
-       "name": "Zyn Cool Mint 6mg",
-       "quantity": 2,
-       "amount_cents": 1469,
-       "subtotal_cents": 1300,
-       "tax_cents": 169
-      }
-     ],
-     "reason": "Crushed tins",
-     "issued_at": "2026-10-10T17:25:18.000Z",
-     "return_uid": "01a126d9-00a9-7306-84c6-6bce248d284d",
-     "subtotal_cents": 1300,
-     "tax_cents": 169,
-     "shipping_cents": 0
+     "created_at": "2026-10-10T18:20:28.000Z"
     }
    }
   },
   {
    "name": "customer.created",
    "version": 1,
-   "key": "01a126d9-0be6-735c-a170-547c9511a777",
+   "key": "01a1270b-8b8e-7458-b8aa-ee998e0344e6",
    "source": "wom",
-   "time": "2026-10-10T17:25:20.998Z",
+   "time": "2026-10-10T18:20:30.478Z",
    "data": {
     "by": "admin",
     "customer": {
-     "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
      "number": 2,
      "business_name": "Northwind Corner Store",
      "contact_name": "Robin",
@@ -1854,26 +1854,26 @@
      "notes": null,
      "tax_exempt": false,
      "group": null,
-     "created_at": "2026-10-10T17:25:20.000Z"
+     "created_at": "2026-10-10T18:20:30.000Z"
     }
    }
   },
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-0bea-760d-941f-2e782eda2711",
+   "key": "01a1270b-8b93-72c2-8088-d5a3ec9e9078",
    "source": "wom",
-   "time": "2026-10-10T17:25:21.002Z",
+   "time": "2026-10-10T18:20:30.483Z",
    "data": {
     "by": "admin",
     "source": "order",
     "order": {
-     "order_uid": "01a126d9-0bea-760c-9cc1-f9fcf7c50447",
+     "order_uid": "01a1270b-8b93-72c1-bcc6-3bc7fee64e39",
      "number": 6,
      "reference_number": null,
-     "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
      "customer": {
-      "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
+      "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
       "number": 2,
       "business_name": "Northwind Corner Store",
       "contact_name": "Robin",
@@ -1884,7 +1884,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:21.000Z",
+     "created_at": "2026-10-10T18:20:30.000Z",
      "lines": [
       {
        "sku": "ZYN-CM6",
@@ -1932,19 +1932,19 @@
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-0bf0-7629-9280-7e6019c80a11",
+   "key": "01a1270b-8b98-76fc-930a-74bcfc271409",
    "source": "wom",
-   "time": "2026-10-10T17:25:21.008Z",
+   "time": "2026-10-10T18:20:30.488Z",
    "data": {
     "by": "admin",
     "source": "order",
     "order": {
-     "order_uid": "01a126d9-0bef-7166-b3db-0d0bec503db5",
+     "order_uid": "01a1270b-8b97-765e-ad9c-07a22a0c93e6",
      "number": 7,
      "reference_number": null,
-     "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
      "customer": {
-      "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
+      "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
       "number": 2,
       "business_name": "Northwind Corner Store",
       "contact_name": "Robin",
@@ -1955,7 +1955,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:21.000Z",
+     "created_at": "2026-10-10T18:20:30.000Z",
      "lines": [
       {
        "sku": "ALP-MF",
@@ -2003,19 +2003,19 @@
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-0bf4-71d9-85a8-38a6218276a9",
+   "key": "01a1270b-8b9d-7164-8de7-23c232cd1604",
    "source": "wom",
-   "time": "2026-10-10T17:25:21.012Z",
+   "time": "2026-10-10T18:20:30.493Z",
    "data": {
     "by": "admin",
     "source": "order",
     "order": {
-     "order_uid": "01a126d9-0bf3-7740-a56f-fda694efea73",
+     "order_uid": "01a1270b-8b9c-7671-ae5e-86158d6bc981",
      "number": 8,
      "reference_number": null,
-     "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
      "customer": {
-      "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
+      "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
       "number": 2,
       "business_name": "Northwind Corner Store",
       "contact_name": "Robin",
@@ -2026,7 +2026,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:21.000Z",
+     "created_at": "2026-10-10T18:20:30.000Z",
      "lines": [
       {
        "sku": "VELO-F10",
@@ -2074,17 +2074,17 @@
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-0bf8-70c5-bc12-94e041b433e4",
+   "key": "01a1270b-8ba1-7484-8dbb-ba958095af68",
    "source": "wom",
-   "time": "2026-10-10T17:25:21.016Z",
+   "time": "2026-10-10T18:20:30.497Z",
    "data": {
     "by": "admin",
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d9-0bf8-70c4-8b39-35eea785f3e8",
+     "payment_uid": "01a1270b-8ba1-7483-8883-71036fbc9882",
      "number": 6,
-     "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
-     "order_uid": "01a126d9-0bef-7166-b3db-0d0bec503db5",
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+     "order_uid": "01a1270b-8b97-765e-ad9c-07a22a0c93e6",
      "order_number": 7,
      "amount_cents": 2000,
      "method": "cash",
@@ -2093,24 +2093,24 @@
      "notes": null,
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:21.000Z"
+     "created_at": "2026-10-10T18:20:30.000Z"
     }
    }
   },
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-0bfb-7653-8058-9811b6ff0bb2",
+   "key": "01a1270b-8ba4-7142-abdc-3dbc51813622",
    "source": "wom",
-   "time": "2026-10-10T17:25:21.019Z",
+   "time": "2026-10-10T18:20:30.500Z",
    "data": {
     "by": "admin",
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d9-0bfb-7652-85c0-76acaae82d2e",
+     "payment_uid": "01a1270b-8ba4-7141-8402-467b33b28225",
      "number": 7,
-     "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
-     "order_uid": "01a126d9-0bf3-7740-a56f-fda694efea73",
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+     "order_uid": "01a1270b-8b9c-7671-ae5e-86158d6bc981",
      "order_number": 8,
      "amount_cents": 2260,
      "method": "cash",
@@ -2119,26 +2119,26 @@
      "notes": null,
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:21.000Z"
+     "created_at": "2026-10-10T18:20:30.000Z"
     }
    }
   },
   {
    "name": "note.added",
    "version": 1,
-   "key": "01a126d9-0dfa-747b-8f49-28ae611ef605",
+   "key": "01a1270b-8d9d-7247-85aa-702ce720e24a",
    "source": "wom",
-   "time": "2026-10-10T17:25:21.000Z",
+   "time": "2026-10-10T18:20:30.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "note": {
-     "note_uid": "01a126d9-0df2-72eb-af48-c6290f0c3ee8",
+     "note_uid": "01a1270b-8d96-76ff-b15b-d4e0f9aaef5e",
      "number": 1,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "type": "call",
      "body": "Asked about Zyn 3mg",
-     "at": "2026-10-10T17:25:21.000Z",
+     "at": "2026-10-10T18:20:30.000Z",
      "written_by": "admin"
     }
    }
@@ -2146,13 +2146,13 @@
   {
    "name": "followup.changed",
    "version": 1,
-   "key": "01a126d9-0dfa-747c-98e0-9be4ab81402c",
+   "key": "01a1270b-8d9e-732e-a6bf-faaf21b511f8",
    "source": "wom",
-   "time": "2026-10-10T17:25:21.530Z",
+   "time": "2026-10-10T18:20:31.006Z",
    "data": {
     "by": "admin",
     "backfill": true,
-    "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
+    "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
     "follow_up_date": "2026-10-15",
     "done": false
    }
@@ -2160,18 +2160,18 @@
   {
    "name": "note.added",
    "version": 1,
-   "key": "01a126d9-0fd0-7445-b12e-263fecec2b3a",
+   "key": "01a1270b-8f73-7412-bb20-941191462d60",
    "source": "wom",
-   "time": "2026-10-10T17:25:22.000Z",
+   "time": "2026-10-10T18:20:31.475Z",
    "data": {
     "by": "admin",
     "note": {
-     "note_uid": "01a126d9-0fd0-7444-bd71-685f5bef17c6",
+     "note_uid": "01a1270b-8f73-7411-8137-9fdb7c57f089",
      "number": 2,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "type": "email",
      "body": "Sent the October price list",
-     "at": "2026-10-10T17:25:22.000Z",
+     "at": "2026-10-10T18:20:31.000Z",
      "written_by": "admin"
     }
    }
@@ -2179,12 +2179,12 @@
   {
    "name": "followup.changed",
    "version": 1,
-   "key": "01a126d9-0fd3-755c-be8c-0fff6311a5d7",
+   "key": "01a1270b-8f77-76ca-9fbd-ab11b0fcde6c",
    "source": "wom",
-   "time": "2026-10-10T17:25:22.003Z",
+   "time": "2026-10-10T18:20:31.479Z",
    "data": {
     "by": "admin",
-    "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+    "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
     "follow_up_date": "2026-10-13",
     "done": false
    }
@@ -2192,12 +2192,12 @@
   {
    "name": "followup.changed",
    "version": 1,
-   "key": "01a126d9-11a5-7770-9b32-663aba4c6a7e",
+   "key": "01a1270b-9145-76fa-af9f-c431a2dc456c",
    "source": "wom",
-   "time": "2026-10-10T17:25:22.468Z",
+   "time": "2026-10-10T18:20:31.941Z",
    "data": {
     "by": "admin",
-    "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+    "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
     "follow_up_date": "2026-10-20",
     "done": false
    }
@@ -2205,12 +2205,12 @@
   {
    "name": "followup.changed",
    "version": 1,
-   "key": "01a126d9-12dc-7176-88a6-f0e7573b7d19",
+   "key": "01a1270b-9314-7653-87ae-1e09f446f397",
    "source": "wom",
-   "time": "2026-10-10T17:25:22.779Z",
+   "time": "2026-10-10T18:20:32.404Z",
    "data": {
     "by": "admin",
-    "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+    "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
     "follow_up_date": null,
     "done": true
    }
@@ -2218,18 +2218,18 @@
   {
    "name": "note.added",
    "version": 1,
-   "key": "01a126d9-12dc-7177-8fb8-9c3d416f5ad2",
+   "key": "01a1270b-9314-7654-890d-ba0e22f56151",
    "source": "wom",
-   "time": "2026-10-10T17:25:22.780Z",
+   "time": "2026-10-10T18:20:32.404Z",
    "data": {
     "by": "admin",
     "note": {
-     "note_uid": "01a126d9-12db-770f-9d5d-550466a98045",
+     "note_uid": "01a1270b-9314-7652-ac57-98d40355cb0c",
      "number": 3,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "type": "follow_up",
      "body": "Called, ordering Friday",
-     "at": "2026-10-10T17:25:22.000Z",
+     "at": "2026-10-10T18:20:32.000Z",
      "written_by": "admin"
     }
    }
@@ -2237,28 +2237,28 @@
   {
    "name": "note.deleted",
    "version": 1,
-   "key": "01a126d9-12de-7354-8c76-e5620cd23d31",
+   "key": "01a1270b-9317-7179-a916-9e45cb26e63d",
    "source": "wom",
-   "time": "2026-10-10T17:25:22.782Z",
+   "time": "2026-10-10T18:20:32.407Z",
    "data": {
     "by": "admin",
     "note": {
-     "note_uid": "01a126d9-0fd0-7444-bd71-685f5bef17c6",
+     "note_uid": "01a1270b-8f73-7411-8137-9fdb7c57f089",
      "number": 2,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341"
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de"
     }
    }
   },
   {
    "name": "customer.created",
    "version": 1,
-   "key": "01a126d9-14b2-760d-a67c-06bb1da2a31e",
+   "key": "01a1270b-9453-70b3-91c1-69f12be7bd90",
    "source": "wom",
-   "time": "2026-10-10T17:25:23.250Z",
+   "time": "2026-10-10T18:20:32.723Z",
    "data": {
     "by": "admin",
     "customer": {
-     "customer_uid": "01a126d9-14b2-760c-9b53-e336b1d0cd2e",
+     "customer_uid": "01a1270b-9453-70b2-af64-64d4f7750a7a",
      "number": 3,
      "business_name": "Southside Convenience",
      "contact_name": null,
@@ -2276,25 +2276,25 @@
      "notes": null,
      "tax_exempt": false,
      "group": null,
-     "created_at": "2026-10-10T17:25:23.000Z"
+     "created_at": "2026-10-10T18:20:32.000Z"
     }
    }
   },
   {
    "name": "note.added",
    "version": 1,
-   "key": "01a126d9-14b6-70e9-9585-8778432fbd84",
+   "key": "01a1270b-9456-72e8-972a-ddffc69134a8",
    "source": "wom",
-   "time": "2026-10-10T17:25:23.254Z",
+   "time": "2026-10-10T18:20:32.726Z",
    "data": {
     "by": "admin",
     "note": {
-     "note_uid": "01a126d9-14b6-70e8-bbd4-68bb1c89bee3",
+     "note_uid": "01a1270b-9456-72e7-a6bf-2cc85e6c3727",
      "number": 4,
-     "customer_uid": "01a126d9-14b2-760c-9b53-e336b1d0cd2e",
+     "customer_uid": "01a1270b-9453-70b2-af64-64d4f7750a7a",
      "type": "meeting",
      "body": "Met at the trade show",
-     "at": "2026-10-10T17:25:23.000Z",
+     "at": "2026-10-10T18:20:32.000Z",
      "written_by": "admin"
     }
    }
@@ -2302,14 +2302,14 @@
   {
    "name": "customer.created",
    "version": 1,
-   "key": "01a126d9-15f0-70b7-9d23-3d087c599c85",
+   "key": "01a1270b-9629-72fa-9f12-f98ff835b463",
    "source": "wom",
-   "time": "2026-10-10T17:25:16.000Z",
+   "time": "2026-10-10T18:20:25.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "customer": {
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "number": 1,
      "business_name": "Lefty’s Vape Shop",
      "contact_name": "Lefty",
@@ -2327,27 +2327,27 @@
      "notes": null,
      "tax_exempt": false,
      "group": null,
-     "created_at": "2026-10-10T17:25:16.000Z"
+     "created_at": "2026-10-10T18:20:25.000Z"
     }
    }
   },
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-15f1-74b8-8e70-50a9f19321d3",
+   "key": "01a1270b-9629-72fb-a0bd-324aa5adfdd1",
    "source": "wom",
-   "time": "2026-10-10T17:25:16.000Z",
+   "time": "2026-10-10T18:20:25.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "source": "backfill",
     "order": {
-     "order_uid": "01a126d8-fa2c-77b0-9752-75c7b5575212",
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
      "number": 1,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -2358,7 +2358,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:16.000Z",
+     "created_at": "2026-10-10T18:20:25.000Z",
      "lines": [
       {
        "sku": "ZYN-CM6",
@@ -2406,18 +2406,18 @@
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-15f1-74b9-95f4-83b4543a6fae",
+   "key": "01a1270b-9629-72fc-8dad-613b1a6bd674",
    "source": "wom",
-   "time": "2026-10-10T17:25:16.000Z",
+   "time": "2026-10-10T18:20:25.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d8-fa3b-75ef-8537-c551f817696b",
+     "payment_uid": "01a1270b-7a04-7438-949d-c32739327641",
      "number": 1,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "order_uid": "01a126d8-fa2c-77b0-9752-75c7b5575212",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
      "order_number": 1,
      "amount_cents": 7345,
      "method": "cash",
@@ -2426,27 +2426,27 @@
      "notes": "POS order #1",
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:16.000Z"
+     "created_at": "2026-10-10T18:20:25.000Z"
     }
    }
   },
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-15f1-74ba-9158-a7e7ad9907e0",
+   "key": "01a1270b-962a-729a-8be8-3c3a5de45021",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
+   "time": "2026-10-10T18:20:27.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "source": "backfill",
     "order": {
-     "order_uid": "01a126d9-0078-77c0-86d0-862038a792b7",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
      "number": 2,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -2457,7 +2457,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:27.000Z",
      "lines": [
       {
        "sku": "ZYN-CM6",
@@ -2500,9 +2500,9 @@
      },
      "packing": {
       "state": "shipped",
-      "packed_at": "2026-10-10T17:25:18.000Z",
+      "packed_at": "2026-10-10T18:20:27.000Z",
       "packed_by": "admin",
-      "shipped_at": "2026-10-10T17:25:18.000Z",
+      "shipped_at": "2026-10-10T18:20:27.000Z",
       "shipped_by": "admin",
       "shipped_via": "delivered",
       "tracking_number": null,
@@ -2516,20 +2516,20 @@
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-15f1-74bb-83d4-e609999273f3",
+   "key": "01a1270b-962a-729b-aaf0-217d0ec55efc",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
+   "time": "2026-10-10T18:20:27.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "source": "backfill",
     "order": {
-     "order_uid": "01a126d9-009b-7569-8f2f-c2089a908137",
+     "order_uid": "01a1270b-8068-743f-9632-6cd177e511b9",
      "number": 3,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -2538,9 +2538,9 @@
      },
      "order_date": "2026-10-10",
      "status": "cancelled",
-     "cancelled_at": "2026-10-10T17:25:18.000Z",
+     "cancelled_at": "2026-10-10T18:20:27.000Z",
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:27.000Z",
      "lines": [
       {
        "sku": "VELO-F10",
@@ -2588,20 +2588,20 @@
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-15f1-74bc-9591-e1b64d7b6d39",
+   "key": "01a1270b-962a-729c-ada4-2fc6a8f4161e",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
+   "time": "2026-10-10T18:20:27.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "source": "backfill",
     "order": {
-     "order_uid": "01a126d9-00b3-76a1-8268-7aa0d0325eb7",
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
      "number": 4,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -2612,7 +2612,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:27.000Z",
      "lines": [
       {
        "sku": "ALP-MF",
@@ -2658,22 +2658,180 @@
    }
   },
   {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-962a-729d-a3d6-01a5214f6690",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8046-716d-818f-fc5a36c4ca2b",
+     "number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "order_number": 2,
+     "amount_cents": 4520,
+     "method": "etransfer",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": null,
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z"
+    }
+   }
+  },
+  {
+   "name": "payment.recorded",
+   "version": 1,
+   "key": "01a1270b-962a-729e-8efd-ab6f7370a618",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "recorded",
+    "payment": {
+     "payment_uid": "01a1270b-8087-700d-a7a1-b4f335fbf874",
+     "number": 3,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-8087-700c-92f4-186754e495d3",
+     "order_number": 4,
+     "amount_cents": 3955,
+     "method": "cash",
+     "payment_date": "2026-10-10",
+     "reference_number": null,
+     "notes": "POS order #4",
+     "history_entry": false,
+     "recorded_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z"
+    }
+   }
+  },
+  {
+   "name": "return.received",
+   "version": 1,
+   "key": "01a1270b-962a-729f-8bfc-d66e392ec370",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "return": {
+     "return_uid": "01a1270b-8079-752f-8439-57a16e3e39e8",
+     "number": 1,
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "order_number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "received_at": "2026-10-10T18:20:27.000Z",
+     "items": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 1,
+       "restocked": true
+      },
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 1,
+       "restocked": false
+      }
+     ],
+     "note": "Crushed tins",
+     "reason": "Crushed tins",
+     "outcome": "credit_note",
+     "amount_cents": 1469,
+     "credit_note_uid": "01a1270b-807b-74ff-99ef-483782e55600",
+     "subtotal_cents": 1300,
+     "tax_cents": 169,
+     "shipping_cents": 0
+    }
+   }
+  },
+  {
+   "name": "refund.issued",
+   "version": 1,
+   "key": "01a1270b-962a-72a0-8b8b-5028cce7e6e5",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "change": "issued",
+    "refund": {
+     "refund_uid": "01a1270b-8082-7517-ace4-eb5978346128",
+     "number": 1,
+     "order_uid": "01a1270b-79ef-743f-bf8e-b8d265ec5f74",
+     "order_number": 1,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "kind": "refund",
+     "amount_cents": 735,
+     "amount_raw": 7.35,
+     "items": [],
+     "reason": "One tin short",
+     "issued_by": "admin",
+     "created_at": "2026-10-10T18:20:27.000Z",
+     "method": "etransfer",
+     "return_uid": null
+    }
+   }
+  },
+  {
+   "name": "credit_note.issued",
+   "version": 1,
+   "key": "01a1270b-962a-72a1-8468-557f4e259d5f",
+   "source": "wom",
+   "time": "2026-10-10T18:20:27.000Z",
+   "data": {
+    "by": "admin",
+    "backfill": true,
+    "credit_note": {
+     "credit_note_uid": "01a1270b-807b-74ff-99ef-483782e55600",
+     "number": "CN-0001",
+     "order_uid": "01a1270b-803c-72e3-8ee8-f89316a9d3a6",
+     "order_number": 2,
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "amount_cents": 1469,
+     "lines": [
+      {
+       "sku": "ZYN-CM6",
+       "name": "Zyn Cool Mint 6mg",
+       "quantity": 2,
+       "amount_cents": 1469,
+       "subtotal_cents": 1300,
+       "tax_cents": 169
+      }
+     ],
+     "reason": "Crushed tins",
+     "issued_at": "2026-10-10T18:20:27.000Z",
+     "return_uid": "01a1270b-8079-752f-8439-57a16e3e39e8",
+     "subtotal_cents": 1300,
+     "tax_cents": 169,
+     "shipping_cents": 0
+    }
+   }
+  },
+  {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-15f1-74bd-84df-541fd2cc4040",
+   "key": "01a1270b-962b-72e5-9828-12df96840eec",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
+   "time": "2026-10-10T18:20:28.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "source": "backfill",
     "order": {
-     "order_uid": "01a126d9-03fb-70c6-b0e9-95c817b8d82e",
+     "order_uid": "01a1270b-8455-7008-9b8e-c021e014dbb2",
      "number": 5,
      "reference_number": null,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "customer": {
-      "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+      "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
       "number": 1,
       "business_name": "Lefty’s Vape Shop",
       "contact_name": "Lefty",
@@ -2684,7 +2842,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:18.000Z",
+     "created_at": "2026-10-10T18:20:28.000Z",
      "lines": [
       {
        "sku": "VELO-F10",
@@ -2732,71 +2890,17 @@
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-15f2-747e-92c2-4d214436c09f",
+   "key": "01a1270b-962b-72e6-8ebb-54926cf29022",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
+   "time": "2026-10-10T18:20:28.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d9-0080-7791-abb5-1fcbf5933a32",
-     "number": 2,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "order_uid": "01a126d9-0078-77c0-86d0-862038a792b7",
-     "order_number": 2,
-     "amount_cents": 4520,
-     "method": "etransfer",
-     "payment_date": "2026-10-10",
-     "reference_number": null,
-     "notes": null,
-     "history_entry": false,
-     "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z"
-    }
-   }
-  },
-  {
-   "name": "payment.recorded",
-   "version": 1,
-   "key": "01a126d9-15f2-747f-9e02-493ef818a1cc",
-   "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
-   "data": {
-    "by": "admin",
-    "backfill": true,
-    "change": "recorded",
-    "payment": {
-     "payment_uid": "01a126d9-00b3-76a2-a4e7-6a85fc54e811",
-     "number": 3,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "order_uid": "01a126d9-00b3-76a1-8268-7aa0d0325eb7",
-     "order_number": 4,
-     "amount_cents": 3955,
-     "method": "cash",
-     "payment_date": "2026-10-10",
-     "reference_number": null,
-     "notes": "POS order #4",
-     "history_entry": false,
-     "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z"
-    }
-   }
-  },
-  {
-   "name": "payment.recorded",
-   "version": 1,
-   "key": "01a126d9-15f2-7480-8ac2-ea3ea271c006",
-   "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
-   "data": {
-    "by": "admin",
-    "backfill": true,
-    "change": "recorded",
-    "payment": {
-     "payment_uid": "01a126d9-02b0-7558-981d-e000ca8e73a7",
+     "payment_uid": "01a1270b-8279-77ac-ad71-4728c8fb1e70",
      "number": 4,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "order_uid": null,
      "order_number": null,
      "amount_cents": 2000,
@@ -2806,25 +2910,25 @@
      "notes": "On account",
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z"
+     "created_at": "2026-10-10T18:20:28.000Z"
     }
    }
   },
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-15f2-7481-bd51-bda1be5c4461",
+   "key": "01a1270b-962b-72e7-ac74-8f9b12b8f851",
    "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
+   "time": "2026-10-10T18:20:28.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d9-03fb-70c7-8723-7e9115660945",
+     "payment_uid": "01a1270b-8455-7009-b6bf-7724c9fddf0f",
      "number": 5,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "order_uid": "01a126d9-03fb-70c6-b0e9-95c817b8d82e",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
+     "order_uid": "01a1270b-8455-7008-9b8e-c021e014dbb2",
      "order_number": 5,
      "amount_cents": 565,
      "method": "cash",
@@ -2833,125 +2937,21 @@
      "notes": "POS order #5",
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z"
-    }
-   }
-  },
-  {
-   "name": "return.received",
-   "version": 1,
-   "key": "01a126d9-15f2-7482-8c52-7910f41551a6",
-   "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
-   "data": {
-    "by": "admin",
-    "backfill": true,
-    "return": {
-     "return_uid": "01a126d9-00a9-7306-84c6-6bce248d284d",
-     "number": 1,
-     "order_uid": "01a126d9-0078-77c0-86d0-862038a792b7",
-     "order_number": 2,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "received_at": "2026-10-10T17:25:18.000Z",
-     "items": [
-      {
-       "sku": "ZYN-CM6",
-       "name": "Zyn Cool Mint 6mg",
-       "quantity": 1,
-       "restocked": true
-      },
-      {
-       "sku": "ZYN-CM6",
-       "name": "Zyn Cool Mint 6mg",
-       "quantity": 1,
-       "restocked": false
-      }
-     ],
-     "note": "Crushed tins",
-     "reason": "Crushed tins",
-     "outcome": "credit_note",
-     "amount_cents": 1469,
-     "credit_note_uid": "01a126d9-00aa-726f-b50d-a5145a095c80",
-     "subtotal_cents": 1300,
-     "tax_cents": 169,
-     "shipping_cents": 0
-    }
-   }
-  },
-  {
-   "name": "refund.issued",
-   "version": 1,
-   "key": "01a126d9-15f2-7483-9c6f-c0152f298ccd",
-   "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
-   "data": {
-    "by": "admin",
-    "backfill": true,
-    "change": "issued",
-    "refund": {
-     "refund_uid": "01a126d9-00af-72a0-81c1-ff75fdba7a7b",
-     "number": 1,
-     "order_uid": "01a126d8-fa2c-77b0-9752-75c7b5575212",
-     "order_number": 1,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "kind": "refund",
-     "amount_cents": 735,
-     "amount_raw": 7.35,
-     "items": [],
-     "reason": "One tin short",
-     "issued_by": "admin",
-     "created_at": "2026-10-10T17:25:18.000Z",
-     "method": "etransfer",
-     "return_uid": null
-    }
-   }
-  },
-  {
-   "name": "credit_note.issued",
-   "version": 1,
-   "key": "01a126d9-15f2-7484-abfe-30d72c4b875e",
-   "source": "wom",
-   "time": "2026-10-10T17:25:18.000Z",
-   "data": {
-    "by": "admin",
-    "backfill": true,
-    "credit_note": {
-     "credit_note_uid": "01a126d9-00aa-726f-b50d-a5145a095c80",
-     "number": "CN-0001",
-     "order_uid": "01a126d9-0078-77c0-86d0-862038a792b7",
-     "order_number": 2,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
-     "amount_cents": 1469,
-     "lines": [
-      {
-       "sku": "ZYN-CM6",
-       "name": "Zyn Cool Mint 6mg",
-       "quantity": 2,
-       "amount_cents": 1469,
-       "subtotal_cents": 1300,
-       "tax_cents": 169
-      }
-     ],
-     "reason": "Crushed tins",
-     "issued_at": "2026-10-10T17:25:18.000Z",
-     "return_uid": "01a126d9-00a9-7306-84c6-6bce248d284d",
-     "subtotal_cents": 1300,
-     "tax_cents": 169,
-     "shipping_cents": 0
+     "created_at": "2026-10-10T18:20:28.000Z"
     }
    }
   },
   {
    "name": "customer.created",
    "version": 1,
-   "key": "01a126d9-15f2-7485-bc28-98f0574b6262",
+   "key": "01a1270b-962b-72e8-9250-a58db8fd3b28",
    "source": "wom",
-   "time": "2026-10-10T17:25:20.000Z",
+   "time": "2026-10-10T18:20:30.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "customer": {
-     "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
      "number": 2,
      "business_name": "Northwind Corner Store",
      "contact_name": "Robin",
@@ -2969,27 +2969,27 @@
      "notes": null,
      "tax_exempt": false,
      "group": null,
-     "created_at": "2026-10-10T17:25:20.000Z"
+     "created_at": "2026-10-10T18:20:30.000Z"
     }
    }
   },
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-15f2-7486-84b0-4704d94a9dbe",
+   "key": "01a1270b-962b-72e9-bea7-c89cce18ac1b",
    "source": "wom",
-   "time": "2026-10-10T17:25:21.000Z",
+   "time": "2026-10-10T18:20:30.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "source": "backfill",
     "order": {
-     "order_uid": "01a126d9-0bea-760c-9cc1-f9fcf7c50447",
+     "order_uid": "01a1270b-8b93-72c1-bcc6-3bc7fee64e39",
      "number": 6,
      "reference_number": null,
-     "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
      "customer": {
-      "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
+      "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
       "number": 2,
       "business_name": "Northwind Corner Store",
       "contact_name": "Robin",
@@ -3000,7 +3000,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:21.000Z",
+     "created_at": "2026-10-10T18:20:30.000Z",
      "lines": [
       {
        "sku": "ZYN-CM6",
@@ -3048,20 +3048,20 @@
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-15f3-7291-a627-63ff28c1884f",
+   "key": "01a1270b-962b-72ea-b694-fb0ef754eb70",
    "source": "wom",
-   "time": "2026-10-10T17:25:21.000Z",
+   "time": "2026-10-10T18:20:30.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "source": "backfill",
     "order": {
-     "order_uid": "01a126d9-0bef-7166-b3db-0d0bec503db5",
+     "order_uid": "01a1270b-8b97-765e-ad9c-07a22a0c93e6",
      "number": 7,
      "reference_number": null,
-     "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
      "customer": {
-      "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
+      "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
       "number": 2,
       "business_name": "Northwind Corner Store",
       "contact_name": "Robin",
@@ -3072,7 +3072,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:21.000Z",
+     "created_at": "2026-10-10T18:20:30.000Z",
      "lines": [
       {
        "sku": "ALP-MF",
@@ -3120,20 +3120,20 @@
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-15f3-7292-9ba5-fb32c6f2ac90",
+   "key": "01a1270b-962b-72eb-b4b2-6177445001fa",
    "source": "wom",
-   "time": "2026-10-10T17:25:21.000Z",
+   "time": "2026-10-10T18:20:30.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "source": "backfill",
     "order": {
-     "order_uid": "01a126d9-0bf3-7740-a56f-fda694efea73",
+     "order_uid": "01a1270b-8b9c-7671-ae5e-86158d6bc981",
      "number": 8,
      "reference_number": null,
-     "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
      "customer": {
-      "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
+      "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
       "number": 2,
       "business_name": "Northwind Corner Store",
       "contact_name": "Robin",
@@ -3144,7 +3144,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:21.000Z",
+     "created_at": "2026-10-10T18:20:30.000Z",
      "lines": [
       {
        "sku": "VELO-F10",
@@ -3192,18 +3192,18 @@
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-15f3-7293-a9b6-442aea5d242f",
+   "key": "01a1270b-962b-72ec-ab0f-d1fa129aa6ee",
    "source": "wom",
-   "time": "2026-10-10T17:25:21.000Z",
+   "time": "2026-10-10T18:20:30.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d9-0bf8-70c4-8b39-35eea785f3e8",
+     "payment_uid": "01a1270b-8ba1-7483-8883-71036fbc9882",
      "number": 6,
-     "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
-     "order_uid": "01a126d9-0bef-7166-b3db-0d0bec503db5",
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+     "order_uid": "01a1270b-8b97-765e-ad9c-07a22a0c93e6",
      "order_number": 7,
      "amount_cents": 2000,
      "method": "cash",
@@ -3212,25 +3212,25 @@
      "notes": null,
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:21.000Z"
+     "created_at": "2026-10-10T18:20:30.000Z"
     }
    }
   },
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-15f3-7294-8d09-50839fc46797",
+   "key": "01a1270b-962b-72ed-85a1-b9c7b2c937d3",
    "source": "wom",
-   "time": "2026-10-10T17:25:21.000Z",
+   "time": "2026-10-10T18:20:30.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d9-0bfb-7652-85c0-76acaae82d2e",
+     "payment_uid": "01a1270b-8ba4-7141-8402-467b33b28225",
      "number": 7,
-     "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
-     "order_uid": "01a126d9-0bf3-7740-a56f-fda694efea73",
+     "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
+     "order_uid": "01a1270b-8b9c-7671-ae5e-86158d6bc981",
      "order_number": 8,
      "amount_cents": 2260,
      "method": "cash",
@@ -3239,21 +3239,21 @@
      "notes": null,
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:21.000Z"
+     "created_at": "2026-10-10T18:20:30.000Z"
     }
    }
   },
   {
    "name": "customer.created",
    "version": 1,
-   "key": "01a126d9-15f3-7295-9286-adb90928e3dc",
+   "key": "01a1270b-962b-72ee-b299-f4be4e7e10a7",
    "source": "wom",
-   "time": "2026-10-10T17:25:23.000Z",
+   "time": "2026-10-10T18:20:32.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "customer": {
-     "customer_uid": "01a126d9-14b2-760c-9b53-e336b1d0cd2e",
+     "customer_uid": "01a1270b-9453-70b2-af64-64d4f7750a7a",
      "number": 3,
      "business_name": "Southside Convenience",
      "contact_name": null,
@@ -3271,26 +3271,26 @@
      "notes": null,
      "tax_exempt": false,
      "group": null,
-     "created_at": "2026-10-10T17:25:23.000Z"
+     "created_at": "2026-10-10T18:20:32.000Z"
     }
    }
   },
   {
    "name": "note.added",
    "version": 1,
-   "key": "01a126d9-15f3-7296-bbcf-3937413d5c94",
+   "key": "01a1270b-962c-71d2-8d71-1258b0824c38",
    "source": "wom",
-   "time": "2026-10-10T17:25:21.000Z",
+   "time": "2026-10-10T18:20:30.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "note": {
-     "note_uid": "01a126d9-0df2-72eb-af48-c6290f0c3ee8",
+     "note_uid": "01a1270b-8d96-76ff-b15b-d4e0f9aaef5e",
      "number": 1,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "type": "call",
      "body": "Asked about Zyn 3mg",
-     "at": "2026-10-10T17:25:21.000Z",
+     "at": "2026-10-10T18:20:30.000Z",
      "written_by": "admin"
     }
    }
@@ -3298,19 +3298,19 @@
   {
    "name": "note.added",
    "version": 1,
-   "key": "01a126d9-15f4-733c-ae8d-3141696cd6df",
+   "key": "01a1270b-962c-71d3-917d-c261ba286e8a",
    "source": "wom",
-   "time": "2026-10-10T17:25:22.000Z",
+   "time": "2026-10-10T18:20:32.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "note": {
-     "note_uid": "01a126d9-12db-770f-9d5d-550466a98045",
+     "note_uid": "01a1270b-9314-7652-ac57-98d40355cb0c",
      "number": 3,
-     "customer_uid": "01a126d8-fa20-7063-96db-a6fe49f19341",
+     "customer_uid": "01a1270b-79e4-7134-9cde-35cc4c54e8de",
      "type": "follow_up",
      "body": "Called, ordering Friday",
-     "at": "2026-10-10T17:25:22.000Z",
+     "at": "2026-10-10T18:20:32.000Z",
      "written_by": "admin"
     }
    }
@@ -3318,19 +3318,19 @@
   {
    "name": "note.added",
    "version": 1,
-   "key": "01a126d9-15f4-733d-b586-a70d5647de17",
+   "key": "01a1270b-962c-71d4-943c-ab28ae062cbc",
    "source": "wom",
-   "time": "2026-10-10T17:25:23.000Z",
+   "time": "2026-10-10T18:20:32.000Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "note": {
-     "note_uid": "01a126d9-14b6-70e8-bbd4-68bb1c89bee3",
+     "note_uid": "01a1270b-9456-72e7-a6bf-2cc85e6c3727",
      "number": 4,
-     "customer_uid": "01a126d9-14b2-760c-9b53-e336b1d0cd2e",
+     "customer_uid": "01a1270b-9453-70b2-af64-64d4f7750a7a",
      "type": "meeting",
      "body": "Met at the trade show",
-     "at": "2026-10-10T17:25:23.000Z",
+     "at": "2026-10-10T18:20:32.000Z",
      "written_by": "admin"
     }
    }
@@ -3338,13 +3338,13 @@
   {
    "name": "followup.changed",
    "version": 1,
-   "key": "01a126d9-15f8-7749-9131-c077490dc8ee",
+   "key": "01a1270b-9632-7065-9296-f3bd0e4b39af",
    "source": "wom",
-   "time": "2026-10-10T17:25:23.576Z",
+   "time": "2026-10-10T18:20:33.202Z",
    "data": {
     "by": "admin",
     "backfill": true,
-    "customer_uid": "01a126d9-0be5-7763-bc45-138ecfef8e45",
+    "customer_uid": "01a1270b-8b8e-7457-8035-4db22c125a88",
     "follow_up_date": "2026-10-15",
     "done": false
    }
@@ -3352,13 +3352,13 @@
   {
    "name": "customer.created",
    "version": 1,
-   "key": "01a126d9-17de-71b3-822a-b77bb3a55f06",
+   "key": "01a1270b-978a-723f-bc69-5cf4722c3453",
    "source": "wom",
-   "time": "2026-10-10T17:25:24.062Z",
+   "time": "2026-10-10T18:20:33.546Z",
    "data": {
     "by": "admin",
     "customer": {
-     "customer_uid": "01a126d9-17dd-7650-bb13-aaa8278686d4",
+     "customer_uid": "01a1270b-978a-723e-9eac-d3ea6ea9d7ce",
      "number": 4,
      "business_name": "Harbour Smoke & Vape",
      "contact_name": "Dana",
@@ -3376,26 +3376,26 @@
      "notes": null,
      "tax_exempt": false,
      "group": null,
-     "created_at": "2026-10-10T17:25:24.000Z"
+     "created_at": "2026-10-10T18:20:33.000Z"
     }
    }
   },
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-17e3-7233-889e-977db1a97349",
+   "key": "01a1270b-978d-7170-ab74-c233b73f1b82",
    "source": "wom",
-   "time": "2026-10-10T17:25:24.067Z",
+   "time": "2026-10-10T18:20:33.549Z",
    "data": {
     "by": "admin",
     "source": "order",
     "order": {
-     "order_uid": "01a126d9-17e2-72eb-bca1-cd620c5323bd",
+     "order_uid": "01a1270b-978d-716f-becc-af6026846bec",
      "number": 9,
      "reference_number": null,
-     "customer_uid": "01a126d9-17dd-7650-bb13-aaa8278686d4",
+     "customer_uid": "01a1270b-978a-723e-9eac-d3ea6ea9d7ce",
      "customer": {
-      "customer_uid": "01a126d9-17dd-7650-bb13-aaa8278686d4",
+      "customer_uid": "01a1270b-978a-723e-9eac-d3ea6ea9d7ce",
       "number": 4,
       "business_name": "Harbour Smoke & Vape",
       "contact_name": "Dana",
@@ -3406,7 +3406,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:24.000Z",
+     "created_at": "2026-10-10T18:20:33.000Z",
      "lines": [
       {
        "sku": "ZYN-CM6",
@@ -3454,13 +3454,13 @@
   {
    "name": "customer.created",
    "version": 1,
-   "key": "01a126d9-1929-73c5-bbe0-a0e7cf81faa9",
+   "key": "01a1270b-9964-7238-8df4-5981c852ab2a",
    "source": "wom",
-   "time": "2026-10-10T17:25:24.393Z",
+   "time": "2026-10-10T18:20:34.019Z",
    "data": {
     "by": "admin",
     "customer": {
-     "customer_uid": "01a126d9-1928-7465-a8b3-9978f128cb9f",
+     "customer_uid": "01a1270b-9963-7040-9795-7b5c6445c5a6",
      "number": 5,
      "business_name": "Harbour Smoke Shop Ltd",
      "contact_name": "Kai",
@@ -3478,21 +3478,21 @@
      "notes": null,
      "tax_exempt": false,
      "group": null,
-     "created_at": "2026-10-10T17:25:24.000Z"
+     "created_at": "2026-10-10T18:20:34.000Z"
     }
    }
   },
   {
    "name": "customer.updated",
    "version": 1,
-   "key": "01a126d9-1a6d-751b-821f-39b6d9b1c1e8",
+   "key": "01a1270b-9b3d-75aa-a8eb-019cbe78f9e4",
    "source": "wom",
-   "time": "2026-10-10T17:25:24.717Z",
+   "time": "2026-10-10T18:20:34.493Z",
    "data": {
     "by": "admin",
     "change": "edited",
     "customer": {
-     "customer_uid": "01a126d9-17dd-7650-bb13-aaa8278686d4",
+     "customer_uid": "01a1270b-978a-723e-9eac-d3ea6ea9d7ce",
      "number": 4,
      "business_name": "Harbour Smoke & Vape",
      "contact_name": "Dana R.",
@@ -3510,20 +3510,20 @@
      "notes": null,
      "tax_exempt": false,
      "group": null,
-     "created_at": "2026-10-10T17:25:24.000Z"
+     "created_at": "2026-10-10T18:20:33.000Z"
     }
    }
   },
   {
    "name": "customer.created",
    "version": 1,
-   "key": "01a126d9-1ba9-71a7-a81d-2636069b2a95",
+   "key": "01a1270b-9c79-7629-949a-6dbc2ef57284",
    "source": "wom",
-   "time": "2026-10-10T17:25:25.033Z",
+   "time": "2026-10-10T18:20:34.809Z",
    "data": {
     "by": "admin",
     "customer": {
-     "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
      "number": 6,
      "business_name": "Bayview Variety",
      "contact_name": "Sam",
@@ -3541,26 +3541,26 @@
      "notes": null,
      "tax_exempt": false,
      "group": null,
-     "created_at": "2026-10-10T17:25:25.000Z"
+     "created_at": "2026-10-10T18:20:34.000Z"
     }
    }
   },
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-1bae-721c-85ba-a71bf7922d88",
+   "key": "01a1270b-9c7e-73df-8e8d-7093dcfee92a",
    "source": "wom",
-   "time": "2026-10-10T17:25:25.038Z",
+   "time": "2026-10-10T18:20:34.814Z",
    "data": {
     "by": "admin",
     "source": "history_only",
     "order": {
-     "order_uid": "01a126d9-1bad-7120-87e5-3b743bffc348",
+     "order_uid": "01a1270b-9c7d-74b0-9ddc-dad1e8db3d83",
      "number": 10,
      "reference_number": null,
-     "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
      "customer": {
-      "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
       "number": 6,
       "business_name": "Bayview Variety",
       "contact_name": "Sam",
@@ -3619,17 +3619,17 @@
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-1bae-721d-9548-88fa96056d8d",
+   "key": "01a1270b-9c7e-73e0-9dee-8dbf7ef1b2b2",
    "source": "wom",
-   "time": "2026-10-10T17:25:25.038Z",
+   "time": "2026-10-10T18:20:34.814Z",
    "data": {
     "by": "admin",
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d9-1bad-7121-b1ec-375e482de40b",
+     "payment_uid": "01a1270b-9c7e-73de-ba0c-495f1afb0a32",
      "number": 8,
-     "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
-     "order_uid": "01a126d9-1bad-7120-87e5-3b743bffc348",
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "order_uid": "01a1270b-9c7d-74b0-9ddc-dad1e8db3d83",
      "order_number": 10,
      "amount_cents": 14690,
      "method": "cash",
@@ -3645,19 +3645,19 @@
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-1bb2-7395-8217-7007afef4ee8",
+   "key": "01a1270b-9c83-7461-8614-ddc63794000d",
    "source": "wom",
-   "time": "2026-10-10T17:25:25.042Z",
+   "time": "2026-10-10T18:20:34.819Z",
    "data": {
     "by": "admin",
     "source": "history_only",
     "order": {
-     "order_uid": "01a126d9-1bb1-740e-8067-06f2a810afcc",
+     "order_uid": "01a1270b-9c82-7346-a89c-3df40e421025",
      "number": 11,
      "reference_number": null,
-     "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
      "customer": {
-      "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
       "number": 6,
       "business_name": "Bayview Variety",
       "contact_name": "Sam",
@@ -3727,19 +3727,19 @@
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-1bb6-7742-b638-a59ed572c564",
+   "key": "01a1270b-9c87-722a-b7ae-1846416e1bdc",
    "source": "wom",
-   "time": "2026-10-10T17:25:25.046Z",
+   "time": "2026-10-10T18:20:34.823Z",
    "data": {
     "by": "admin",
     "source": "order",
     "order": {
-     "order_uid": "01a126d9-1bb6-7741-9878-be871e962863",
+     "order_uid": "01a1270b-9c87-7229-af2f-4fd0e0fcf8c4",
      "number": 12,
      "reference_number": null,
-     "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
      "customer": {
-      "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
       "number": 6,
       "business_name": "Bayview Variety",
       "contact_name": "Sam",
@@ -3750,7 +3750,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:25.000Z",
+     "created_at": "2026-10-10T18:20:34.000Z",
      "lines": [
       {
        "sku": "ZYN-CM6",
@@ -3801,19 +3801,19 @@
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-1bba-7405-93bf-7d0cb967a3cd",
+   "key": "01a1270b-9c8b-779e-a772-468dd3f1553d",
    "source": "wom",
-   "time": "2026-10-10T17:25:25.050Z",
+   "time": "2026-10-10T18:20:34.827Z",
    "data": {
     "by": "admin",
     "source": "order",
     "order": {
-     "order_uid": "01a126d9-1bb9-7151-9b21-200dd044cdf0",
+     "order_uid": "01a1270b-9c8a-730a-9525-3a24b3b29152",
      "number": 13,
      "reference_number": null,
-     "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
      "customer": {
-      "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
       "number": 6,
       "business_name": "Bayview Variety",
       "contact_name": "Sam",
@@ -3824,7 +3824,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:25.000Z",
+     "created_at": "2026-10-10T18:20:34.000Z",
      "lines": [
       {
        "sku": "ZYN-CM6",
@@ -3875,19 +3875,19 @@
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-1bbd-730e-9591-fc4a59415aff",
+   "key": "01a1270b-9c8e-725a-8514-5871061d2ddb",
    "source": "wom",
-   "time": "2026-10-10T17:25:25.053Z",
+   "time": "2026-10-10T18:20:34.830Z",
    "data": {
     "by": "admin",
     "source": "order",
     "order": {
-     "order_uid": "01a126d9-1bbd-730d-9a89-9dc2baf6ed69",
+     "order_uid": "01a1270b-9c8d-71df-928d-0bf3ae0a7d6a",
      "number": 14,
      "reference_number": null,
-     "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
      "customer": {
-      "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
       "number": 6,
       "business_name": "Bayview Variety",
       "contact_name": "Sam",
@@ -3898,7 +3898,7 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:25.000Z",
+     "created_at": "2026-10-10T18:20:34.000Z",
      "lines": [
       {
        "sku": "ZYN-CM6",
@@ -3949,19 +3949,19 @@
   {
    "name": "order.placed",
    "version": 1,
-   "key": "01a126d9-1bc0-7504-9c4a-193d4d082840",
+   "key": "01a1270b-9c92-703e-bc67-7571251aeea9",
    "source": "wom",
-   "time": "2026-10-10T17:25:25.056Z",
+   "time": "2026-10-10T18:20:34.834Z",
    "data": {
     "by": "admin",
     "source": "order",
     "order": {
-     "order_uid": "01a126d9-1bc0-7503-97fa-d02f2e9418cd",
+     "order_uid": "01a1270b-9c92-703d-8a33-c790df2e41df",
      "number": 15,
      "reference_number": null,
-     "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
      "customer": {
-      "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
       "number": 6,
       "business_name": "Bayview Variety",
       "contact_name": "Sam",
@@ -3972,7 +3972,161 @@
      "status": "active",
      "cancelled_at": null,
      "history_only": false,
-     "created_at": "2026-10-10T17:25:25.000Z",
+     "created_at": "2026-10-10T18:20:34.000Z",
+     "lines": [
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 3,
+       "unit_price_cents": 700,
+       "subtotal_cents": 2100,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 2100
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 2100,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 273,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 2373,
+      "items_raw": 21,
+      "discount_raw": 0,
+      "tax_raw": 2.73
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "order.changed",
+   "version": 1,
+   "key": "01a1270b-9c97-7069-8ce7-23d7d59c50d2",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.839Z",
+   "data": {
+    "by": "admin",
+    "change": "tags",
+    "changes": [
+     {
+      "field": "tags",
+      "from": [],
+      "to": [
+       "evening"
+      ]
+     }
+    ],
+    "change_uid": "01a1270b-9c96-7739-b28c-80f120d88ec5",
+    "order": {
+     "order_uid": "01a1270b-9c92-703d-8a33-c790df2e41df",
+     "number": 15,
+     "reference_number": null,
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "customer": {
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+      "number": 6,
+      "business_name": "Bayview Variety",
+      "contact_name": "Sam",
+      "email": null,
+      "phone": null
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T01:30:00.000Z",
+     "lines": [
+      {
+       "sku": "ALP-MF",
+       "name": "ALP Mango Freeze",
+       "brand": "ALP",
+       "quantity": 3,
+       "unit_price_cents": 700,
+       "subtotal_cents": 2100,
+       "discount": null,
+       "discount_cents": 0,
+       "total_cents": 2100
+      }
+     ],
+     "discount": null,
+     "totals": {
+      "subtotal_cents": 2100,
+      "line_discounts_cents": 0,
+      "order_discount_cents": 0,
+      "other_discount_cents": 0,
+      "discount_cents": 0,
+      "shipping_cents": 0,
+      "tax_cents": 273,
+      "tax_rate": 13,
+      "tax_province": "ON",
+      "total_cents": 2373,
+      "items_raw": 21,
+      "discount_raw": 0,
+      "tax_raw": 2.73
+     },
+     "packing": {
+      "state": "to_pack",
+      "packed_at": null,
+      "packed_by": null,
+      "shipped_at": null,
+      "shipped_by": null,
+      "shipped_via": null,
+      "tracking_number": null,
+      "carrier_service": null
+     },
+     "notes": null,
+     "tags": [
+      "evening"
+     ]
+    }
+   }
+  },
+  {
+   "name": "order.placed",
+   "version": 1,
+   "key": "01a1270b-9c99-7550-88c9-6c5731ba3d57",
+   "source": "wom",
+   "time": "2026-10-10T18:20:34.841Z",
+   "data": {
+    "by": "admin",
+    "source": "order",
+    "order": {
+     "order_uid": "01a1270b-9c99-754f-b6b1-ba6e7fa7a4cd",
+     "number": 16,
+     "reference_number": null,
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "customer": {
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+      "number": 6,
+      "business_name": "Bayview Variety",
+      "contact_name": "Sam",
+      "email": null,
+      "phone": null
+     },
+     "order_date": "2026-10-10",
+     "status": "active",
+     "cancelled_at": null,
+     "history_only": false,
+     "created_at": "2026-10-10T18:20:34.000Z",
      "lines": [
       {
        "sku": "VELO-F10",
@@ -4020,9 +4174,9 @@
   {
    "name": "order.cancelled",
    "version": 1,
-   "key": "01a126d9-1bc4-7049-bcfe-5dad518ceafe",
+   "key": "01a1270b-9c9c-7459-88b3-80a5388f91ac",
    "source": "wom",
-   "time": "2026-10-10T17:25:25.060Z",
+   "time": "2026-10-10T18:20:34.844Z",
    "data": {
     "by": "admin",
     "changes": [
@@ -4032,14 +4186,14 @@
       "to": "cancelled"
      }
     ],
-    "change_uid": "01a126d9-1bc4-7048-bdab-60c3ba0ae2e0",
+    "change_uid": "01a1270b-9c9c-7458-95e9-31f06774d4ab",
     "order": {
-     "order_uid": "01a126d9-1bc0-7503-97fa-d02f2e9418cd",
-     "number": 15,
+     "order_uid": "01a1270b-9c99-754f-b6b1-ba6e7fa7a4cd",
+     "number": 16,
      "reference_number": null,
-     "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
      "customer": {
-      "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+      "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
       "number": 6,
       "business_name": "Bayview Variety",
       "contact_name": "Sam",
@@ -4048,9 +4202,9 @@
      },
      "order_date": "2026-10-10",
      "status": "cancelled",
-     "cancelled_at": "2026-10-10T17:25:25.000Z",
+     "cancelled_at": "2026-10-10T18:20:34.000Z",
      "history_only": false,
-     "created_at": "2026-10-10T17:25:25.000Z",
+     "created_at": "2026-10-10T18:20:34.000Z",
      "lines": [
       {
        "sku": "VELO-F10",
@@ -4098,25 +4252,25 @@
   {
    "name": "refund.issued",
    "version": 1,
-   "key": "01a126d9-1bc7-77fe-b9d2-5fba433764be",
+   "key": "01a1270b-9c9f-72aa-a79b-1643f3e87684",
    "source": "wom",
-   "time": "2026-10-10T17:25:25.063Z",
+   "time": "2026-10-10T18:20:34.847Z",
    "data": {
     "by": "admin",
     "change": "issued",
     "refund": {
-     "refund_uid": "01a126d9-1bc7-77fd-92b3-8791adcc6ec5",
+     "refund_uid": "01a1270b-9c9f-72a9-8ab8-bbb285cba257",
      "number": 2,
-     "order_uid": "01a126d9-1bad-7120-87e5-3b743bffc348",
+     "order_uid": "01a1270b-9c7d-74b0-9ddc-dad1e8db3d83",
      "order_number": 10,
-     "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
      "kind": "refund",
      "amount_cents": 1000,
      "amount_raw": 10,
      "items": [],
      "reason": "Two tins dented",
      "issued_by": "admin",
-     "created_at": "2026-10-10T17:25:25.000Z",
+     "created_at": "2026-10-10T18:20:34.000Z",
      "method": "cash",
      "return_uid": null
     }
@@ -4125,17 +4279,17 @@
   {
    "name": "payment.recorded",
    "version": 1,
-   "key": "01a126d9-1bca-710b-ad68-a8db7232953a",
+   "key": "01a1270b-9ca2-749a-8620-19d2ac6be902",
    "source": "wom",
-   "time": "2026-10-10T17:25:25.066Z",
+   "time": "2026-10-10T18:20:34.850Z",
    "data": {
     "by": "admin",
     "change": "recorded",
     "payment": {
-     "payment_uid": "01a126d9-1bca-710a-8054-90686fef6c25",
+     "payment_uid": "01a1270b-9ca1-7362-a6e1-6fb4abd3e42c",
      "number": 9,
-     "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
-     "order_uid": "01a126d9-1bb6-7741-9878-be871e962863",
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
+     "order_uid": "01a1270b-9c87-7229-af2f-4fd0e0fcf8c4",
      "order_number": 12,
      "amount_cents": 1500,
      "method": "etransfer",
@@ -4144,32 +4298,32 @@
      "notes": null,
      "history_entry": false,
      "recorded_by": "admin",
-     "created_at": "2026-10-10T17:25:25.000Z"
+     "created_at": "2026-10-10T18:20:34.000Z"
     }
    }
   },
   {
    "name": "refund.issued",
    "version": 1,
-   "key": "01a126d9-1bcd-76b5-9f4d-a54e4a0f4024",
+   "key": "01a1270b-9ca4-714a-b8d3-d0c909c01b19",
    "source": "wom",
-   "time": "2026-10-10T17:25:25.069Z",
+   "time": "2026-10-10T18:20:34.852Z",
    "data": {
     "by": "admin",
     "change": "issued",
     "refund": {
-     "refund_uid": "01a126d9-1bcd-76b4-b135-6b92e9e59ac3",
+     "refund_uid": "01a1270b-9ca4-7149-8a4a-a5a8e361e865",
      "number": 3,
-     "order_uid": "01a126d9-1bb6-7741-9878-be871e962863",
+     "order_uid": "01a1270b-9c87-7229-af2f-4fd0e0fcf8c4",
      "order_number": 12,
-     "customer_uid": "01a126d9-1ba9-71a6-84a2-eb60c6f52559",
+     "customer_uid": "01a1270b-9c79-7628-8f4b-cb28d5fa4b93",
      "kind": "store_credit",
      "amount_cents": 500,
      "amount_raw": 5,
      "items": [],
      "reason": "Goodwill",
      "issued_by": "admin",
-     "created_at": "2026-10-10T17:25:25.000Z",
+     "created_at": "2026-10-10T18:20:34.000Z",
      "method": null,
      "return_uid": null
     }
@@ -4178,30 +4332,51 @@
   {
    "name": "payments.unmatched",
    "version": 1,
-   "key": "01a126d9-1d28-7411-8944-23097f4d494d",
+   "key": "01a1270b-9ded-754c-a247-d19ec8877de6",
    "source": "wom",
-   "time": "2026-10-10T17:25:25.416Z",
+   "time": "2026-10-10T18:20:35.181Z",
    "data": {
     "by": "admin",
     "backfill": true,
     "count": 2,
     "total_cents": 16500,
     "oldest_at": "2026-10-01T14:00:00.000Z",
+    "suggested_count": 0,
+    "suggested_total_cents": 0,
     "page": "/customers/etransfers"
    }
   },
   {
    "name": "payments.unmatched",
    "version": 1,
-   "key": "01a126d9-1e61-77b6-add1-cb72e7ff4221",
+   "key": "01a1270b-9f23-701e-983a-22f6a0b7b370",
    "source": "wom",
-   "time": "2026-10-10T17:25:25.729Z",
+   "time": "2026-10-10T18:20:35.491Z",
    "data": {
     "by": "admin",
     "count": 1,
     "total_cents": 12500,
     "oldest_at": "2026-10-01T14:00:00.000Z",
+    "suggested_count": 0,
+    "suggested_total_cents": 0,
     "page": "/customers/etransfers"
+   }
+  },
+  {
+   "name": "payments.unmatched",
+   "version": 1,
+   "key": "01a1270c-6647-730f-a3c8-9e87fa834d81",
+   "source": "wom",
+   "time": "2026-10-10T18:21:26.471Z",
+   "data": {
+    "by": "admin",
+    "count": 1,
+    "total_cents": 12500,
+    "oldest_at": "2026-10-01T14:00:00.000Z",
+    "suggested_count": 0,
+    "suggested_total_cents": 0,
+    "page": "/customers/etransfers",
+    "stopped": true
    }
   }
  ],
@@ -4912,20 +5087,20 @@
     "avg_order_value": 0
    },
    "2026-10-09": {
-    "revenue": 0,
-    "cogs": 0,
-    "gross_profit": 0,
-    "gross_margin": 0,
+    "revenue": 21,
+    "cogs": 12,
+    "gross_profit": 9,
+    "gross_margin": 42.9,
     "shipping_collected": 0,
-    "tax_collected": 0,
+    "tax_collected": 2.73,
     "discounts_given": 0,
     "refunds_issued": 0,
     "credit_notes_issued": 0,
-    "net_revenue": 0,
-    "net_profit": 0,
-    "net_margin": 0,
-    "total_orders": 0,
-    "avg_order_value": 0
+    "net_revenue": 21,
+    "net_profit": 9,
+    "net_margin": 42.9,
+    "total_orders": 1,
+    "avg_order_value": 21
    },
    "2026-10-10": {
     "revenue": 438.91,
@@ -4964,20 +5139,20 @@
    "from": "2026-08-26",
    "to": "2026-10-11",
    "summary": {
-    "revenue": 658.91,
-    "cogs": 360,
-    "gross_profit": 298.91,
-    "gross_margin": 45.4,
+    "revenue": 679.91,
+    "cogs": 372,
+    "gross_profit": 307.91,
+    "gross_margin": 45.3,
     "shipping_collected": 0,
-    "tax_collected": 84.26,
+    "tax_collected": 86.99,
     "discounts_given": 10.79,
     "refunds_issued": 19.78,
     "credit_notes_issued": 13,
-    "net_revenue": 615.34,
-    "net_profit": 255.34,
+    "net_revenue": 636.34,
+    "net_profit": 264.34,
     "net_margin": 41.5,
-    "total_orders": 13,
-    "avg_order_value": 50.69
+    "total_orders": 14,
+    "avg_order_value": 48.57
    }
   }
  }

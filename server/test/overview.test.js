@@ -115,6 +115,11 @@ test('wholesale: balances over 30 days (the Balances page’s aging), payments w
   assert.equal((await postEvents(base, secret, [um], { ts: Math.floor(clock.now() / 1000) })).body.results[0].status, 'applied');
   const again = section((await overview()).body, 'payments');
   assert.deepEqual([again.count, again.unmatched.count, again.unmatched.totalCents, again.unmatched.page], [4, 3, 45000, '/customers/etransfers']);
+  // Switched off there (stopped): shown as the last count, left out of the section's count (and so the headline).
+  const off = { ...um, key: newId(), data: { ...um.data, suggested_count: 1, suggested_total_cents: 2000, stopped: true } };
+  assert.equal((await postEvents(base, secret, [off], { ts: Math.floor(clock.now() / 1000) })).body.results[0].status, 'applied');
+  const stopped = section((await overview()).body, 'payments');
+  assert.deepEqual([stopped.count, stopped.unmatched.stopped, stopped.unmatched.count], [1, true, 3]);
   await call('PUT', '/api/connections/wom', { paused: true });
   assert.equal(section((await overview()).body, 'balances').state, 'paused', 'paused: still the last known figures, marked');
 });

@@ -172,6 +172,11 @@ export function eventProblem(e) {
       if (d.oldest_at !== null && !isoTime(d.oldest_at)) return 'data.oldest_at must be an ISO date-time or null';
       if (d.count > 0 && d.oldest_at === null) return 'data.oldest_at is needed when count is above 0';
       if (typeof d.page !== 'string' || !d.page.startsWith('/') || d.page.length > 200) return 'data.page must be the Order Manager’s path to the list (starting with /)';
+      // A19 review (additive): notices waiting with a suggested match, and the one state sent when its switch is turned off.
+      for (const k of ['suggested_count', 'suggested_total_cents']) {
+        if (d[k] !== undefined && d[k] !== null && !(isInt(d[k]) && d[k] >= 0)) return `data.${k} must be a whole number, 0 or more (or left out)`;
+      }
+      if (d.stopped !== undefined && d.stopped !== null && typeof d.stopped !== 'boolean') return 'data.stopped must be true or false (or left out)';
       return null;
     }
     default: // the order events with a snapshot

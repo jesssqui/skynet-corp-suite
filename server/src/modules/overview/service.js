@@ -148,8 +148,10 @@ export function createOverviewService(ctx) {
     if (state === 'not_available' || state === 'not_connected') return section('payments', { count: null, state });
     const rows = lines().credit;
     const unmatched = services.wholesale.unmatchedState?.() ?? null;
+    // A stopped count (the Order Manager's switch turned off) is shown as its last one, not counted; suggested matches
+    // (money one tap from being recorded there) are their own line, not counted either (decision: not urgent).
     return section('payments', {
-      count: rows.length + (unmatched?.count ?? 0), state,
+      count: rows.length + (unmatched && !unmatched.stopped ? unmatched.count : 0), state,
       unmatched, customers: rows.length,
       items: rows.map((r) => ({ id: r.uid, name: r.name, unusedCents: r.unusedCents, clientId: r.clientId, lastPaymentAt: r.lastPaymentAt })),
     });

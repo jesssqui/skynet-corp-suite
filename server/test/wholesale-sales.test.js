@@ -284,11 +284,24 @@ test('payments.unmatched (the Order Manager’s A19): exactly its shape, held as
   assert.equal(ctx.services.wholesale.unmatchedState(), null, 'nothing held from refused events');
   await post([ev(good)]);
   assert.deepEqual(ctx.services.wholesale.unmatchedState(), {
-    count: 2, totalCents: 16500, oldestAt: '2026-10-01T14:00:00.000Z', page: '/customers/etransfers',
-    at: ctx.services.wholesale.unmatchedState().at, receivedAt: ctx.services.wholesale.unmatchedState().receivedAt,
+    count: 2, totalCents: 16500, oldestAt: '2026-10-01T14:00:00.000Z', page: '/customers/etransfers', suggestedCount: null, suggestedTotalCents: null,
+    stopped: false, at: ctx.services.wholesale.unmatchedState().at, receivedAt: ctx.services.wholesale.unmatchedState().receivedAt,
   });
   assert.match(ctx.services.connections.get('wom').detail, /2 e-Transfers with no matching order there/);
   await post([ev({ count: 0, total_cents: 0, oldest_at: null, page: '/customers/etransfers' })]);
   assert.equal(ctx.services.wholesale.unmatchedState().count, 0, 'the latest wins');
   assert.doesNotMatch(ctx.services.connections.get('wom').detail, /e-Transfer/);
+  // A19 review (additive): suggested matches, and `stopped` when its switch is turned off there.
+  for (const [d, why] of [[{ suggested_count: -1 }, /suggested_count/], [{ suggested_total_cents: 1.5 }, /suggested_total_cents/], [{ stopped: 'yes' }, /stopped/]]) {
+    const r = await postEvents(base, secret, [ev({ ...good, ...d })]);
+    assert.equal(r.body.results[0].status, 'refused');
+    assert.match(r.body.results[0].reason, why);
+  }
+  await post([ev({ ...good, suggested_count: 4, suggested_total_cents: 9000 })]);
+  assert.deepEqual(pick(ctx.services.wholesale.unmatchedState(), ['count', 'suggestedCount', 'suggestedTotalCents', 'stopped']), { count: 2, suggestedCount: 4, suggestedTotalCents: 9000, stopped: false });
+  await post([ev({ ...good, suggested_count: 4, suggested_total_cents: 9000, stopped: true })]);
+  assert.equal(ctx.services.wholesale.unmatchedState().stopped, true);
+  assert.match(ctx.services.connections.get('wom').detail, /stopped sending its unmatched e-Transfer count \(switched off there\) — last count 2 on \d{4}-\d{2}-\d{2}/);
+  await post([ev(good)]);
+  assert.deepEqual(pick(ctx.services.wholesale.unmatchedState(), ['stopped', 'suggestedCount']), { stopped: false, suggestedCount: 0 }, 'on again; an older Order Manager sends no suggested figures');
 });

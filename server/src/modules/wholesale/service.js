@@ -31,6 +31,7 @@ import { registerFollowUpAutomation } from './followUps.js';
 import { createLinkChanges } from './linkChanges.js';
 import { createMatchService } from './matchService.js';
 import { createWholesaleSales } from './sales.js';
+import { localDayOf } from './salesDays.js';
 import { loadKey, encryptSecret, decryptSecret, newSecret, signatureProblem, headerProblem } from './secret.js';
 
 export const RECEIVER_PATH = '/api/wom/events';
@@ -310,7 +311,11 @@ export function createWholesaleService(ctx) {
     if (w.problems) parts.push(`${w.problems} linked to more than one account: undo one link`);
     // D11 review: the Order Manager's unmatched e-Transfers (only while its switch is on).
     const um = unmatchedState();
-    if (um?.count) parts.push(`${um.count} e-Transfer${um.count === 1 ? '' : 's'} with no matching order there`);
+    if (um?.stopped) {
+      parts.push(`The Order Manager stopped sending its unmatched e-Transfer count (switched off there) — last count ${um.count} on ${String(um.at ?? '').slice(0, 10)}`);
+    } else if (um?.count) {
+      parts.push(`${um.count} e-Transfer${um.count === 1 ? '' : 's'} with no matching order there (as of ${String(um.at ?? '').slice(0, 10)})`);
+    }
     // The latest refusal: from memory when newer than what was last written (writes are throttled).
     const fresh = refusals.at && !(st.last_error_at > refusals.at);
     const lastError = fresh ? refusals.message : st.last_error;
@@ -573,6 +578,10 @@ export function createWholesaleService(ctx) {
       setStatus({
         unmatched_count: String(d.count), unmatched_total_cents: String(d.total_cents), unmatched_oldest_at: isoTime(d.oldest_at),
         unmatched_page: d.page, unmatched_at: eventTime ?? at, unmatched_received_at: at,
+        // A19 review: suggested matches waiting (left out by an older Order Manager: null), and stopped (its switch off).
+        unmatched_suggested_count: Number.isSafeInteger(d.suggested_count) ? String(d.suggested_count) : null,
+        unmatched_suggested_total_cents: Number.isSafeInteger(d.suggested_total_cents) ? String(d.suggested_total_cents) : null,
+        unmatched_stopped: d.stopped === true ? '1' : null,
       });
       info = { customerUids: [], orderUid: null };
       subject = 'payments_unmatched:state';
@@ -1439,7 +1448,9 @@ export function createWholesaleService(ctx) {
       if (owing.unused_cents >= CREDIT_MIN_CENTS) {
         const lastPaymentAt = money.filter((m) => m.kind === 'payment' && !m.removed && m.at).map((m) => m.at).sort().at(-1) ?? null;
         const lastOrderDate = orders.filter((o) => countsAsOrder(o) && o.order_date).map((o) => o.order_date).sort().at(-1) ?? null;
-        const settled = !lastPaymentAt || daysBetween(lastPaymentAt.slice(0, 10), today) > CREDIT_SETTLE_DAYS;
+        // The payment's day in the business's zone (today is the device's local day), not its UTC day.
+        const paidDay = lastPaymentAt ? localDayOf(lastPaymentAt) : null;
+        const settled = !paidDay || daysBetween(paidDay, today) > CREDIT_SETTLE_DAYS;
         const quiet = !lastOrderDate || daysBetween(lastOrderDate, today) > CREDIT_QUIET_DAYS;
         if (settled && quiet) credit.push({ ...customerLine(c), unusedCents: owing.unused_cents, lastPaymentAt, lastOrderDate });
       }
@@ -1458,8 +1469,11 @@ export function createWholesaleService(ctx) {
   function unmatchedState() {
     const st = status();
     if (st.unmatched_count === undefined || st.unmatched_count === null) return null;
+    const num = (v) => (v === undefined || v === null ? null : Number(v));
     return {
       count: Number(st.unmatched_count), totalCents: Number(st.unmatched_total_cents ?? 0), oldestAt: st.unmatched_oldest_at ?? null,
+      suggestedCount: num(st.unmatched_suggested_count), suggestedTotalCents: num(st.unmatched_suggested_total_cents),
+      stopped: st.unmatched_stopped === '1',
       page: st.unmatched_page ?? null, at: st.unmatched_at ?? null, receivedAt: st.unmatched_received_at ?? null,
     };
   }
