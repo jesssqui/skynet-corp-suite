@@ -10,13 +10,15 @@ process.env.TZ = 'America/Toronto';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BUSINESS_IDS as B } from '@suite/shared/crm';
-import { leadsWithoutNextStep } from '@suite/shared/leads';
+import { leadsWithoutNextStep, leadNeedsLook } from '@suite/shared/leads';
 import { newId } from '@suite/shared/ids';
 import { startServer, makeDevice, row, count } from './helpers.js';
 import { valuesFrom, editChanges } from '../src/modules/crm/formFields.js';
+import { LEAD_STAGE_FIELDS } from '@suite/shared/leads';
 import {
   leadForm, newLeadFields, stageChange, saveStageChange, filterLeads, pipelineView, valueText, leadValueText, daysInStage, leadDuplicate,
   winIds, planWin, applyWin, leadNextStepFields, nextStepOf, clientLeads, leadTimelineItems, crossSellLeadFields,
+  keptWinIds, forgetWinIds, winChoiceKey, stageClashes, settleStageClashes, leadWins, extraWinPlan, removeExtraWins,
 } from '../src/modules/crm/leads.js';
 import { clearedFields } from '../src/modules/planner/logic.js';
 
@@ -55,12 +57,14 @@ test('stage changes: won only through a win; lost needs a reason; reopening clea
   assert.ok(stageChange(lead, 'talking').problem);
   assert.ok(stageChange(lead, 'lost').problem);
   const q = stageChange(lead, 'quoted', { now: NOW });
-  assert.deepEqual(q.fields, { stage: 'quoted', stage_changed_at: NOW });
+  const cleared = { closed_at: null, lost_reason: null, lost_note: null, won_client_id: null, won_relationship_id: null };
+  assert.deepEqual(q.fields, { stage: 'quoted', stage_changed_at: NOW, ...cleared }, 'the whole stage set, every time');
+  assert.deepEqual(Object.keys(q.fields).sort(), [...LEAD_STAGE_FIELDS].sort());
   assert.deepEqual(q.activity, { lead_id: 'l1', type: 'stage', stage_from: 'talking', stage_to: 'quoted', body: null, at: NOW });
   const lost = stageChange(lead, 'lost', { now: NOW, reason: 'price', note: ' Too dear ' });
-  assert.deepEqual(lost.fields, { stage: 'lost', stage_changed_at: NOW, lost_reason: 'price', lost_note: 'Too dear', closed_at: NOW });
+  assert.deepEqual(lost.fields, { stage: 'lost', stage_changed_at: NOW, lost_reason: 'price', lost_note: 'Too dear', closed_at: NOW, won_client_id: null, won_relationship_id: null });
   assert.equal(lost.activity.body, 'Price: Too dear');
-  assert.deepEqual(stageChange({ ...lead, stage: 'lost' }, 'talking', { now: NOW }).fields, { stage: 'talking', stage_changed_at: NOW, closed_at: null });
+  assert.deepEqual(stageChange({ ...lead, stage: 'lost' }, 'talking', { now: NOW }).fields, { stage: 'talking', stage_changed_at: NOW, ...cleared });
 });
 
 test('the pipeline: columns by stage, this month’s won and lost, totals per currency; filters', () => {
@@ -117,7 +121,14 @@ test('planWin: a new client makes client, account, contact, relationship, a mile
   assert.deepEqual(plan.steps[3].fields, { account_id: i.account, business_id: B.agency, kind: 'website', status: 'active', start_date: '2026-10-12' });
   assert.equal(plan.steps[4].fields.type, 'milestone');
   assert.match(plan.steps[4].fields.body, /Won the lead “Alpha Bakery”: Website with GWND \(\$2,500 one-off\)/);
-  assert.deepEqual(plan.steps[5].fields, { stage: 'won', won_client_id: i.client, won_relationship_id: i.relationship, kind: 'website', closed_at: NOW, stage_changed_at: NOW });
+  assert.deepEqual(plan.steps[5].fields, {
+    stage: 'won', stage_changed_at: NOW, closed_at: NOW, lost_reason: null, lost_note: null, won_client_id: i.client, won_relationship_id: i.relationship, kind: 'website',
+  });
+  assert.equal(plan.steps[5].send, true, 'the lead’s whole stage set is sent');
+  assert.deepEqual(plan.steps[6].fields, {
+    lead_id: 'l1', type: 'stage', stage_from: 'quoted', stage_to: 'won', at: NOW, won_client_id: i.client, won_relationship_id: i.relationship,
+    won_made: `client:${i.client} account:${i.account} contact:${i.contact} relationship:${i.relationship} activity:${i.activity}`,
+  }, 'the win’s own row says what it made');
   assert.deepEqual([plan.clientId, plan.accountId, plan.relationshipId], [i.client, i.account, i.relationship]);
   assert.ok(planWin({ ...lead, kind: null }, { clientId: '' }, {}, i).problem, 'what we do for them is needed');
   assert.equal(planWin({ ...lead, contact_name: null, email: null }, { clientId: '' }, {}, i).steps.filter((s) => s.entity === 'contact').length, 0, 'no person, no contact');
@@ -135,9 +146,12 @@ test('planWin: a current client gets only what it lacks — the relationship on 
   assert.deepEqual(plan.steps.map((s) => `${s.op} ${s.entity}`), ['create relationship', 'create activity', 'update lead', 'create lead_activity']);
   assert.equal(plan.steps[0].fields.start_date, TODAY);
   const ended = { ...data, relationships: [...data.relationships, { id: 'r2', account_id: 'a1', business_id: B.agency, kind: 'social', status: 'ended' }] };
-  const again = planWin(lead, { clientId: 'c1', accountId: 'a1', kind: 'social' }, ended, i, { now: NOW });
-  assert.deepEqual(again.steps[0], { op: 'update', entity: 'relationship', id: 'r2', fields: { status: 'active' } });
+  const again = planWin(lead, { clientId: 'c1', accountId: 'a1', kind: 'social', startDate: '2026-10-20', businessName: 'GWND' }, ended, i, { now: NOW });
+  assert.deepEqual(again.steps[0], { op: 'update', entity: 'relationship', id: 'r2', fields: { status: 'active', start_date: '2026-10-20' } },
+    'made active again: it restarts on the day picked (only those two fields)');
   assert.equal(again.relationshipId, 'r2');
+  assert.match(again.steps[1].fields.body, /Social media with GWND \(restarted\)/);
+  assert.equal(again.steps.at(-1).fields.won_made, `restarted:relationship:r2 activity:${i.activity}`);
   assert.ok(planWin(lead, { clientId: 'c1', accountId: 'nope', kind: 'social' }, data, i).problem);
   const newAccount = planWin(lead, { clientId: 'c1', accountId: '', kind: 'social' }, data, i, { now: NOW });
   assert.deepEqual(newAccount.steps.slice(0, 2).map((s) => s.entity), ['account', 'relationship'], 'a new account under the same client');
@@ -306,4 +320,200 @@ test('two devices: an inbox item becomes a lead', async (t) => {
   await mac.engine.syncNow();
   const r = row(server.db, 'planner_inbox_items', item);
   assert.deepEqual([r.became_entity, r.became_id], ['lead', leadId]);
+});
+
+// ---- review fixes: concurrent moves, won twice, ids per choice -----------------------------------
+
+test('a row that doesn’t add up needs a look; an open lead naming a client isn’t on that client’s won list', () => {
+  assert.deepEqual(leadNeedsLook({ stage: 'talking' }), []);
+  assert.deepEqual(leadNeedsLook({ stage: 'talking', closed_at: NOW, lost_reason: 'price' }), ['it has a close date', 'it has a lost reason']);
+  assert.deepEqual(leadNeedsLook({ stage: 'quoted', won_client_id: 'c1' }), ['it names a client it was won into']);
+  assert.deepEqual(leadNeedsLook({ stage: 'won' }), ['it is won but names no client']);
+  assert.deepEqual(leadNeedsLook({ stage: 'lost' }), ['it is lost with no reason']);
+  const leads = [{ id: 'a', stage: 'talking', won_client_id: 'c1' }, { id: 'b', stage: 'won', won_client_id: 'c1' }];
+  assert.deepEqual(clientLeads(leads, 'c1').map((l) => l.id), ['b']);
+  // A win row naming this client brings its lead here (won twice: both clients show it).
+  const rows = [{ id: 'r', lead_id: 'x', type: 'stage', stage_to: 'won', won_client_id: 'c2', at: NOW }];
+  assert.deepEqual(clientLeads([{ id: 'x', stage: 'won', won_client_id: 'c1' }], 'c2', rows).map((l) => l.id), ['x']);
+});
+
+test('the kept win ids belong to one choice: another choice gets other ids', () => {
+  const store = new Map();
+  const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
+  const a = keptWinIds(storage, 'l1', { clientId: '', kind: 'website' }, newId);
+  assert.deepEqual(keptWinIds(storage, 'l1', { clientId: '', kind: 'website' }, newId), a, 'same choice, same ids (a retry, a reload)');
+  const b = keptWinIds(storage, 'l1', { clientId: 'c9', accountId: 'a9', kind: 'website' }, newId);
+  assert.notEqual(b.client, a.client);
+  assert.notEqual(b.relationship, a.relationship);
+  assert.equal(winChoiceKey({ clientId: 'c9', accountId: '', kind: 'social' }), 'add:c9:new:social');
+  forgetWinIds(storage, 'l1');
+  assert.equal(store.size, 0);
+  // Without storage (private mode): this session's memory still keeps them.
+  const memory = new Map();
+  const m = keptWinIds(null, 'l2', { kind: 'website' }, newId, memory);
+  assert.deepEqual(keptWinIds(null, 'l2', { kind: 'website' }, newId, memory), m);
+});
+
+test('two devices: a partial win for a new client, then a retry as "Add to" another client, uses fresh ids there', async (t) => {
+  const { server, mac } = await devices(t);
+  const other = await mac.engine.create('client', { name: 'Delta Holdings', status: 'active' });
+  const otherAccount = await mac.engine.create('account', { client_id: other, name: 'Delta Deli' });
+  const leadId = await mac.engine.create('lead', newLeadFields({ name: 'Delta Deli', business_id: B.agency, kind: 'website' }));
+  await mac.engine.syncNow();
+  const store = new Map();
+  const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
+  const data = async () => ({ accounts: await mac.engine.list('account'), contacts: await mac.engine.list('contact'), relationships: await mac.engine.list('relationship') });
+  const first = { clientId: '', kind: 'website' };
+  const ids1 = keptWinIds(storage, leadId, first, newId);
+  let writes = 0;
+  const flaky = {
+    create: (...a) => { writes += 1; if (writes > 2) throw Object.assign(new Error('full'), { code: 'storage_full' }); return mac.engine.create(...a); },
+    update: (...a) => mac.engine.update(...a),
+  };
+  await assert.rejects(applyWin(flaky, planWin(await mac.engine.get('lead', leadId), { ...first, startDate: TODAY }, await data(), ids1, { now: NOW, today: TODAY })));
+  // The person switches to "Add to Delta Holdings" (its account): new ids, so nothing is skipped as already made.
+  const second = { clientId: other, accountId: otherAccount, kind: 'website' };
+  const ids2 = keptWinIds(storage, leadId, second, newId);
+  assert.notEqual(ids2.relationship, ids1.relationship);
+  const plan = planWin(await mac.engine.get('lead', leadId), { ...second, startDate: TODAY }, await data(), ids2, { now: NOW, today: TODAY });
+  await applyWin(mac.engine, plan);
+  await mac.engine.syncNow();
+  const rel = row(server.db, 'crm_relationships', ids2.relationship);
+  assert.deepEqual([rel.account_id, rel.kind], [otherAccount, 'website'], 'the relationship is on the account picked the second time');
+  assert.deepEqual([row(server.db, 'crm_leads', leadId).won_client_id, row(server.db, 'crm_leads', leadId).won_relationship_id], [other, ids2.relationship]);
+});
+
+test('two devices: Lost on the Mac and Talking on the phone at once clash on the whole stage set; either way it stays consistent', async (t) => {
+  const { server, mac, phone } = await devices(t);
+  const leadId = await mac.engine.create('lead', newLeadFields({ name: 'Echo Eats', business_id: B.agency, kind: 'website' }));
+  await mac.engine.syncNow();
+  await phone.engine.syncNow();
+  mac.online = false;
+  phone.online = false;
+  await saveStageChange(mac.engine, await mac.engine.get('lead', leadId), stageChange(await mac.engine.get('lead', leadId), 'lost', { reason: 'price', now: NOW }));
+  await new Promise((r) => setTimeout(r, 5));
+  await saveStageChange(phone.engine, await phone.engine.get('lead', leadId), stageChange(await phone.engine.get('lead', leadId), 'talking', { now: '2026-10-09T15:01:00.000Z' }));
+  mac.online = true;
+  phone.online = true;
+  await mac.engine.syncNow();
+  await phone.engine.syncNow();
+  await mac.engine.syncNow();
+  let r = row(server.db, 'crm_leads', leadId);
+  assert.deepEqual([r.stage, r.lost_reason, r.closed_at], ['talking', null, null], 'the later move won every field of the set');
+  assert.deepEqual(leadNeedsLook(r), []);
+  const lead = await mac.engine.get('lead', leadId);
+  assert.ok(stageClashes(lead).some((c) => c.field === 'stage') && stageClashes(lead).some((c) => c.field === 'lost_reason'));
+  // "Use Lost instead": the other move's values, its reason before its stage — applied (review fix 1).
+  await settleStageClashes(mac.engine, lead, 'keep_loser');
+  r = row(server.db, 'crm_leads', leadId);
+  assert.deepEqual([r.stage, r.lost_reason, r.closed_at], ['lost', 'price', NOW]);
+  assert.equal(count(server.db, "SELECT count(*) AS n FROM sync_clashes WHERE record_id = ? AND resolved = 0", leadId), 0);
+});
+
+test('keeping "Lost" from a clash on the stage alone (a step that moved only the stage) is applied: the stored reason counts', async (t) => {
+  const { server, mac, phone } = await devices(t);
+  const leadId = await mac.engine.create('lead', newLeadFields({ name: 'Fox Fitness', business_id: B.agency }));
+  await mac.engine.syncNow();
+  await phone.engine.syncNow();
+  mac.online = false;
+  phone.online = false;
+  await saveStageChange(mac.engine, await mac.engine.get('lead', leadId), stageChange(await mac.engine.get('lead', leadId), 'lost', { reason: 'timing', now: NOW }));
+  await new Promise((r) => setTimeout(r, 5));
+  await phone.engine.update('lead', leadId, { stage: 'talking' }); // as an older device would: the stage only
+  mac.online = true;
+  phone.online = true;
+  await mac.engine.syncNow();
+  await phone.engine.syncNow();
+  await mac.engine.syncNow();
+  const stage = (await mac.engine.get('lead', leadId))._sync.clashes.find((c) => c.field === 'stage');
+  assert.equal(row(server.db, 'crm_leads', leadId).stage, 'talking');
+  await mac.engine.resolveClash(stage.id, 'keep_loser');
+  const r = row(server.db, 'crm_leads', leadId);
+  assert.deepEqual([r.stage, r.lost_reason], ['lost', 'timing']);
+});
+
+async function fixData(engine) {
+  const l = await engine.listMany(['client', 'account', 'contact', 'relationship', 'service', 'consent', 'activity', 'link', 'task', 'recurring_cost', 'wholesale_customer', 'lead']);
+  return {
+    clients: l.client, accounts: l.account, contacts: l.contact, relationships: l.relationship, services: l.service, consents: l.consent,
+    activities: l.activity, links: l.link, tasks: l.task, costs: l.recurring_cost, wholesaleCustomers: l.wholesale_customer, leads: l.lead,
+  };
+}
+
+async function winTwice(t) {
+  const { server, mac, phone } = await devices(t);
+  const leadId = await mac.engine.create('lead', newLeadFields({ name: 'Golf Garage', business_id: B.agency, kind: 'website', contact_name: 'Gus' }));
+  await mac.engine.syncNow();
+  await phone.engine.syncNow();
+  mac.online = false;
+  phone.online = false;
+  const win = async (dev) => {
+    const plan = planWin(await dev.engine.get('lead', leadId), { clientId: '', kind: 'website', businessName: 'GWND' }, {
+      accounts: await dev.engine.list('account'), contacts: await dev.engine.list('contact'), relationships: await dev.engine.list('relationship'),
+    }, ids(), { now: new Date().toISOString(), today: TODAY });
+    await applyWin(dev.engine, plan);
+    return plan.clientId;
+  };
+  const macClient = await win(mac);
+  await new Promise((r) => setTimeout(r, 5));
+  const phoneClient = await win(phone);
+  mac.online = true;
+  phone.online = true;
+  await mac.engine.syncNow();
+  await phone.engine.syncNow();
+  await mac.engine.syncNow();
+  return { server, mac, phone, leadId, macClient, phoneClient };
+}
+
+test('two devices win the same lead offline: "Won twice" is found on both; Remove the extra takes back the untouched extra client', async (t) => {
+  const { server, mac, phone, leadId, macClient, phoneClient } = await winTwice(t);
+  assert.equal(count(server.db, "SELECT count(*) AS n FROM crm_clients WHERE name = 'Golf Garage' AND deleted_at IS NULL"), 2, 'two clients, until fixed');
+  const lead = await mac.engine.get('lead', leadId);
+  assert.equal(lead.won_client_id, phoneClient, 'the later win is the one the lead names');
+  const acts = await mac.engine.list('lead_activity');
+  const clientsById = new Map((await mac.engine.list('client')).map((c) => [c.id, c]));
+  const relationshipsById = new Map((await mac.engine.list('relationship')).map((r) => [r.id, r]));
+  const { wins, kept, extras } = leadWins(lead, acts, { clientsById, relationshipsById });
+  assert.equal(wins.length, 2);
+  assert.equal(kept.won_client_id, phoneClient);
+  assert.deepEqual(extras.map((w) => w.won_client_id), [macClient]);
+  // Both clients' pages show the lead (with the warning).
+  assert.deepEqual(clientLeads(await mac.engine.list('lead'), macClient, acts).map((l) => l.id), [leadId]);
+  assert.deepEqual(clientLeads(await mac.engine.list('lead'), phoneClient, acts).map((l) => l.id), [leadId]);
+
+  const plan = extraWinPlan(extras[0], await fixData(mac.engine), leadId);
+  assert.deepEqual(plan.remove.map((r) => [r.entity, r.id]), [['client', macClient]]);
+  assert.deepEqual(plan.left, []);
+  const result = await removeExtraWins(mac.engine, lead, extras, await fixData(mac.engine));
+  assert.ok(result.settled >= 2, 'the lead’s clashes (won_client_id, won_relationship_id…) were settled');
+  assert.ok(row(server.db, 'crm_clients', macClient).deleted_at, 'the extra client is gone');
+  assert.equal(row(server.db, 'crm_clients', phoneClient).deleted_at, null);
+  assert.equal(count(server.db, 'SELECT count(*) AS n FROM sync_clashes WHERE record_id = ? AND resolved = 0', leadId), 0);
+  assert.equal(row(server.db, 'crm_leads', leadId).won_client_id, phoneClient);
+  await phone.engine.syncNow();
+  const after = leadWins(await phone.engine.get('lead', leadId), await phone.engine.list('lead_activity'), {
+    clientsById: new Map((await phone.engine.list('client')).map((c) => [c.id, c])),
+    relationshipsById: new Map((await phone.engine.list('relationship')).map((r) => [r.id, r])),
+  });
+  assert.equal(after.extras.length, 0, 'no longer won twice, on the other device too');
+});
+
+test('won twice: an extra client someone added to since is left, with what was added, and a note on its timeline says so', async (t) => {
+  const { server, mac, leadId, macClient } = await winTwice(t);
+  await mac.engine.create('activity', { client_id: macClient, type: 'note', body: 'Booked the kickoff', at: NOW });
+  await mac.engine.syncNow();
+  const lead = await mac.engine.get('lead', leadId);
+  const acts = await mac.engine.list('lead_activity');
+  const { extras } = leadWins(lead, acts, {
+    clientsById: new Map((await mac.engine.list('client')).map((c) => [c.id, c])),
+    relationshipsById: new Map((await mac.engine.list('relationship')).map((r) => [r.id, r])),
+  });
+  const plan = extraWinPlan(extras[0], await fixData(mac.engine), leadId);
+  assert.deepEqual(plan.remove, []);
+  assert.match(plan.left[0], /The client “Golf Garage” stays: 1 timeline entry/);
+  const result = await removeExtraWins(mac.engine, lead, extras, await fixData(mac.engine));
+  assert.deepEqual(result.removed, []);
+  assert.equal(row(server.db, 'crm_clients', macClient).deleted_at, null, 'kept: something was added to it');
+  const note = server.db.prepare("SELECT body FROM crm_activities WHERE client_id = ? AND type = 'note' AND body LIKE 'The lead%'").get(macClient);
+  assert.match(note.body, /won on two devices at once; this is the extra win, left as it is: The client “Golf Garage” stays: 1 timeline entry\./);
 });

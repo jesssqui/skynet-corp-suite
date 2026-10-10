@@ -17,7 +17,7 @@ import { activityAt } from './formFields.js';
 import { KIND_LABELS, PERIOD_LABELS, pickableBusinesses, defaultKindFor, textOrNull } from './logic.js';
 import {
   leadForm, newLeadFields, stageChange, saveStageChange, SOURCE_LABELS, LOST_LABELS, LEAD_ACTIVITY_LABELS,
-  leadDuplicate, winIds, planWin, applyWin, leadNextStepFields,
+  leadDuplicate, keptWinIds, forgetWinIds, planWin, applyWin, leadNextStepFields,
 } from './leads.js';
 
 const row = { display: 'grid', gap: 'var(--space-3)', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' };
@@ -125,19 +125,11 @@ export function LostSheet({ lead, onClose, onDone }) {
 
 // ---- won ---------------------------------------------------------------------------------------------
 
-// A win's ids are made once per lead and kept (this device) until it is saved: a retry after a failure
-// part-way — even after a reload — uses the same ones, so it never makes a second client.
-const WIN_KEY = (leadId) => `suite.crm.winIds.${leadId}`;
-function storedWinIds(leadId) {
-  try {
-    const kept = JSON.parse(localStorage.getItem(WIN_KEY(leadId)) ?? 'null');
-    if (kept?.client) return kept;
-  } catch { /* none kept */ }
-  const ids = winIds(newId);
-  try { localStorage.setItem(WIN_KEY(leadId), JSON.stringify(ids)); } catch { /* best effort: this session still reuses them */ }
-  return ids;
-}
-const forgetWinIds = (leadId) => { try { localStorage.removeItem(WIN_KEY(leadId)); } catch { /* fine */ } };
+// A win's ids are made once per lead and choice and kept (localStorage) until it is saved: a retry after a
+// failure part-way — even after a reload — uses the same ones, so it never makes a second client; another
+// choice (new client ↔ add to a client, another account or kind) gets new ones (keptWinIds).
+const winMemory = new Map();
+const safeStorage = () => { try { return window.localStorage; } catch { return null; } };
 
 /**
  * Win a lead. A lead for a current client adds the service there (pick the account, or a new one); a
@@ -148,7 +140,6 @@ const forgetWinIds = (leadId) => { try { localStorage.removeItem(WIN_KEY(leadId)
 export function WinSheet({ lead, data, onClose, onDone }) {
   const businessName = data.businessesById.get(lead.business_id)?.name ?? '';
   const dup = useMemo(() => leadDuplicate(lead, data), [lead, data]);
-  const ids = useRef(null);
   const [clientId, setClientId] = useState(lead.client_id ?? (dup?.state === 'same' ? dup.clientId : ''));
   const accounts = useMemo(() => data.accounts.filter((a) => a.client_id === clientId), [data.accounts, clientId]);
   const [accountId, setAccountId] = useState(lead.account_id ?? '');
@@ -168,12 +159,13 @@ export function WinSheet({ lead, data, onClose, onDone }) {
       busy={busy}
       error={error}
       onSave={async () => {
-        ids.current ??= storedWinIds(lead.id);
-        const plan = planWin(lead, { clientId, accountId: clientId ? chosenAccount : '', kind, startDate, businessName }, data, ids.current);
+        const choice = { clientId, accountId: clientId ? chosenAccount : '', kind: kind || lead.kind || '' };
+        const ids = keptWinIds(safeStorage(), lead.id, choice, newId, winMemory);
+        const plan = planWin(lead, { ...choice, startDate, businessName }, data, ids);
         setProblem(plan.problem ?? null);
         if (plan.problem) return;
         if (await run(() => applyWin(store, plan))) {
-          forgetWinIds(lead.id);
+          forgetWinIds(safeStorage(), lead.id, winMemory);
           onDone?.(plan.clientId);
         }
       }}

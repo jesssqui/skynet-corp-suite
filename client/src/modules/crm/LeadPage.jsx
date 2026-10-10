@@ -17,9 +17,10 @@ import { useLeadPageData } from './data.js';
 import { BusinessChip, Badges, RecordSync, TextButton, useAction } from './parts.jsx';
 import { KIND_LABELS, actorLabel } from './logic.js';
 import {
-  STAGE_LABELS, SOURCE_LABELS, LOST_LABELS, LEAD_ACTIVITY_LABELS, stageChange, saveStageChange, leadValueText, daysInStage, nextStepOf,
+  STAGE_LABELS, SOURCE_LABELS, LOST_LABELS, LEAD_ACTIVITY_LABELS, LEAD_STAGE_FIELDS, leadWins, stageClashes, stageChange, saveStageChange, leadValueText, daysInStage, nextStepOf,
 } from './leads.js';
 import { LeadForm, LostSheet, WinSheet, LeadActivityForm } from './leadForms.jsx';
+import { WonTwice, StageClash, NeedsLook } from './LeadNotices.jsx';
 import CrmTabs from './CrmTabs.jsx';
 import './crm.css';
 
@@ -99,6 +100,10 @@ function LeadScreen({ leadId }) {
     }),
   });
   const days = daysInStage(lead, today);
+  // The stage set's clashes are settled as one (StageClash, or Remove the extra when won twice); otherwise
+  // (say, two different lost reasons) field by field in the usual panel.
+  const wonTwice = leadWins(lead, activities, { clientsById: data.clientsById, relationshipsById: data.relationshipsById }).extras.length > 0;
+  const settledTogether = wonTwice || stageClashes(lead).some((c) => c.field === 'stage');
 
   return (
     <div className="crm-client" data-testid="lead-page">
@@ -153,7 +158,12 @@ function LeadScreen({ leadId }) {
           </div>
           {open ? <p style={{ ...muted, margin: 0 }}>Quoted is set by hand when you send a quote (quotes in the suite come later).</p> : null}
           {error ? <p role="alert" style={{ color: 'var(--danger)', margin: 0 }}>{error}</p> : null}
-          <RecordSync record={lead} what="lead" />
+          {/* Two devices at once (review fix): a lead won twice, a stage moved on both (settled as one), a row
+              that doesn't add up. The stage set's clashes are settled together there, not field by field. */}
+          <WonTwice lead={lead} leadActivities={activities} clientsById={data.clientsById} relationshipsById={data.relationshipsById} />
+          <StageClash lead={lead} />
+          <NeedsLook lead={lead} />
+          <RecordSync record={settledTogether ? { ...lead, _sync: { ...lead._sync, clashes: (lead._sync?.clashes ?? []).filter((c) => !LEAD_STAGE_FIELDS.includes(c.field)) } } : lead} what="lead" />
         </div>
       </Card>
 

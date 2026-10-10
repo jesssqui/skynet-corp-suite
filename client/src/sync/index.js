@@ -99,7 +99,7 @@ export const store = {
   /** { [entity]: how many records a person sees } — records under a deleted parent not counted. */
   liveCounts: (entities) => need().liveCounts(entities),
   create: (entity, fields, opts) => need().create(entity, fields, opts),
-  update: (entity, id, changes) => need().update(entity, id, changes),
+  update: (entity, id, changes, opts) => need().update(entity, id, changes, opts),
   remove: (entity, id) => need().remove(entity, id),
   /** fn({ type: 'data' | 'status', status }) after any change; returns unsubscribe. */
   subscribe: (fn) => need().subscribe(fn),

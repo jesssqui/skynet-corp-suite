@@ -16,6 +16,7 @@
 // Tasks only (through create = sync.applyLocal as system). See CLAUDE.md, "Leads and the pipeline (D8)".
 import { leadsWithoutNextStep, crossSellList } from '@suite/shared/leads';
 import { parseLocalDate } from '@suite/shared/time';
+import { dayText } from '../automations/taskBook.js';
 
 export const LEAD_STEP_CAP = 10;
 export const CROSS_SELL_NOTES_MAX = 25;
@@ -108,7 +109,7 @@ export function registerLeadAutomations({ automations, crm, planner }) {
         create('task', {
           title: title.slice(0, 300),
           notes: [
-            `Current clients who could use more from ${business?.name ?? 'us'} (as of ${today}):`,
+            `Current clients who could use more from ${business?.name ?? 'us'} (as of ${dayText(today)}):`,
             ...crossSellLines(entries),
             '',
             'Nothing has been sent. Make a lead from the Cross-sell page (/crm/cross-sell → Make a lead) for the ones worth a call;',

@@ -202,6 +202,12 @@ export const CRM_ENTITIES = [
       stage_from: { type: 'enum', values: LEAD_STAGES },
       stage_to: { type: 'enum', values: LEAD_STAGES },
       at: { type: 'datetime', required: true },
+      // A win's own record (stage row → won): the client and relationship it went to, and what it made
+      // ("client:<id> account:<id> contact:<id> relationship:<id> activity:<id>", "restarted:relationship:<id>")
+      // — so a lead won on two devices at once can be found and its extra win taken back (D8 review).
+      won_client_id: { type: 'id', ref: 'client' },
+      won_relationship_id: { type: 'id', ref: 'relationship' },
+      won_made: { type: 'text', max: 2000 },
     },
   },
 ];

@@ -46,6 +46,9 @@ CREATE TABLE crm_lead_activities (
   stage_from  TEXT,
   stage_to    TEXT,
   at          TEXT NOT NULL,
+  won_client_id       TEXT,         -- a win's stage row: the client and relationship it went to,
+  won_relationship_id TEXT,         -- and what it made (won_made), to undo a duplicate win
+  won_made            TEXT,
   created_at  TEXT,
   created_by  TEXT,
   flagged     INTEGER NOT NULL DEFAULT 0,

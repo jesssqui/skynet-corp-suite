@@ -2,7 +2,7 @@
 // timeline row), the pipeline's columns and totals, the duplicate check before winning, the win itself
 // as a list of store writes with ids made once, a call's next step for a lead, and the client page's view
 // of a client's leads. Tested in client/test/leads.test.js (logic + two devices against a real server).
-import { LEAD_STAGES, OPEN_LEAD_STAGES, isOpenLead, pipelineTotals, firstYearValue } from '@suite/shared/leads';
+import { LEAD_STAGES, OPEN_LEAD_STAGES, LEAD_STAGE_FIELDS, isOpenLead, leadNeedsLook, pipelineTotals, firstYearValue } from '@suite/shared/leads';
 import { buildMatchIndex, findMatch } from '@suite/shared/intake';
 import { isCurrency } from '@suite/shared/costs';
 import { nowIso, localDate } from '../../ui/format.js';
@@ -18,7 +18,7 @@ export const LOST_LABELS = Object.freeze({
   not_a_fit: 'Not a fit for us', other: 'Other',
 });
 export const LEAD_ACTIVITY_LABELS = Object.freeze({ note: 'Note', call: 'Call', email: 'Email', meeting: 'Meeting', stage: 'Stage' });
-export { LEAD_STAGES, OPEN_LEAD_STAGES, isOpenLead };
+export { LEAD_STAGES, OPEN_LEAD_STAGES, LEAD_STAGE_FIELDS, isOpenLead, leadNeedsLook };
 
 // ---- the form ---------------------------------------------------------------------------------
 
@@ -64,28 +64,43 @@ export function newLeadFields(formFields, { now = nowIso() } = {}) {
 /**
  * Moving a lead to another open stage, or losing it (reason required), or reopening a closed one —
  * never to `won` (that is winLead). → { fields, activity } for the lead's update and its timeline row,
- * or { problem } when it can't be done.
+ * or { problem } when it can't be done. `fields` is always the whole LEAD_STAGE_FIELDS set (what doesn't
+ * apply as null) and saveStageChange sends all of it, so concurrent moves clash on all of it together.
  */
 export function stageChange(lead, to, { now = nowIso(), reason = null, note = null } = {}) {
   if (!LEAD_STAGES.includes(to) || to === 'won') return { problem: 'Use Won… to win a lead (it makes the client)' };
   if (to === lead.stage) return { problem: 'Already there' };
   if (to === 'lost' && !reason) return { problem: 'Say why it was lost' };
-  const fields = { stage: to, stage_changed_at: now };
-  if (to === 'lost') {
-    fields.lost_reason = reason;
-    fields.lost_note = textOrNull(note);
-    fields.closed_at = now;
-  } else if (!isOpenLead(lead)) {
-    fields.closed_at = null; // reopened
-  }
-  const body = to === 'lost' ? `${LOST_LABELS[reason] ?? reason}${textOrNull(note) ? `: ${textOrNull(note)}` : ''}` : null;
+  const lost = to === 'lost';
+  const fields = {
+    stage: to, stage_changed_at: now, closed_at: lost ? now : null, lost_reason: lost ? reason : null,
+    lost_note: lost ? textOrNull(note) : null, won_client_id: null, won_relationship_id: null,
+  };
+  const body = lost ? `${LOST_LABELS[reason] ?? reason}${textOrNull(note) ? `: ${textOrNull(note)}` : ''}` : null;
   return { fields, activity: { lead_id: lead.id, type: 'stage', stage_from: lead.stage, stage_to: to, body, at: now } };
 }
 
-/** Save a stage change: the lead, then its timeline row. */
+/** Save a stage change: the lead (its whole stage set, even fields unchanged here), then its timeline row. */
 export async function saveStageChange(store, lead, change) {
-  await store.update('lead', lead.id, change.fields);
+  await store.update('lead', lead.id, change.fields, { send: Object.keys(change.fields) });
   await store.create('lead_activity', change.activity);
+}
+
+/** Open clashes on a lead's stage set (two devices moved it at once). */
+export function stageClashes(lead) {
+  return (lead?._sync?.clashes ?? []).filter((c) => c.kind === 'field' && !c.resolved && LEAD_STAGE_FIELDS.includes(c.field));
+}
+
+/**
+ * Settle a lead's stage clashes as one: keep_winner keeps the row as it is (consistent: the later move
+ * won every field of the set); keep_loser applies the other move's values — the other fields first, the
+ * stage last (so "Lost" arrives after its reason). Needs a connection (settling clashes does).
+ * @param {{ resolveClash }} engine
+ */
+export async function settleStageClashes(engine, lead, resolution) {
+  const clashes = stageClashes(lead).sort((a, b) => (a.field === 'stage') - (b.field === 'stage'));
+  for (const c of clashes) await engine.resolveClash(c.id, resolution);
+  return clashes.length;
 }
 
 // ---- the pipeline ---------------------------------------------------------------------------------
@@ -161,9 +176,39 @@ export function leadDuplicate(lead, { clients = [], accounts = [], contacts = []
   return findMatch({ client: { name: lead.name }, account: { name: lead.name }, contact: { email: lead.email, phone: lead.phone } }, index);
 }
 
-/** The ids a win uses, made once per lead (kept until the win is saved, so a retry never makes a second client). */
+/** The ids a win uses, made once per lead and choice (kept until the win is saved, so a retry never makes a second client). */
 export function winIds(newId) {
   return { client: newId(), account: newId(), contact: newId(), relationship: newId(), activity: newId(), stage: newId() };
+}
+
+/**
+ * What the kept ids belong to: a new client, or "add to <client>" with its account (or a new one) and the
+ * kind. A retry with another choice gets other ids (review fix): reusing them would answer `already_exists`
+ * for records made for the first choice (a relationship on another account) and skip what this one needs.
+ */
+export const winChoiceKey = ({ clientId = '', accountId = '', kind = '' } = {}) => (clientId ? `add:${clientId}:${accountId || 'new'}:${kind}` : `new:${kind}`);
+
+const winStoreKey = (leadId) => `suite.crm.winIds.${leadId}`;
+/**
+ * The ids for this lead and choice, kept in `storage` (localStorage) until the win is saved: a retry after
+ * a failure part-way, a double tap or a reload re-uses them; another choice gets new ones (the old are
+ * dropped). Works without storage too (this session only, `memory`).
+ */
+export function keptWinIds(storage, leadId, choice, newId, memory = new Map()) {
+  const key = winChoiceKey(choice);
+  let kept = null;
+  try { kept = JSON.parse(storage?.getItem(winStoreKey(leadId)) ?? 'null'); } catch { kept = null; }
+  kept ??= memory.get(leadId) ?? null;
+  if (kept?.key === key && kept.ids?.client) return kept.ids;
+  const fresh = { key, ids: winIds(newId) };
+  memory.set(leadId, fresh);
+  try { storage?.setItem(winStoreKey(leadId), JSON.stringify(fresh)); } catch { /* best effort: memory still has them */ }
+  return fresh.ids;
+}
+
+export function forgetWinIds(storage, leadId, memory = new Map()) {
+  memory.delete(leadId);
+  try { storage?.removeItem(winStoreKey(leadId)); } catch { /* fine */ }
 }
 
 /**
@@ -191,6 +236,9 @@ export function planWin(lead, choice, { accounts = [], contacts = [], relationsh
     accountId = ids.account;
     steps.push({ op: 'create', entity: 'account', id: ids.account, fields: { client_id: clientId, name: lead.name } });
   }
+  const made = [];
+  if (!existing) made.push(`client:${ids.client}`);
+  if (steps.some((x) => x.entity === 'account')) made.push(`account:${ids.account}`);
   const hasPerson = Boolean(lead.contact_name || lead.email || lead.phone);
   const clientContacts = contacts.filter((p) => p.client_id === clientId);
   const known = clientContacts.some((p) => (lead.email && p.email === lead.email) || (lead.phone && p.phone === lead.phone)
@@ -200,32 +248,51 @@ export function planWin(lead, choice, { accounts = [], contacts = [], relationsh
       op: 'create', entity: 'contact', id: ids.contact,
       fields: { client_id: clientId, account_id: accountId, name: lead.contact_name || lead.name, email: lead.email ?? null, phone: lead.phone ?? null },
     });
+    made.push(`contact:${ids.contact}`);
   }
   const reuse = relationships.find((r) => r.account_id === accountId && r.business_id === lead.business_id && r.kind === kind);
   let relationshipId;
+  const startDate = choice.startDate || today;
+  const restarted = Boolean(reuse && reuse.status !== 'active');
   if (reuse) {
     relationshipId = reuse.id;
-    if (reuse.status !== 'active') steps.push({ op: 'update', entity: 'relationship', id: reuse.id, fields: { status: 'active' } });
+    // Made active again: it restarts on the day picked (only these two fields are sent; review fix).
+    if (restarted) {
+      steps.push({ op: 'update', entity: 'relationship', id: reuse.id, fields: { status: 'active', start_date: startDate } });
+      made.push(`restarted:relationship:${reuse.id}`);
+    }
   } else {
     relationshipId = ids.relationship;
     steps.push({
       op: 'create', entity: 'relationship', id: ids.relationship,
-      fields: { account_id: accountId, business_id: lead.business_id, kind, status: 'active', start_date: choice.startDate || today },
+      fields: { account_id: accountId, business_id: lead.business_id, kind, status: 'active', start_date: startDate },
     });
+    made.push(`relationship:${ids.relationship}`);
   }
   const value = leadValueText(lead);
   steps.push({
     op: 'create', entity: 'activity', id: ids.activity,
     fields: {
       client_id: clientId, account_id: accountId, business_id: lead.business_id, type: 'milestone', at: now,
-      body: `Won the lead “${lead.name}”: ${KIND_LABELS[kind] ?? kind}${choice.businessName ? ` with ${choice.businessName}` : ''}${value ? ` (${value})` : ''}.`,
+      body: `Won the lead “${lead.name}”: ${KIND_LABELS[kind] ?? kind}${choice.businessName ? ` with ${choice.businessName}` : ''}${restarted ? ' (restarted)' : ''}${value ? ` (${value})` : ''}.`,
+    },
+  });
+  made.push(`activity:${ids.activity}`);
+  // The lead: its whole stage set, sent even where unchanged (see stageChange), plus the kind.
+  steps.push({
+    op: 'update', entity: 'lead', id: lead.id, send: true,
+    fields: {
+      stage: 'won', stage_changed_at: now, closed_at: now, lost_reason: null, lost_note: null,
+      won_client_id: clientId, won_relationship_id: relationshipId, kind,
     },
   });
   steps.push({
-    op: 'update', entity: 'lead', id: lead.id,
-    fields: { stage: 'won', won_client_id: clientId, won_relationship_id: relationshipId, kind, closed_at: now, stage_changed_at: now },
+    op: 'create', entity: 'lead_activity', id: ids.stage,
+    fields: {
+      lead_id: lead.id, type: 'stage', stage_from: lead.stage, stage_to: 'won', at: now,
+      won_client_id: clientId, won_relationship_id: relationshipId, won_made: made.join(' '),
+    },
   });
-  steps.push({ op: 'create', entity: 'lead_activity', id: ids.stage, fields: { lead_id: lead.id, type: 'stage', stage_from: lead.stage, stage_to: 'won', at: now } });
   return { steps, clientId, accountId, relationshipId };
 }
 
@@ -242,7 +309,7 @@ export async function applyWin(store, plan) {
         if (err?.code !== 'already_exists') throw err;
       }
     } else {
-      await store.update(s.entity, s.id, s.fields);
+      await store.update(s.entity, s.id, s.fields, s.send ? { send: Object.keys(s.fields) } : undefined);
     }
   }
   return plan;
@@ -304,10 +371,178 @@ export function crossSellLeadFields(entry, { me, now = nowIso() }) {
   };
 }
 
-/** A client's leads: those pointing at it (cross-sell) or won into it, open first then newest. */
-export function clientLeads(leads, clientId) {
-  return leads.filter((l) => l.client_id === clientId || l.won_client_id === clientId)
+/**
+ * A client's leads: those pointing at it (cross-sell), won into it (only while the lead IS won — an open
+ * lead still naming a client is "needs a look", not a win), or with a win that made something here (a lead
+ * won on two devices at once: both clients show it, with "Won twice"). Open first, then newest.
+ */
+export function clientLeads(leads, clientId, leadActivities = []) {
+  const winHere = new Set(leadActivities.filter((a) => isWinRow(a) && a.won_client_id === clientId).map((a) => a.lead_id));
+  return leads.filter((l) => l.client_id === clientId || (l.stage === 'won' && l.won_client_id === clientId) || winHere.has(l.id))
     .sort((a, b) => (isOpenLead(b) - isOpenLead(a)) || byStageTime(a, b));
+}
+
+// ---- won twice (two devices winning the same lead offline) -------------------------------------
+
+/** A win's own stage row (it names the client it went to). */
+export const isWinRow = (a) => a?.type === 'stage' && a.stage_to === 'won' && Boolean(a.won_client_id);
+
+/** What a win made, from its row: [{ entity, id, restarted }]. */
+export function winMade(row) {
+  return String(row?.won_made ?? '').split(/\s+/).filter(Boolean).map((part) => {
+    const bits = part.split(':');
+    return bits[0] === 'restarted' ? { entity: bits[1], id: bits[2], restarted: true } : { entity: bits[0], id: bits[1], restarted: false };
+  }).filter((x) => x.entity && x.id);
+}
+
+/**
+ * The lead's wins still standing (their client — and relationship, if any — still on the device) and which
+ * one the lead keeps: the one it names (client and relationship, else client). Won twice = more than one.
+ * → { wins, kept, extras }
+ */
+export function leadWins(lead, leadActivities, { clientsById = new Map(), relationshipsById = new Map() } = {}) {
+  const wins = leadActivities.filter((a) => a.lead_id === lead.id && isWinRow(a)
+    && clientsById.has(a.won_client_id) && (!a.won_relationship_id || relationshipsById.has(a.won_relationship_id)))
+    .sort((a, b) => String(a.at).localeCompare(String(b.at)) || (a.id < b.id ? -1 : 1));
+  const named = lead.stage === 'won' ? wins.filter((w) => w.won_client_id === lead.won_client_id) : [];
+  const kept = named.find((w) => w.won_relationship_id === lead.won_relationship_id) ?? named[0] ?? null;
+  const extras = wins.length > 1 ? wins.filter((w) => w !== kept && !(kept && sameWin(w, kept))) : [];
+  return { wins, kept, extras };
+}
+const sameWin = (a, b) => a.won_client_id === b.won_client_id && a.won_relationship_id === b.won_relationship_id;
+
+const changedSince = (r) => Boolean(r?._sync?.updatedAt && r?._sync?.createdAt && r._sync.updatedAt !== r._sync.createdAt);
+
+/**
+ * What taking back an extra win does, on the device's copy (D2's undo in spirit): remove what the win
+ * made only if it is still as the win left it and nothing else uses it — the client it made (its account,
+ * contact, relationship and milestone go with it, hidden), else the account it made, else the relationship
+ * (and a contact it made). Whatever stays is listed with why. Pure.
+ * d: { clients, accounts, contacts, relationships, services, consents, activities, links, tasks, costs,
+ *      wholesaleCustomers, leads } (live records), `leadId` the lead.
+ * → { remove: [{ entity, id, name }], left: [string], noteOn: client id | null }
+ */
+export function extraWinPlan(row, d, leadId) {
+  const made = winMade(row);
+  const madeIds = new Set(made.filter((m) => !m.restarted).map((m) => m.id));
+  const byId = (list, id) => (list ?? []).find((r) => r.id === id) ?? null;
+  const left = [];
+  const remove = [];
+  const nameOf = (r) => r?.name ?? r?.title ?? '';
+  const other = (list, pred) => (list ?? []).filter((r) => pred(r) && !madeIds.has(r.id));
+  const tasksNaming = ({ client, account, relationship }) => (d.tasks ?? []).filter((t) => (client && t.client_id === client)
+    || (account && t.account_id === account) || (relationship && t.relationship_id === relationship));
+  // Uses of a set of accounts / relationships / contacts that the win didn't make.
+  const usesOf = ({ clientId = null, accountIds = [], relationshipIds = [], contactIds = [] }) => {
+    const why = [];
+    const acc = new Set(accountIds);
+    const rel = new Set(relationshipIds);
+    const con = new Set(contactIds);
+    if (clientId) {
+      for (const a of other(d.accounts, (x) => x.client_id === clientId)) why.push(`its account “${a.name}”`);
+      for (const p of other(d.contacts, (x) => x.client_id === clientId)) why.push(`its contact “${p.name}”`);
+      const n = other(d.activities, (x) => x.client_id === clientId).length;
+      if (n) why.push(`${n} timeline ${n === 1 ? 'entry' : 'entries'}`);
+      for (const l of (d.leads ?? []).filter((x) => x.id !== leadId && (x.client_id === clientId || x.won_client_id === clientId))) why.push(`the lead “${l.name}”`);
+    }
+    for (const r of other(d.relationships, (x) => acc.has(x.account_id))) why.push('another of our businesses works with it');
+    for (const s of (d.services ?? []).filter((x) => rel.has(x.relationship_id))) why.push(`the service “${s.name}”`);
+    for (const c of (d.costs ?? []).filter((x) => rel.has(x.relationship_id))) why.push(`the resold cost “${c.name}”`);
+    if ((d.consents ?? []).some((x) => con.has(x.contact_id))) why.push('consent recorded on its contact');
+    if ((d.links ?? []).some((x) => acc.has(x.account_id) || con.has(x.contact_id))) why.push('an Order Manager link');
+    for (const w of (d.wholesaleCustomers ?? []).filter((x) => acc.has(x.account_id))) why.push(`the Order Manager customer “${w.name}”`);
+    for (const t of tasksNaming({ client: clientId, account: null, relationship: null }).concat(
+      (d.tasks ?? []).filter((t) => acc.has(t.account_id) || rel.has(t.relationship_id)),
+    )) why.push(`the task “${t.title}”`);
+    return [...new Set(why.filter(Boolean))];
+  };
+  const madeOf = (entity) => made.filter((m) => m.entity === entity && !m.restarted).map((m) => m.id);
+  const [clientMade] = madeOf('client');
+  const accountsMade = madeOf('account');
+  const relsMade = madeOf('relationship');
+  const contactsMade = madeOf('contact');
+  const edited = (entity, ids, list) => ids.map((id) => byId(list, id)).filter((r) => changedSince(r)).map((r) => `the ${entity} “${nameOf(r)}” was edited`);
+
+  if (clientMade && byId(d.clients, clientMade)) {
+    const why = [
+      ...edited('client', [clientMade], d.clients), ...edited('account', accountsMade, d.accounts),
+      ...edited('contact', contactsMade, d.contacts), ...edited('relationship', relsMade, d.relationships),
+      ...usesOf({ clientId: clientMade, accountIds: accountsMade, relationshipIds: relsMade, contactIds: contactsMade }),
+    ];
+    const client = byId(d.clients, clientMade);
+    if (why.length) left.push(`The client “${client.name}” stays: ${why.join(', ')}.`);
+    else remove.push({ entity: 'client', id: clientMade, name: client.name });
+    return { remove, left, noteOn: why.length ? clientMade : null }; // a client that stays gets a note (its milestone can't be deleted)
+  }
+  // Added to a client that was already here: take back the account, else the relationship (and a contact).
+  for (const accountId of accountsMade) {
+    const account = byId(d.accounts, accountId);
+    if (!account) continue;
+    const why = [...edited('account', [accountId], d.accounts), ...edited('relationship', relsMade, d.relationships),
+      ...usesOf({ accountIds: [accountId], relationshipIds: relsMade, contactIds: contactsMade }),
+      ...other(d.contacts, (x) => x.account_id === accountId).map((p) => `its contact “${p.name}”`)];
+    if (why.length) left.push(`The account “${account.name}” stays: ${why.join(', ')}.`);
+    else remove.push({ entity: 'account', id: accountId, name: account.name });
+  }
+  if (!remove.some((r) => r.entity === 'account')) {
+    for (const relId of relsMade) {
+      const rel = byId(d.relationships, relId);
+      if (!rel) continue;
+      const why = [...edited('relationship', [relId], d.relationships), ...usesOf({ relationshipIds: [relId] })];
+      if (why.length) left.push(`The relationship stays: ${why.join(', ')}.`);
+      else remove.push({ entity: 'relationship', id: relId, name: 'the relationship' });
+    }
+  }
+  for (const contactId of contactsMade) {
+    const p = byId(d.contacts, contactId);
+    if (!p || remove.some((r) => r.entity === 'account' && r.id === p.account_id)) continue;
+    const why = [...edited('contact', [contactId], d.contacts), ...usesOf({ contactIds: [contactId] })];
+    if (why.length) left.push(`The contact “${p.name}” stays: ${why.join(', ')}.`);
+    else remove.push({ entity: 'contact', id: contactId, name: p.name });
+  }
+  if (made.some((m) => m.restarted)) left.push('A relationship it made active again stays active.');
+  return { remove, left, noteOn: row.won_client_id };
+}
+
+/**
+ * Take back the extra wins of a lead won twice: for each, carry out extraWinPlan (removals; a note on a
+ * client that stays, since its milestone can't be deleted), send that, then settle the lead's open clashes
+ * keeping the win it names. Needs a connection (settling clashes does).
+ * @param {{ remove, create, syncNow, resolveClash, get }} engine
+ * @returns {Promise<{ removed: object[], left: string[], settled: number }>}
+ */
+export async function removeExtraWins(engine, lead, extras, d, { now = nowIso() } = {}) {
+  const removed = [];
+  const left = [];
+  for (const row of extras) {
+    const plan = extraWinPlan(row, d, lead.id);
+    for (const r of plan.remove) {
+      try {
+        await engine.remove(r.entity, r.id);
+        removed.push(r);
+      } catch (err) {
+        if (err?.code !== 'not_found') throw err; // already gone
+      }
+    }
+    left.push(...plan.left);
+    if (plan.noteOn && (await engine.get('client', plan.noteOn))) {
+      await engine.create('activity', {
+        client_id: plan.noteOn, business_id: lead.business_id, type: 'note', at: now,
+        body: plan.remove.length
+          ? `The lead “${lead.name}” was won on two devices at once; this second win was taken back${plan.left.length ? ` (${plan.left.join(' ')})` : ''}.`
+          : `The lead “${lead.name}” was won on two devices at once; this is the extra win, left as it is: ${plan.left.join(' ')} The lead names the other one.`,
+      });
+    }
+  }
+  await engine.syncNow('won-twice'); // the removals reach the server before the clashes are settled
+  const fresh = await engine.get('lead', lead.id);
+  let settled = 0;
+  const leadClashes = (fresh?._sync?.clashes ?? []).filter((c) => c.kind === 'field' && !c.resolved && (LEAD_STAGE_FIELDS.includes(c.field) || c.field === 'kind'));
+  for (const c of leadClashes) {
+    await engine.resolveClash(c.id, 'keep_winner'); // the lead keeps the win it names
+    settled += 1;
+  }
+  return { removed, left, settled };
 }
 
 /**

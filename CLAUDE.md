@@ -77,7 +77,8 @@ shared/                    @suite/shared — ids.js (UUIDv7), time.js, hlc.js (s
                            fingerprintText/rowKey, detectMapping/rowFromCells); D6: costs.js (COST_PERIODS, rollForward,
                            effectiveAnchor, costTotals, costState, wantsCostReminder, moneyText/costAmountText, the
                            reminder lead days); D8: leads.js (LEAD_STAGES, LEAD_SOURCES, LOST_REASONS,
-                           leadsWithoutNextStep, firstYearValue, pipelineTotals, CROSS_SELL_PAIRS, crossSellList);
+                           LEAD_STAGE_FIELDS, leadNeedsLook, leadsWithoutNextStep, firstYearValue, pipelineTotals,
+                           CROSS_SELL_PAIRS, crossSellList);
                            tests in shared/test
 server/src/
   index.js                 start: open db, createApp, listen, heartbeat, backup schedule, shutdown
@@ -199,9 +200,10 @@ client/src/
                            D8: CrmTabs.jsx (Clients · Pipeline · Cross-sell), PipelinePage (/crm/pipeline), LeadPage
                            (/crm/leads/:id), CrossSellPage (/crm/cross-sell) — all lazy; leadForms.jsx (LeadForm,
                            LostSheet, WinSheet, LeadActivityForm), leads.js (no React: the form, stageChange, pipelineView,
-                           leadDuplicate, planWin/applyWin, leadNextStepFields, nextStepOf, clientLeads,
-                           leadTimelineItems, crossSellLeadFields; client/test/leads.test.js); data.js
-                           usePipelineData/useLeadPageData/useCrossSellData
+                           leadDuplicate, planWin/applyWin, keptWinIds, leadNextStepFields, nextStepOf, clientLeads,
+                           leadTimelineItems, crossSellLeadFields, stageClashes/settleStageClashes, leadWins/
+                           extraWinPlan/removeExtraWins; client/test/leads.test.js); LeadNotices.jsx (WonTwice,
+                           StageClash, NeedsLook); data.js usePipelineData/useLeadPageData/useCrossSellData/useWinFixData
   modules/planner/         C4a screens: TodayPage (/), InboxPage (/inbox), TasksPage (/tasks), PlanSheet (Plan my day),
                            ClientTasksCard.jsx (the client page's Tasks card + "No next step · Add"), forms.jsx
                            (TaskSheet, InboxNoteSheet, newTaskInitial), parts.jsx (TaskRow, tick, CaptureBar, useToday),
@@ -555,6 +557,7 @@ import { store, useRecords, useRecord, useSyncStatus, SyncError } from '../../sy
 import { ClashPanel, SyncBadges } from '../../sync/components.jsx';
 const id = await store.create('task', { title: 'Call Lefty’s', done: false }); // new UUIDv7, made here; works offline
 await store.update('task', id, { done: true });     // sends only fields that changed; false when nothing did
+await store.update('lead', id, fields, { send: Object.keys(fields) }); // D8: these go out even if unchanged here
 await store.remove('task', id);
 await store.list('task', { where: { done: false } /* or (rec) => bool */, sort: 'due' /* '-due', or (a, b) => n */ });
 await store.get('task', id);                         // null when this device doesn't have it
@@ -2047,13 +2050,16 @@ planner's Today, Tasks, task sheet and inbox. Tests `server/test/leads.test.js` 
   winning made), stage_changed_at, closed_at (datetime: won or lost). All refs to clients are **plain** (deleting a
   client never hides the lead).
 - `lead_activity` (`crm_lead_activities`; **append-only**): lead_id*⇧, type* (`note|call|email|meeting|stage`), body,
-  stage_from, stage_to, at*. **Decision — stage history**: every stage change writes a `stage` row (from → to; a loss
+  stage_from, stage_to, at*, and on a win's own row (stage → won) won_client_id→, won_relationship_id→ and won_made
+  (text: what that win made — `client:<id> account:<id> contact:<id> relationship:<id> activity:<id>`, or
+  `restarted:relationship:<id>` — so a lead won on two devices at once can be found and its extra win taken back). **Decision — stage history**: every stage change writes a `stage` row (from → to; a loss
   carries its reason in body) beside the lead's `stage`/`stage_changed_at`, so the history survives edits and syncs
   like any append-only record; the lead's own notes and calls are the same entity. Not the CRM's `activity`: that one
   needs a client, which most leads never get.
-- **`checkLead`** (the step's own values; arrival order can't matter): `stage: 'lost'` needs a `lost_reason` (in the
-  step, or already on a lost lead); `stage: 'won'` needs `won_client_id` (in the step or already); currency three
-  capital letters; value ≥ 0. Refused steps land in Needs attention.
+- **`checkLead`** (the step's own values; arrival order can't matter): `stage: 'lost'` needs a `lost_reason` — in the
+  step, or **any stored one** the step doesn't clear (review fix: keeping "Lost" from a stage clash applies the stage
+  alone, onto a row the other device moved); `stage: 'won'` likewise needs `won_client_id`; currency three capital
+  letters; value ≥ 0. Refused steps land in Needs attention.
 - `task.lead_id` → lead (plain ref, nullable; additive column). `inbox_item.became_entity` may be `'lead'`.
 
 **Rules**
@@ -2075,10 +2081,15 @@ planner's Today, Tasks, task sheet and inbox. Tests `server/test/leads.test.js` 
   `won_client_id`, `won_relationship_id`, `closed_at`) → its `stage` row. For a **current client** (the lead names one,
   or the person picks the likely duplicate): only what it lacks — the account picked (or a new one under it), a contact
   only when none of the client's has the lead's email/phone (or, without them, its name), and the relationship — or
-  the account's existing one with that business and kind, made active again. **Ids are made once per lead** (kept in
-  localStorage `suite.crm.winIds.<lead id>` until the win is saved): a retry after a failure part-way, a double tap or
-  a reload re-uses them, a create already made answers `already_exists` and counts as done — never a second client
-  (tested: a failure after three writes, then a retry and a double tap → one client, account, contact, relationship).
+  the account's existing one with that business and kind, made active again — then it **restarts**: `status: active` and
+  `start_date` = the day picked are sent (only those), and the milestone says "(restarted)". **Ids are made once per
+  lead and choice** (`keptWinIds`; localStorage `suite.crm.winIds.<lead id>` until the win is saved, keyed by
+  `winChoiceKey`: a new client, or add-to-<client>:<account or new>, and the kind): a retry after a failure part-way, a
+  double tap or a reload re-uses them, a create already made answers `already_exists` and counts as done — never a
+  second client (tested: a failure after three writes, then a retry and a double tap → one client, account, contact,
+  relationship). **Another choice gets new ids** (review fix: reusing them would skip, as already made, what the first
+  choice made elsewhere — a relationship on another account); what a failed first try made stays (a client with no
+  relationship, say) and is tidied by hand. The win's own `stage` row records the client, relationship and `won_made`.
 - **Before a new client** the win sheet looks for a likely one on the device's copy (C7's `buildMatchIndex`/`findMatch`):
   same clean email or phone on a contact → "Already here: X" (pre-selected "Add to X"); a similar client/account name →
   "Maybe the same as X" (the new client stays selected). The person chooses; nothing is merged.
@@ -2087,6 +2098,28 @@ planner's Today, Tasks, task sheet and inbox. Tests `server/test/leads.test.js` 
   the lead's or the won relationship's; stage rows as milestones "Lead “X”: Talking → Won"; "on the lead" links back).
   Nothing is copied. The client page also has a **Leads** card (stage, value, next step or the flag, "+ New lead" for
   this client — the lead names it, so winning adds the relationship).
+- **Concurrent moves (review fix)**: every stage move sends the whole `LEAD_STAGE_FIELDS` set — stage, stage_changed_at,
+  closed_at, lost_reason, lost_note, won_client_id, won_relationship_id, what doesn't apply as null — **even fields
+  unchanged on the device** (`store.update(entity, id, fields, { send: [...] })`, an engine option added for this: listed
+  fields go out with the step whenever something does). So two devices moving one lead at once clash on all of the set
+  together, and the later move wins all of it: never "Talking" with a close date. The lead page settles a stage clash
+  as one (`StageClash`, `settleStageClashes`): **Keep <now>** (keep_winner on each) or **Use <other> instead**
+  (keep_loser on each, the stage last so "Lost" arrives after its reason); the generic panel then leaves those fields
+  out. Clashes on the set without a stage clash (two lost reasons) settle field by field as usual. Readers flag a row
+  that still doesn't add up (`leadNeedsLook`: an open stage with a close date, lost reason or won client; won with no
+  client; lost with no reason — old steps, or a field settled alone) with a "needs a look" banner on the lead page, and
+  `clientLeads` counts a lead as won into a client only while it **is** won.
+- **Won twice (review fix)**: two devices winning the same lead offline each make their win (two clients, or two
+  relationships); the lead's own fields clash and the later win is the one it names. `leadWins` finds it from the win
+  rows whose client (and relationship) are still on the device: more than one = **won twice**. Shown on the lead page and
+  on **both** clients' Leads cards (`WonTwice`, with links to each client): **Remove the extra** (needs a connection)
+  takes back each extra win (`extraWinPlan` → `removeExtraWins`, D2's undo in spirit, on the device): the client it made
+  is deleted (its account, contact, relationship and milestone go with it, hidden) only if none of them was edited and
+  nothing else was added — another account or contact, a timeline entry, a service, consent, a link, a task naming
+  them, a resold cost, an Order Manager customer, another lead; else the account it made, else the relationship (and a
+  contact it made). Whatever stays is listed with why and a note goes on that client's timeline (the milestone is
+  append-only). Then the removals are synced and the lead's clashes settled keep_winner (the win it names). A win
+  vs a lost (or another move) is a stage clash, settled with `StageClash`; its client then stays for a person to judge.
 - **Value**: an amount per period; the pipeline adds **first-year value** (`firstYearValue`: once × 1, monthly × 12,
   quarterly × 4, yearly × 1) **per currency** (never across currencies, as D6).
 
@@ -2148,7 +2181,8 @@ automation and the page use the same function):
 - **The monthly trigger** (`schedule.js`): `{ every: 'month', at }` → period key `YYYY-MM`, day = `firstWorkday` of the
   month (`triggerText`: "The first workday of each month at 8:05 a.m."); no "missed" runs (those are weekly only).
 
-**Not built / open**: quotes (D17, above); a lead's own attachments or emails; merging two leads; per-person pipeline
+**Not built / open**: quotes (D17, above); a lead's own attachments or emails; merging two leads; taking back a win
+of a lead now lost (by hand); a relationship two wins both restarted stays as it is; per-person pipeline
 targets (D15); the pull scope (closed leads accumulate on devices like done tasks).
 
 ## Decisions for later packages
@@ -2231,7 +2265,8 @@ targets (D15); the pull scope (closed leads accumulate on devices like done task
   `lead_activity`, append-only, stage changes included) — not clients with a status: a lead may have no client yet and
   most never become one. A lead may point at a current client (cross-sell). Winning is one offline step with ids made
   once (client, account, contact, relationship, milestone, the lead won); a likely duplicate client is offered first.
-  "No next step" for leads has C4a's shape (`task.lead_id`). The pipeline lives under the Clients nav entry (tabs), not
+  "No next step" for leads has C4a's shape (`task.lead_id`). A stage move sends its whole field set so concurrent moves
+  settle consistently; a lead won twice is found from its win rows and its untouched extra taken back. The pipeline lives under the Clients nav entry (tabs), not
   a ninth phone tab. The cross-sell pairs are one table in shared code, wholesale is never in it, and the age-restricted
   rule is applied to accounts and their contacts; a new `every: 'month'` trigger runs it on the first workday. Quotes
   are D17: "quoted" is set by hand. Next: D17 sets `quoted` from a sent quote and puts the quote's value on the lead.

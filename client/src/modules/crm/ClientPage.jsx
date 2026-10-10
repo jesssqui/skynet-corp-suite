@@ -22,6 +22,7 @@ import UndoLinkSheet from '../wholesale/UndoLinkSheet.jsx';
 import { resoldLine } from '../costs/logic.js';
 import { STAGE_LABELS, clientLeads, leadTimelineItems, leadValueText, nextStepOf, isOpenLead } from './leads.js';
 import { LeadForm } from './leadForms.jsx';
+import { WonTwice } from './LeadNotices.jsx';
 import './crm.css';
 
 // One client on one screen (/crm/clients/:id): who they are, their businesses (accounts) with
@@ -332,7 +333,7 @@ function LeadTimelineItem({ item, account, business, me }) {
 }
 
 // D8: this client's leads — cross-sell ones pointing at it and the one(s) it was won from.
-function LeadsCard({ leads, tasks, businessesById, onNew, today }) {
+function LeadsCard({ leads, tasks, businessesById, onNew, today, leadActivities, clientsById, relationshipsById }) {
   const tasksByLead = new Map();
   for (const t of tasks) tasksByLead.set(t.lead_id, [...(tasksByLead.get(t.lead_id) ?? []), t]);
   return (
@@ -360,6 +361,7 @@ function LeadsCard({ leads, tasks, businessesById, onNew, today }) {
                     ? <span style={{ ...muted, color: next.due_date < today ? 'var(--danger)' : 'var(--text-muted)' }}>Next: {next.title} · {formatDate(next.due_date)}</span>
                     : <span><Badge tone="warn">No next step</Badge></span>
                 ) : null}
+                <WonTwice lead={l} leadActivities={leadActivities} clientsById={clientsById} relationshipsById={relationshipsById} compact />
               </li>
             );
           })}
@@ -600,8 +602,11 @@ function ClientScreen({ clientId }) {
             ) : <p style={{ ...muted, margin: 0 }}>No contacts yet.</p>}
           </Card>
           <LeadsCard
-            leads={clientLeads(data.leads, client.id)}
+            leads={clientLeads(data.leads, client.id, data.leadActivities)}
             tasks={data.leadTasks}
+            leadActivities={data.leadActivities}
+            clientsById={data.allClientsById}
+            relationshipsById={data.allRelationshipsById}
             businessesById={businessesById}
             today={today}
             onNew={() => open({ kind: 'lead' })}

@@ -538,8 +538,12 @@ export function createSyncEngine({
     return recordId;
   }
 
-  /** Change some fields; only those that differ are sent. Returns false when nothing changed. */
-  async function update(entity, id, changes) {
+  /**
+   * Change some fields; only those that differ are sent. Returns false when nothing changed.
+   * `send`: fields sent even when unchanged here, as long as something is sent (D8: a lead's stage move
+   * sends its whole set, so two devices' moves clash on all of it together and settle consistently).
+   */
+  async function update(entity, id, changes, { send = [] } = {}) {
     await opened();
     const def = definition(entity, 'update');
     const current = await get(entity, id);
@@ -548,6 +552,7 @@ export function createSyncEngine({
     const diff = {};
     for (const [name, value] of Object.entries(clean)) if (current[name] !== value) diff[name] = value;
     if (!Object.keys(diff).length) return false;
+    for (const name of send) if (Object.hasOwn(clean, name)) diff[name] = clean[name];
     await addStep({ entity, recordId: id, op: 'update', fields: diff });
     return true;
   }

@@ -212,9 +212,19 @@ export function useClientPageData(clientId) {
       // D6: our recurring costs resold on this client's relationships.
       resoldCosts: myRelationships.flatMap((r) => costs.where('relationship_id', r.id)),
       // D8: leads pointing at this client (cross-sell) or won into it, and their own timelines.
+      // (Review fix) and leads with a win that went here — a lead won on two devices at once shows on both
+      // clients, with "Won twice"; the ids of every client and relationship, to tell which wins still stand.
       ...(() => {
-        const mine = [...new Map([...leads.where('client_id', clientId), ...leads.where('won_client_id', clientId)].map((l) => [l.id, l])).values()];
-        return { leads: mine, leadActivities: mine.flatMap((l) => leadActivities.where('lead_id', l.id)), leadTasks: mine.flatMap((l) => tasks.where('lead_id', l.id)) };
+        const leadsById = leads.byId();
+        const winsHere = leadActivities.where('won_client_id', clientId).map((a) => leadsById.get(a.lead_id)).filter(Boolean);
+        const mine = [...new Map([...leads.where('client_id', clientId), ...leads.where('won_client_id', clientId), ...winsHere].map((l) => [l.id, l])).values()];
+        return {
+          leads: mine,
+          leadActivities: mine.flatMap((l) => leadActivities.where('lead_id', l.id)),
+          leadTasks: mine.flatMap((l) => tasks.where('lead_id', l.id)),
+          allClientsById: clients.byId(),
+          allRelationshipsById: relationships.byId(),
+        };
       })(),
     };
   }, [clientId], { entities: PAGE_ENTITIES });
@@ -264,11 +274,30 @@ export function useLeadPageData(leadId) {
       accountsById: accounts.byId(),
       contacts: contacts.records,
       relationships: relationships.records,
+      relationshipsById: relationships.byId(),
       tasks: tasks.where('lead_id', leadId),
       activities: [...leadActivities.where('lead_id', leadId)].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)),
     };
   }, [leadId], { entities: LEAD_PAGE_ENTITIES });
   return { data: data ?? null, loading, error };
+}
+
+// D8 review: what taking back a duplicate win checks ("nothing else was added since"), read only when a
+// lead was won twice.
+const WIN_FIX_ENTITIES = ['client', 'account', 'contact', 'relationship', 'service', 'consent', 'activity', 'link', 'task',
+  'recurring_cost', 'wholesale_customer', 'lead'];
+
+export function useWinFixData(enabled = true) {
+  const { data, loading } = useSyncData(async (e) => {
+    if (!enabled) return null;
+    const [clients, accounts, contacts, relationships, services, consents, activities, links, tasks, costs, wholesaleCustomers, leads] = await cachedLists(e, WIN_FIX_ENTITIES);
+    return {
+      clients: clients.records, accounts: accounts.records, contacts: contacts.records, relationships: relationships.records,
+      services: services.records, consents: consents.records, activities: activities.records, links: links.records, tasks: tasks.records,
+      costs: costs.records, wholesaleCustomers: wholesaleCustomers.records, leads: leads.records,
+    };
+  }, [enabled], { entities: WIN_FIX_ENTITIES });
+  return { data: data ?? null, loading };
 }
 
 // D8: the cross-sell page reads the same as the monthly list (crossSellList in @suite/shared/leads).

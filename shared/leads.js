@@ -22,6 +22,34 @@ export const LEAD_VALUE_PERIODS = Object.freeze(['once', 'monthly', 'quarterly',
 const PER_YEAR = Object.freeze({ once: 1, monthly: 12, quarterly: 4, yearly: 1 });
 
 export const isOpenLead = (lead) => Boolean(lead) && OPEN_LEAD_STAGES.includes(lead.stage);
+
+/**
+ * The fields that say where a lead stands. Every stage move sends ALL of them (the ones that don't apply
+ * as null), even when unchanged on the device: two devices moving the same lead at once then clash on the
+ * whole set together, and settling the clash (either way) leaves a consistent row — never "Talking" with a
+ * lost reason and a close date. See CLAUDE.md, "Leads and the pipeline (D8)", "Concurrent moves".
+ */
+export const LEAD_STAGE_FIELDS = Object.freeze(['stage', 'stage_changed_at', 'closed_at', 'lost_reason', 'lost_note', 'won_client_id', 'won_relationship_id']);
+
+/**
+ * Why a lead's row doesn't add up ("needs a look"), or [] when it does: an open stage carrying a close
+ * date, a lost reason or the client it was won into; won without its client; lost without a reason. Only
+ * possible after concurrent edits settled field by field (or old steps); readers flag it, never guess.
+ */
+export function leadNeedsLook(lead) {
+  if (!lead) return [];
+  const out = [];
+  if (isOpenLead(lead)) {
+    if (lead.closed_at) out.push('it has a close date');
+    if (lead.lost_reason) out.push('it has a lost reason');
+    if (lead.won_client_id) out.push('it names a client it was won into');
+  } else if (lead.stage === 'won' && !lead.won_client_id) {
+    out.push('it is won but names no client');
+  } else if (lead.stage === 'lost' && !lead.lost_reason) {
+    out.push('it is lost with no reason');
+  }
+  return out;
+}
 const openTask = (t) => t && !t.done_at && !t.deleted_at;
 
 /**

@@ -17,10 +17,12 @@ import { isCurrency } from '@suite/shared/costs';
 export function checkLead({ op, fields, current }) {
   if (op === 'delete' || !fields) return null;
   const has = (k) => Object.hasOwn(fields, k) && fields[k] !== null;
-  if (fields.stage === 'lost' && !(has('lost_reason') || (op === 'update' && current?.stage === 'lost' && current?.lost_reason))) {
+  // Lost needs a reason: in the step, or already stored (whatever the stored stage — keeping "Lost" from a
+  // stage clash applies the stage alone, after its reason; review fix). A step can't clear it while losing.
+  if (fields.stage === 'lost' && !(has('lost_reason') || (op === 'update' && current?.lost_reason && !Object.hasOwn(fields, 'lost_reason')))) {
     return { code: 'invalid_value', reason: 'lost_reason: say why the lead was lost' };
   }
-  if (fields.stage === 'won' && !(has('won_client_id') || current?.won_client_id)) {
+  if (fields.stage === 'won' && !(has('won_client_id') || (op === 'update' && current?.won_client_id && !Object.hasOwn(fields, 'won_client_id')))) {
     return { code: 'invalid_value', reason: 'won_client_id: a won lead names the client it became' };
   }
   if (has('currency') && !isCurrency(fields.currency)) return { code: 'invalid_value', reason: 'currency: three capital letters, like CAD or USD' };

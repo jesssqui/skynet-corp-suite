@@ -82,6 +82,12 @@ test('leads: a synced record type; lost needs a reason, won names its client; th
   env.edit('lead', lead, { stage: 'lost', lost_note: 'Spring' }); // already lost with a reason
   assert.equal(checkLead({ op: 'update', fields: { stage: 'won' }, current: { won_client_id: 'x' } }), null);
   assert.equal(checkLead({ op: 'delete', fields: null }), null);
+  // Review fix: keeping "Lost" from a stage clash applies the stage alone onto a lead the other device moved —
+  // any stored reason counts; a step can't lose a lead while clearing its reason (or win one clearing its client).
+  assert.equal(checkLead({ op: 'update', fields: { stage: 'lost' }, current: { stage: 'talking', lost_reason: 'price' } }), null);
+  assert.equal(checkLead({ op: 'update', fields: { stage: 'lost', lost_reason: null }, current: { lost_reason: 'price' } }).code, 'invalid_value');
+  assert.equal(checkLead({ op: 'update', fields: { stage: 'won', won_client_id: null }, current: { won_client_id: 'x' } }).code, 'invalid_value');
+  assert.equal(checkLead({ op: 'create', fields: { stage: 'lost' }, current: null }).code, 'invalid_value');
 
   const act = env.local('lead_activity', { lead_id: lead, type: 'stage', stage_from: 'lead', stage_to: 'lost', at: '2026-10-30T16:00:00.000Z' });
   assert.equal(env.apply('lead_activity', 'update', { body: 'x' }, act).code, 'op_not_allowed', 'append-only');
@@ -95,6 +101,9 @@ test('leads: a synced record type; lost needs a reason, won names its client; th
   const { clientId } = env.client('Won Co', [[B.agency, 'website']]);
   const lead2 = env.local('lead', { name: 'Won Co', business_id: B.agency, stage: 'quoted' });
   env.edit('lead', lead2, { stage: 'won', won_client_id: clientId, closed_at: '2026-10-30T16:00:00.000Z' });
+  // A win's own row names the client it went to and what it made (to find a lead won twice).
+  const winRow = env.local('lead_activity', { lead_id: lead2, type: 'stage', stage_from: 'quoted', stage_to: 'won', at: '2026-10-30T16:00:00.000Z', won_client_id: clientId, won_made: `client:${clientId}` });
+  assert.equal(env.db.prepare('SELECT won_client_id FROM crm_lead_activities WHERE id = ?').get(winRow).won_client_id, clientId);
   assert.deepEqual(env.ctx.services.crm.liveLeads().map((l) => l.id).sort(), [lead, lead2].sort());
   // Only through sync.
   assert.throws(() => env.db.prepare("UPDATE crm_leads SET name = 'x' WHERE id = ?").run(lead));
@@ -129,6 +138,7 @@ test('cross-sell: one task per business on the first workday of the month, once;
   assert.match(agency.notes, /Coach Pat: Consulting client, no website from us · Pat \(no email consent: call or ask\)/);
   assert.match(agency.notes, /Smoke Hut: Website with us, no social media/, 'the agency already works with it');
   assert.match(agency.notes, /Nothing has been sent/);
+  assert.match(agency.notes, /\(as of Nov 2, 2026\):/, 'the day in words');
   const consulting = made.find((x) => x.business_id === B.consulting);
   assert.doesNotMatch(consulting.notes, /Smoke Hut|Lefty/, 'consulting has no relationship with the age-restricted accounts');
   for (const x of made) assert.doesNotMatch(x.notes, /Lefty’s Vape|Closed Co/);
