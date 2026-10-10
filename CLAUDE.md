@@ -43,7 +43,7 @@ tasks with no buyer details; and in `sales`, a month's total entered by hand tha
 connected), and from **D11** sales entries and the overview (module `wholesale`: the Order Manager's sales per day in
 the shared totals, matching its own P&L; module `sales`: sales entered by hand — invoices, anything not connected,
 refunds and credit notes as negatives; module `overview`: the home screen of the business — sales per business for
-today, this week and this month with the combined total, and one list of what needs dealing with).
+today, this week and this month with the combined total, and one list of what needs dealing with — "To deal with").
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -131,7 +131,7 @@ server/src/
                            buildCrmIndex, matchCustomer, duplicateClients, inScope, customerContact), matchService.js
                            (passes, the wholesale-auto-link automation, review lists, decisions), linkChanges.js (what
                            each link changed; undo plan + steps), migrations/005_matching.sql. D11: salesDays.js (pure: the
-                           Order Manager's P&L rules per UTC day), sales.js (touch/flush/rebuildAll, the 'wholesale' sales
+                           Order Manager's P&L rules per local day), sales.js (touch/flush/rebuildAll, the 'wholesale' sales
                            source), overdueBalances/paymentsWithoutOrder (the overview), migrations/006_sales_days.sql
   modules/calendar/        C6a: the task calendar feed — ics.js (iCalendar writer, pure: escaping, 75-octet folding,
                            VTIMEZONE from Intl's zone data, events), service.js (links: make/replace/turn off, token
@@ -168,7 +168,7 @@ server/src/
                            secrets with a key file — D1's Order Manager secret, D16's Stockroom secret)
 server/scripts/            backup.js, restore.js, users.js (CLIs)
 scripts/wom-e2e.mjs        D1: the real Order Manager (a checkout) against a real suite: `npm run test:wom -- <path>`
-                           (D11 step 9: the suite's wholesale days against its own P&L, every day and the range)
+                           (D11 step 9: the suite's wholesale days against its own P&L — A19: local days, exact cents)
 scripts/stockroom-e2e.mjs  D16: a real Stockroom (an inventory-hub checkout, run by stockroom-hub.mjs under its own tsx)
                            against a real suite: `npm run test:stockroom -- <path>`
 server/test/               node --test; helpers.js: tmpDir/testConfig/startApp/testClock/ensureTestUsers/sessionFor/dumpDb;
@@ -2548,73 +2548,97 @@ store "thesavepointshop").
 
 ## Wholesale sales (wholesale module, D11)
 Code `server/src/modules/wholesale/salesDays.js` (pure), `sales.js` (the source), migration `006_sales_days.sql`
-(indexes only); tests `server/test/wholesale-sales.test.js` (TZ Toronto; with `fixtures/wom-captured-sales.json`) and
-step 9 of `scripts/wom-e2e.mjs`. The plan's "done when": wholesale totals match the Order Manager's own reports for the
-same days, net of refunds.
+(indexes only), the sales module's `raw` column (`sales/migrations/005_raw.sql`) and `sumByCurrency` (shared/sales.js);
+tests `server/test/wholesale-sales.test.js` (TZ Toronto; with `fixtures/wom-captured-sales.json`) and step 9 of
+`scripts/wom-e2e.mjs`. The plan's "done when": wholesale totals match the Order Manager's own reports for the same days,
+net of refunds.
 - **Which report is matched (decision): the Order Manager's Reports → P&L** (`GET /api/reports/profit-loss?from&to`,
-  admin) — the one report there that is net of refunds and credit notes for any range of days (its Sales tab and
-  dashboard metrics aren't net of refunds; the Reports page's P&L tab is what the owner compares). Its rules, copied
-  exactly: an order counts while `status = 'active'` (deleted orders are `cancelled` while in its bin, so they drop out;
-  history-only orders count); **on the UTC day of its `created_at`** (`date(o.created_at)` on SQLite's UTC times — **not**
-  `order_date`; a history-only order's created_at is its order date at 12:00, so it lands on its order date); Revenue =
-  Σ quantity × price of its lines (an order with no lines is no order and no revenue, but its discount, tax and shipping
-  count); Discounts, Tax collected, Shipping collected = the order's; **Refunds and Credit notes before tax on their own
-  day** (refund `created_at`, credit note `issued_at`, UTC) while their order counts now: a refund made by a return
-  takes the return's own subtotal, any other refund (money back or store credit put on the account) its order's
-  proportion goods / (goods + tax), a credit note its own subtotal; store credit used up never counts; **Net revenue =
-  revenue − discounts − refunds − credit notes**.
-- **The row** (`SALES_FIGURES`; store `wholesale`, business wholesale, CAD, zone **UTC**): orders, items (units on the
-  counting orders' lines), gross = Revenue, discounts, refunds = Refunds + Credit notes (before tax), **net = the P&L's
-  Net Revenue to the cent**, and — so `total` is "total sales" like every store's — tax and shipping **less what went
-  back** (each refund / credit note takes its whole amount off the total: its net, its shipping (the return's or credit
-  note's), the rest as tax). So `tax`/`shipping` equal the P&L's *Tax Collected*/*Shipping Collected* only on days with
-  nothing given back (the P&L never takes refunded tax or shipping off). total = net + tax + shipping = Σ order totals −
-  Σ given back with tax. **Rounding**: like the P&L, a day's proportional refunds are added unrounded and rounded once,
-  so each day matches; a range is the sum of its days while the P&L rounds the range once — with proportional refunds on
-  several days a range can differ by a cent (tested: the e2e range matched).
+  admin; the Reports page's P&L tab) — the one screen there that is net of refunds and credit notes for a chosen range
+  of days. (`/dashboard/metrics` also returns `net_sales`, but only for fixed periods; the Reports page's Period Metrics
+  shows its gross Revenue.) Its rules **since the Order Manager's A19** (owner's decisions, 10 Oct), copied exactly:
+  - an order counts while `status = 'active'` (deleted orders are `cancelled` while in its bin; history-only orders
+    count) on the **business's local day** — America/Toronto, `WHOLESALE_SALES_ZONE` (its `REPORT_TIME_ZONE`) — of its
+    `created_at`; a **history-only order on its `order_date`** (it is stamped at noon UTC: the same day in Toronto,
+    `orderDayOf`). Days are calendar days in the zone (DST handled by Intl, `localDateIn`);
+  - Revenue = Σ quantity × price of its lines (an order with no lines is no order and no revenue, but its discount, tax
+    and shipping count); Discounts, Tax collected, Shipping collected = the order's;
+  - **Refunds and Credit notes before tax on their own local day** (refund `created_at`, credit note `issued_at`) while
+    their order counts now: a refund made by a return takes the return's own subtotal, any other refund (money back or
+    store credit put on the account) its order's proportion goods / (goods + tax) as the order is now (1 when that is
+    ≤ 0), a credit note its own subtotal; store credit used up never counts; **Net revenue = revenue − discounts −
+    refunds − credit notes**;
+  - **exact cents**: the P&L adds the stored, unrounded amounts and rounds each line once per range. A19's snapshots
+    carry them — `totals.items_raw`, `discount_raw`, `tax_raw` on orders and `amount_raw` on refunds (dollars, plain
+    JSON numbers) — and they are added up unrounded here too, also for the goods share of proportional refunds; events
+    without them (from before A19) fall back to the whole cents. Each day row keeps its unrounded figures in
+    `sales_daily.raw` (JSON, dollars: gross, discounts, refunds, net, tax) and `sumByCurrency` adds those and rounds
+    once, so a week, a month or any range equals the P&L to the cent (3 × $7.99 at 15 % off on three days: $10.79 of
+    discounts, not 3 × $3.60).
+- **The row** (`SALES_FIGURES`; store `wholesale`, business wholesale, CAD, zone America/Toronto): orders, items (units
+  on the counting orders' lines), gross = Revenue, discounts, refunds = Refunds + Credit notes (before tax), **net = the
+  P&L's Net Revenue to the cent**, and — so `total` is "total sales" like every store's — tax and shipping **less what
+  went back** (each refund / credit note takes its whole amount off the total: its net, its shipping (the return's or
+  credit note's), the rest as tax). So `tax`/`shipping` equal the P&L's *Tax Collected*/*Shipping Collected* only on
+  days with nothing given back (the P&L never takes refunded tax or shipping off). total = net + tax + shipping.
 - **Headline (decision)**: the Sales card and the overview show **Total sales** for wholesale like every store (items,
   shipping and tax after discounts and refunds), so the combined total adds like with like; the figure the owner
-  compares with the P&L is `net` (DEPLOY.md step 13 says how). **UTC days (decision)**: the store's zone is `UTC`, so
-  "today" on the wholesale card is the UTC day (after 8 p.m. in Toronto it is tomorrow's, with only the orders since) —
-  exactly what the P&L shows for those days; the card says "Days are UTC days, as the Order Manager's P&L counts them".
-  If the Order Manager's P&L ever counts local days, change `WHOLESALE_SALES_ZONE` and the day key (placed_at's day).
+  compares with the P&L is `net` (DEPLOY.md step 13). The card says it is counted as the P&L counts.
 - **Writes**: every held change marks its days (in memory: the order's own day and each of its money rows' days, before
   and after the change; a return marks its refunds' days) — `touchOrder`/`touchMoney` in hold — and after each request
-  (before reconcile and the automations) `flush()` works those days out again from the holding area and writes them
-  through `sales.putDays` (upserts: a day re-read replaces its row; a cancelled order's day is written as zeros, a
-  refund on a cancelled order drops out). A failed write keeps its days marked (next request, or the minute reconciler).
-  **At every start** (`startSales()` from the start hook — sales is created after wholesale) every day is written again
-  from the whole holding area, plus zeros for days written before that now have nothing (`sales.storeDays`): that is the
-  backfill on the first start after deploying and the repair after a restore (the holding area is kept across restores,
-  `sales_daily` isn't). **Unlinked customers' and guest sales count** (sales are sales; linking is the CRM's business).
+  (before reconcile and the automations) `flush()` works those days out again from the holding area (reading the UTC
+  day either side of each local day) and writes them through `sales.putDays` (upserts: a day re-read replaces its row;
+  a cancelled order's day is written as zeros, a refund on a cancelled order drops out). A failed write keeps its days
+  marked (next request, or the minute reconciler). **At every start** (`startSales()` from the start hook — sales is
+  created after wholesale) every day is worked out again from the whole holding area and **only days that differ** from
+  what is stored are written (`sales.storeRows`; review fix: unchanged days keep their "updated" time), plus zeros for
+  days written before that now have nothing: that is the backfill on the first start after deploying, the move from the
+  first D11 build's days, and the repair after a restore (the holding area is kept across restores, `sales_daily`
+  isn't). **Unlinked customers' and guest sales count** (sales are sales; linking is the CRM's business).
 - **Listed** on Money → Sales once the connection has a secret or anything was received (state `nothing_yet` before
   the first event, `paused` with its switch). Link: `/wholesale`.
+- **`payments.unmatched`** (the Order Manager's A19 event, sent only while its "Send unmatched e-Transfer count to the
+  suite" switch is on): a **state** — `{ count (int ≥ 0), total_cents (int ≥ 0), oldest_at (ISO | null; needed when count
+  > 0), page (its path, '/customers/etransfers') }`, nothing personal. `eventProblem` checks that shape (refused
+  otherwise); applied in arrival order, the latest wins, held in `wholesale_status` (`unmatched_*`, keepOnRestore with
+  the holding area: the Order Manager sends it again only when it changes) — `wholesale.unmatchedState()`. Shown on the
+  overview's payments section and in the `wom` Connections row's detail ("N e-Transfers with no matching order there").
+- **Deploy order** (the Order Manager's A19 says the same): the suite first (it accepts the new event and reads the raw
+  fields; an older suite would refuse `payments.unmatched`), then the Order Manager with A19, then its "Check the suite is
+  up to date" (re-sends every order with its raw totals: their days are rewritten), then its new switch. DEPLOY.md step 13.
 - **Not matched / open**: the P&L's *Tax Collected* and *Shipping Collected* on days with refunds (above); an older
   return without its own subtotal (before the Order Manager's A10b) is taken in proportion here while the P&L's SQL gives
-  it 0 — an Order Manager database from before A10b's backfill; sub-cent prices (8.333) are rounded per order here.
+  it 0; refunds from before A19 have no `amount_raw` (whole cents / 100: exact for the amounts people type).
 
 ## Sales entered by hand (sales module, D11)
 Code `server/src/modules/sales/service.js` (addEntry, updateEntry, deleteEntry, listEntries, rebuildHand), routes,
-migration `004_entries.sql`; client `client/src/modules/sales/EntriesPage.jsx` + `logic.js`; tests
-`server/test/sales-entries.test.js`, `client/test/overview.test.js`, `test/e2e/overview.e2e.test.js`.
+migration `004_entries.sql`; shared `NOT_BY_HAND` / `byHandAllowed` (shared/sales.js); client
+`client/src/modules/sales/EntriesPage.jsx` + `logic.js`; tests `server/test/sales-entries.test.js`,
+`client/test/overview.test.js`, `test/e2e/overview.e2e.test.js`.
 - **The plan's "from invoices and by hand"** (D7 — consulting engagements and invoices — is skipped for now; consulting
   will be separate): `sales_entries` — a business (one of ours), a day, a kind (`sale | refund | credit_note`), an amount
   (cents, **signed**: refunds and credit notes are negatives; typed as a positive amount, the kind decides), a currency
   (CAD by default; any three letters; CAD/USD/EUR/GBP offered), orders (sales only, optional) and a note (≤ 500). A day
   up to tomorrow (a device in another zone), from 2000 on, a real calendar day. **Server data, not synced** (like D13's
   months): entering one needs a connection to the suite; not kept across restores.
+- **Not for every business (review decision)**: never for a business whose sales come from a connection — **Wholesale**
+  (the Order Manager), **Save Point Shop** (eBay; a month can be entered by hand on its eBay page, D13), **Retail
+  stores** (WooCommerce) — they would count twice, nor **Personal** (not a business that sells): 400 `not_by_hand` with
+  the reason (`NOT_BY_HAND`); an **archived** business only for an entry already on it. The sheet offers only the others
+  (today Great White North Design and Business consulting, and any business added later) and says why.
 - **Idempotent**: the device makes the entry's id (UUIDv7) when the sheet opens: `POST /api/sales/entries { id, … }` →
-  201; the same body again → 200 with the same entry; another body under that id → 409 `exists`. `PUT /entries/:id`,
-  `DELETE /entries/:id` (deleting again answers `deleted: false`), `GET /entries?business&from&to&limit&offset` (newest
-  day first, `sums` per currency).
+  201; the same body again → 200 with the same entry; another body under that id → 409 `exists` — the sheet then
+  **changes it with PUT** (review fix: a save whose reply was lost, then edited and saved again, is the same entry;
+  e2e). `PUT /entries/:id`, `DELETE /entries/:id` (deleting again answers `deleted: false`),
+  `GET /entries?business&from&to&limit&offset` (newest day first, `sums` per currency).
 - **Into the totals**: each business's entries in one currency are added up per day into `sales_daily` (source
   `manual`, store `hand:<business id>` or `hand:<business id>:<CUR>` — `handStoreKey`; orders = the sales' orders; every
   other figure 0), in the same transaction as the change; a day with no entries left is **deleted**, not left at zero,
   and the store's `sales_stores` row goes with its last entry. **Total only**: rows of source `manual` are marked
-  `totalOnly` in `summary()`, `totals()` and `monthly()` (D13b's rule) — never read a breakdown from them.
+  `totalOnly` in `summary()`, `totals()` and `monthly()` (D13b's rule) — and so are the business and overall sums they
+  are in (another reason not to allow them for a connected business).
 - **Money → Sales**: a card per business and currency ("Business consulting", source "Entered by hand", state
   `by_hand`, links to `/costs/sales/entries?business=`), named after the business as it is called now. D13's eBay months
-  entered by hand (`sales_manual_months`) are untouched and work beside them (tested).
+  entered by hand (`sales_manual_months`) are untouched (tested).
 - **Screen** `/costs/sales/entries` (Money → Sales → "Sales entered by hand ›"): business filter in the URL, the list (day,
   business, note, amount — negatives in red with their kind), "Enter a sale" → the sheet (Sale / Refund / Credit note,
   business — the last one used on this device remembered in localStorage `suite.sales.lastEntryBusiness` —, day, amount,
@@ -2627,8 +2651,9 @@ Server `server/src/modules/overview/` (no tables), client `client/src/modules/ov
   `no-store`): sales and the Order Manager's money live only on the server, Stockroom's answers too, and the Friday
   review's server numbers already read the same services — one consistent picture. Needs a connection (the page says
   so; Today, Tasks and Clients stay offline). Personal data (task titles, client names, amounts) only to a signed-in
-  session on the tailnet, like every other read. Each section is read on its own (`guarded`): one failing shows "couldn't
-  be read" (state `error`), never breaks the page.
+  session on the tailnet, like every other read. It reads other modules **only through their services** (planner:
+  `overdueTasks`, `noNextStep`, `quietClients`; wholesale: `moneyLines` — once a request —, `unmatchedState`; …). Each
+  section is read on its own (`guarded`): one failing shows "couldn't be read" (state `error`), never breaks the page.
 - **Sales strip**: `sales.summary()`'s businesses — **only those with sales** (a store that is set up, or any figure; eBay's
   always-listed card, not set up and empty, doesn't put Save Point Shop here) — in our businesses' order (position), each
   with today / this week / this month (each store in its own calendar, Monday–Sunday weeks), and **all businesses
@@ -2636,31 +2661,39 @@ Server `server/src/modules/overview/` (no tables), client `client/src/modules/ov
   stores that are failing / paused. The figure is Total sales (D13's headline).
 - **"To deal with"** — naming decision: the sync bar's "N need attention" (refused sync steps, `/sync/attention`) keeps
   its name; this list is **"To deal with"**, and includes the sync count as its own line ("N changes on this device
-  couldn't be saved: fix or discard" → `/sync/attention`, from the device's engine). Sections, in the plan's order
-  (`ATTENTION_SECTIONS`; each `{ id, count, items (≤ MAX_ITEMS = 100), state }`; items are data, the device words them in
-  `logic.js` with a link to where each is dealt with; 5 shown, "Show 20 more", "and N more" past what was sent):
+  couldn't be saved: fix or discard" → `/sync/attention`, from the device's engine). **The headline counts only the
+  urgent sections** (`URGENT_SECTIONS`, review fix: overdue, balances, renewals, low stock, support, payments, plus the
+  sync line) — "No next step" and "Clients gone quiet" are standing lists (thousands with an imported client list), shown
+  with their own counts only. Sections, in the plan's order (`ATTENTION_SECTIONS`; each `{ id, count, items (≤ MAX_ITEMS
+  = 100), state }`; items are data, the device words them in `logic.js` with a link to where each is dealt with; 5
+  shown, "Show 20 more", "and N more" past what was sent):
   1. `overdue` — open tasks due before today, both people and the shared list (`planner.overdueTasks/overdueCount`;
      "Yours / Your partner's / Shared list" from who asks) → `/tasks?open=`.
   2. `balances` — Order Manager customers (linked or not; not deleted there) owing on orders more than 30 days old: D3's
-     rule (`owingByOrder` + `overdueOrders`, the Balances page's aging) via `wholesale.overdueBalances(today)`, biggest
-     first → the client page, or `/wholesale` when not linked. State `not_connected` (no secret, nothing received) /
-     `paused` (the last figures).
+     rule (`owingByOrder` + `overdueOrders`, the Balances page's aging), biggest first → the client page when linked,
+     else `/wholesale` (its Waiting tab). State `not_connected` (no secret, nothing received) / `paused` (last figures).
   3. `renewals` — renewals and retainers in the next 30 days: client services (not done/cancelled, `crm.renewalsBetween`)
      and our active costs (`costs.renewingBetween`), as the Friday review → client page / `/costs?open=`.
   4. `lowStock` — Stockroom's last order-soon answer, products with a suggested quantity above 0 (the reorder tasks'
      list), most urgent first (`stockroom.lowStock()`); states `not_connected`, `revoked`, `not_read`, `paused`.
   5. `support` — always `not_connected`: "Not connected yet · comes with the helpdesk (D14)".
-  6. `payments` — **payments with no order to go against (decision)**: the Order Manager's unmatched e-Transfers (A15)
-     stay in the Order Manager (it sends only recorded payments — said under the section); what the suite holds reliably
-     is each customer's balance, so this lists customers whose payments come to more than every order that counts —
-     a credit balance on the Balances page (`owingByOrder().unused_cents`): paid on account before ordering, paid twice,
-     or paid on an order since cancelled and not refunded. Store credit (credit notes, a deleted order's payment) isn't a
-     payment, as there.
-  7. `noNextStep` — relationships (C4a's rule as the C8 automation applies it: active clients, businesses not archived,
-     wholesale exempt — `relationshipsToChase`) and open leads (D8's `leadsWithoutNextStep`) → client page / lead page.
+  6. `payments` — **payments with no matching order, both kinds (owner's decision)**: (a) the Order Manager's
+     e-Transfers that matched no customer or order — its `payments.unmatched` count, total and oldest, as one line:
+     "N e-Transfers with no matching order in the Order Manager: $X — record or dismiss them there: Customers →
+     E-transfers (/customers/etransfers) · the oldest from …" (named, not linked: the suite doesn't know the Order
+     Manager's address); while it never sent one, a note says to turn its switch on; (b) customers whose payments come
+     to more than every order that counts — a credit balance on the Balances page (`moneyLines().credit`: paid on account
+     before ordering, paid twice, or paid on an order since cancelled and not refunded; store credit isn't a payment) —
+     **regular depositors left out** (review decision): only credit of at least $1 (`CREDIT_MIN_CENTS`) whose newest
+     payment is more than 14 days old (`CREDIT_SETTLE_DAYS`) from a customer with no order for 30 days
+     (`CREDIT_QUIET_DAYS`). count = the e-Transfers + those customers.
+  7. `noNextStep` — **one rule with Today and the Friday review** (review fix: `planner.noNextStep()` — C4a's
+     `relationshipsWithoutNextStep` over every live relationship, wholesale exempt, closed clients included as on Today;
+     D8's `leadsWithoutNextStep` over open leads of businesses not archived), so the three show the same count. (The C8
+     automation's `relationshipsToChase` leaves out closed clients and archived businesses: it makes tasks.) → client /
+     lead page.
   8. `quiet` — active clients quiet for 60 days (the Friday review's rule incl. Order Manager orders and notes:
-     `quietClients`, now exported from planner/automations.js) → client page.
-  The headline counts what can be read plus the sync line.
+     `planner.quietClients`) → client page.
 - **Placement (decision)**: route `/overview`, a **sidebar entry at the top** (order 5) on the Mac; the phone's tab bar
   keeps its eight (nav entries may say `phone: false`; AppShell's tab bar skips them) and the overview is reached from
   **Today** (a phone-only link row under the header) and **Money → Sales** ("Overview ›"). Today stays the home page: it
@@ -2772,12 +2805,15 @@ Server `server/src/modules/overview/` (no tables), client `client/src/modules/ov
   the entry is kept as replaced. The Sales headline is now Total sales for every store. Next: D15 reads
   `sales.monthly()`; D11 reads `sales.totals()`.
 - **D11 (sales entries and needs attention)**: done — see "Wholesale sales", "Sales entered by hand" and "The overview".
-  Wholesale is a sales source matching the Order Manager's **P&L** (active orders on the UTC day of created_at, refunds
-  and credit notes before tax on their own day), worked out from the holding area, re-written per touched day and in
-  full at start; Total sales is the headline everywhere, `net` = the P&L's Net Revenue. Sales by hand are server
-  entries (signed amounts, total only) added up per day into `sales_daily`. The overview is one server read, a sidebar
-  entry (no ninth phone tab), its list called "To deal with" (with the sync bar's count as one line); D7 (consulting
-  invoices) skipped; support emails wait for D14; unmatched e-Transfers stay in the Order Manager. Next: D15's cards.
+  Wholesale is a sales source matching the Order Manager's **P&L** since its A19 (active orders on the business's local
+  — Toronto — day, history-only on their date; refunds and credit notes before tax on their own day; its unrounded totals
+  added up and rounded once per day and per range), worked out from the holding area, re-written per touched day and at
+  start; Total sales is the headline everywhere, `net` = the P&L's Net Revenue. Sales by hand are server entries (signed
+  amounts, total only) added up per day into `sales_daily`, never for a business whose sales come from a connection. The
+  overview is one server read, a sidebar entry (no ninth phone tab), its list called "To deal with" (with the sync bar's
+  count as one line; the headline counts only urgent sections); payments with no matching order = the Order Manager's
+  unmatched e-Transfers (`payments.unmatched`) and lasting credit balances. D7 (consulting invoices) skipped; support
+  emails wait for D14. Next: D15's cards.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -2798,9 +2834,10 @@ switches D3's two scheduled wholesale automations, D6's two renewal reminders, D
 so its ticks stay about C8; costs.test.js switches every other scheduled automation off. The e2e `startServer(t, { extraModules })` adds
 test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager checkout>` (D1) runs the real Order
 Manager (needs `npm ci` in its `server/`) against a real suite and checks the timeline and spend against its own;
-Step 8 (D2) checks an automatic link on a clean email, a similar name only suggested, and an undo; step 9 (D11) compares
-the suite's wholesale days with the Order Manager's own P&L for every day of the run and the whole range (and `--capture`
-then also writes the P&L's answers: `fixtures/wom-captured-sales.json`, which `wholesale-sales.test.js` replays).
+Step 8 (D2) checks an automatic link on a clean email, a similar name only suggested, and an undo; step 9 (D11; needs an Order Manager
+with A19, else it says it is skipped) compares the suite's wholesale days with its P&L for every local day of the run and
+the whole range (exact cents with a 15 % discount) and its unmatched e-Transfer count (and `--capture` then also writes
+the P&L's answers: `fixtures/wom-captured-sales.json`, which `wholesale-sales.test.js` replays).
 `--capture <file>` writes the events it sent (the fixture `server/test/fixtures/wom-captured-events.json`; D5's
 `wom-captured-notes.json` holds its A11 events and their customers' `customer.created`, taken from such a capture; step 7
 needs an Order Manager with A11). `npm run test:stockroom -- <inventory-hub checkout>` (D16; needs `npm install` in the
