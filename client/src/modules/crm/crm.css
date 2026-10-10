@@ -511,8 +511,22 @@
 .pipeline-filters {
   display: grid;
   gap: var(--space-3);
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: end;
+}
+
+.pipeline-filters > :last-child {
+  grid-column: 1 / -1;
+}
+
+@media (min-width: 768px) {
+  .pipeline-filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .pipeline-filters > :last-child {
+    grid-column: auto;
+  }
 }
 
 .pipeline-stage-switch {

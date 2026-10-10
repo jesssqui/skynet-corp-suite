@@ -174,6 +174,9 @@ export default function PipelinePage() {
           />
           <TextField id="pipeline-q" label="Search" type="search" value={q} onChange={(e) => setParam('q', e.target.value)} placeholder="Name, contact, email, phone" />
         </div>
+        <div className="pipeline-stage-switch">
+          <Segmented label="Stage" value={stage} onChange={(v) => setParam('stage', v, 'lead')} options={switchOptions} />
+        </div>
         {view?.flagged ? (
           <Notice tone="warn">
             <span data-testid="pipeline-flagged">
@@ -186,9 +189,6 @@ export default function PipelinePage() {
         ) : flaggedOnly ? (
           <p style={{ ...muted, margin: 0 }}>Every open lead has a next step. <TextButton onClick={() => setParam('flag', '')}>Show every lead</TextButton></p>
         ) : null}
-        <div className="pipeline-stage-switch">
-          <Segmented label="Stage" value={stage} onChange={(v) => setParam('stage', v, 'lead')} options={switchOptions} />
-        </div>
         {!view ? (
           <Card><p style={{ ...muted, margin: 0 }}>{loading ? 'Loading…' : ' '}</p></Card>
         ) : !data.leads.length ? (

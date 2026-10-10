@@ -599,8 +599,6 @@ function ClientScreen({ clientId }) {
               </ul>
             ) : <p style={{ ...muted, margin: 0 }}>No contacts yet.</p>}
           </Card>
-        </div>
-        <div className="crm-col">
           <LeadsCard
             leads={clientLeads(data.leads, client.id)}
             tasks={data.leadTasks}
@@ -608,6 +606,8 @@ function ClientScreen({ clientId }) {
             today={today}
             onNew={() => open({ kind: 'lead' })}
           />
+        </div>
+        <div className="crm-col">
           <ClientTasksCard
             client={client}
             tasks={data.tasks}

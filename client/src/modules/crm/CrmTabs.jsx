@@ -5,7 +5,7 @@ import { Segmented, Icon } from '../../ui/index.js';
 // tabs, and leads become clients there); this switches between them, like System's tabs.
 const TABS = [
   { value: '/crm', label: 'Clients', icon: 'users' },
-  { value: '/crm/pipeline', label: 'Pipeline', icon: 'target' },
+  { value: '/crm/pipeline', label: 'Pipeline', icon: 'arrowRight' },
   { value: '/crm/cross-sell', label: 'Cross-sell', icon: 'repeat' },
 ];
 
