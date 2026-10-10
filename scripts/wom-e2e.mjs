@@ -11,8 +11,12 @@
 // the money owing (balance and over-30-days aging) against its Balances page, and (D5) its CRM notes and follow-up
 // dates once "Send CRM notes to the suite" is switched on there: notes on the timeline, follow-up tasks moved and
 // finished, deletes, notes waiting with an unlinked customer, and everything sent again with nothing doubled; and (D2)
-// a new Order Manager customer whose email is an existing client's contact's: linked automatically, then undone.
-// --capture writes every event the suite received, in order (test fixtures).
+// a new Order Manager customer whose email is an existing client's contact's: linked automatically, then undone; and
+// (D11) the suite's wholesale sales per day — worked out from what the Order Manager sent — against its own P&L report
+// (Reports → P&L, GET /api/reports/profit-loss) for every day of the run and the whole range: orders, revenue,
+// discounts, refunds and credit notes, net revenue (and tax and shipping on days nothing was given back).
+// --capture writes every event the suite received, in order, and the P&L's answers for those days (test fixtures:
+// server/test/fixtures/wom-captured-sales.json).
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -383,8 +387,83 @@ async function main() {
     ok(!ctx.services.crm.liveLinks('wom', uid).length, 'edited there: not linked again (the undo is remembered)');
   }
 
+  console.log('\n9. Sales per day (D11): the suite’s wholesale days = the Order Manager’s own P&L, net of refunds');
+  const pnl = { days: {}, range: null };
+  {
+    const daysAgoUtc = (n) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+    // A customer never linked in the suite: its sales count all the same (sales are sales; linking is the CRM's).
+    const bay = (await wom('POST', '/api/customers', { business_name: 'Bayview Variety', contact_name: 'Sam' })).data;
+    // Catch-up (history-only) orders on past days: they count on their order date (created at noon there).
+    const history = async (daysBack, items, extra = {}) => {
+      const r = await wom('POST', '/api/orders', { history_only: true, customer_id: bay.id, order_date: daysAgoUtc(daysBack), items, tax_rate: 13, tax_amount: taxed(items), tax_province: 'ON', ...extra });
+      if (r.status !== 201) throw new Error(`history order: ${r.status} ${JSON.stringify(r.data)}`);
+      return r.data.order;
+    };
+    const h1 = await history(40, [{ product_id: 1, quantity: 20, unit_price: 6.5 }], { paid: { method: 'cash' } });
+    const h2 = await history(12, [{ product_id: 2, quantity: 10, unit_price: 7 }, { product_id: 3, quantity: 4, unit_price: 5 }]);
+    ok(Boolean(h1?.id && h2?.id), 'two catch-up orders on past days (one 40 days back: another month)');
+    // Today: an order with a 10 % discount (tax on the discounted subtotal), and one cancelled after it was placed.
+    const sub = 12 * 6.5;
+    const disc = Math.round(sub * 0.1 * 100) / 100;
+    const r = await wom('POST', '/api/orders', {
+      customer_id: bay.id, items: [{ product_id: 1, quantity: 12, unit_price: 6.5 }], order_date: today, tax_rate: 13,
+      tax_amount: Math.round((sub - disc) * 0.13 * 100) / 100, tax_province: 'ON', discount_type: '%', discount_value: 10, discount_amount: disc,
+    });
+    ok(r.status === 201, 'an order with a 10% discount', r.data);
+    const gone = await placeOrder(bay.id, [{ product_id: 3, quantity: 2, unit_price: 5 }]);
+    ok((await wom('POST', `/api/orders/${gone.id}/cancel`, {})).status === 200, 'another placed and cancelled (it doesn’t count)');
+    // Given back today on older orders: money back on the 40-day-old one (in its proportion before tax) and store credit.
+    ok((await wom('POST', '/api/refunds', { order_id: h1.id, amount: 10, reason: 'Two tins dented', method: 'cash' })).status === 201, 'a money refund today on the 40-day-old order');
+    ok((await wom('POST', '/api/payments', { customer_id: bay.id, order_id: r.data.order.id, amount: 30, method: 'etransfer' })).status === 201, 'part of it paid');
+    const credit = await wom('POST', '/api/refunds', { order_id: r.data.order.id, amount: 5, reason: 'Goodwill', refund_type: 'store_credit' });
+    ok(credit.status === 201, 'store credit given today on the discounted order', credit.data);
+    await settle();
+    // Every UTC day from before the oldest order to tomorrow, and the whole range at once.
+    const from = daysAgoUtc(45);
+    const to = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    const c = (n) => Math.round((Number(n) || 0) * 100);
+    const theirs = (s) => ({
+      orders: s.total_orders, gross: c(s.revenue), discounts: c(s.discounts_given), refunds: c(s.refunds_issued) + c(s.credit_notes_issued),
+      net: c(s.net_revenue), tax: c(s.tax_collected), shipping: c(s.shipping_collected),
+    });
+    const mine = (f) => ({ orders: f?.orders ?? 0, gross: f?.gross ?? 0, discounts: f?.discounts ?? 0, refunds: f?.refunds ?? 0, net: f?.net ?? 0, tax: f?.tax ?? 0, shipping: f?.shipping ?? 0 });
+    const pick = (o, keys) => Object.fromEntries(keys.map((k) => [k, o[k]]));
+    const MATCHED = ['orders', 'gross', 'discounts', 'refunds', 'net'];
+    let days = 0;
+    let withSales = 0;
+    const mismatches = [];
+    for (let d = from; d <= to; d = new Date(Date.parse(`${d}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10)) {
+      const s = (await wom('GET', `/api/reports/profit-loss?from=${d}&to=${d}`)).data.summary;
+      pnl.days[d] = s;
+      const t = theirs(s);
+      const m = mine(ctx.services.sales.totals({ from: d, to: d, source: 'wholesale' }).overall[0]);
+      const keys = t.refunds ? MATCHED : [...MATCHED, 'tax', 'shipping'];
+      if (JSON.stringify(pick(t, keys)) !== JSON.stringify(pick(m, keys))) mismatches.push({ day: d, wom: t, suite: m });
+      days += 1;
+      if (t.orders || t.refunds) withSales += 1;
+    }
+    ok(!mismatches.length && withSales >= 3, `every day from ${from} to ${to} (${days} days, ${withSales} with sales or refunds) = the P&L: orders, revenue, discounts, refunds + credit notes, net revenue`, mismatches);
+    const all = (await wom('GET', `/api/reports/profit-loss?from=${from}&to=${to}`)).data.summary;
+    pnl.range = { from, to, summary: all };
+    const range = mine(ctx.services.sales.totals({ from, to, source: 'wholesale' }).overall[0]);
+    ok(JSON.stringify(pick(theirs(all), MATCHED)) === JSON.stringify(pick(range, MATCHED)), `the whole range = the P&L’s (net revenue ${all.net_revenue})`, { wom: theirs(all), suite: range });
+    const todayRow = ctx.services.sales.totals({ from: today, to: today, source: 'wholesale' }).overall[0];
+    ok(todayRow && todayRow.total === todayRow.net + todayRow.tax + todayRow.shipping, 'total sales = net + tax + shipping (tax and shipping less what went back)', todayRow);
+    const card = ctx.services.sales.summary().stores.find((x) => x.source === 'wholesale');
+    ok(card?.businessId && card.timeZone === 'UTC' && card.date === today, 'Money → Sales: the Order Manager’s card, its days UTC days like its P&L', card && { timeZone: card.timeZone, date: card.date });
+    // A restart writes every day again from the holding area: the same rows (nothing doubled).
+    const before = JSON.stringify(ctx.services.sales.totals({ from, to, source: 'wholesale' }).overall);
+    ctx.services.wholesale.startSales();
+    ok(JSON.stringify(ctx.services.sales.totals({ from, to, source: 'wholesale' }).overall) === before, 'written again from the holding area (a start, a restore): the same totals');
+    const ov = await suite('GET', `/api/overview?today=${localToday}`);
+    const balances = ov.data?.attention?.find((x) => x.id === 'balances');
+    ok(ov.status === 200 && balances?.items.some((i) => i.name === 'Northwind Corner Store' && i.overdueCents === 12690), 'the overview: Northwind’s $126.90 over 30 days on the list', balances);
+    const strip = ov.data?.sales?.businesses?.find((b) => b.businessId === card?.businessId);
+    ok(Boolean(strip?.today?.length || strip?.month?.length), 'and wholesale in the overview’s sales strip', strip);
+  }
+
   if (CAPTURE) {
-    fs.writeFileSync(CAPTURE, `${JSON.stringify({ capturedAt: new Date().toISOString(), from: 'scripts/wom-e2e.mjs', events: captured }, null, 1)}\n`);
+    fs.writeFileSync(CAPTURE, `${JSON.stringify({ capturedAt: new Date().toISOString(), from: 'scripts/wom-e2e.mjs', events: captured, pnl }, null, 1)}\n`);
     console.log(`\nwrote ${captured.length} events to ${CAPTURE}`);
   }
 }
