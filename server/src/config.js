@@ -161,6 +161,21 @@ export function loadConfig(env = process.env) {
       // The pull loop: on by default in production; "Pull now" on a store's card works either way.
       scheduled: bool(env.WOO_PULL_ENABLED, production),
     },
+    ebay: {
+      // D13: the key that encrypts the eBay Cert ID and refresh token in the database — a file in the data folder,
+      // like D12's (never in the database or the backups). Made on first use.
+      keyFile: path.resolve(env.EBAY_KEY_FILE || path.join(dataDir, 'ebay-secret.key')),
+      // eBay's hosts (production). Replaceable for tests only: https, or http just for this machine.
+      apiUrl: env.EBAY_API_URL || 'https://api.ebay.com',
+      authUrl: env.EBAY_AUTH_URL || 'https://auth.ebay.com',
+      timeoutMs: int(env.EBAY_TIMEOUT_MS, 20_000, 'EBAY_TIMEOUT_MS'),
+      // How often the last 90 days of orders are read again.
+      everyMinutes: int(env.EBAY_PULL_EVERY_MIN, 60, 'EBAY_PULL_EVERY_MIN'),
+      // The zone Save Point Shop's days are counted in until changed on its card.
+      timeZone: env.EBAY_TIME_ZONE || timeZone(env) || 'America/Toronto',
+      // The pull loop: on by default in production; "Pull now" on the card works either way.
+      scheduled: bool(env.EBAY_PULL_ENABLED, production),
+    },
     automations: {
       // The minute scheduler (C8): on by default in production only, like the backup schedule.
       // "Run now" on the Automations page works either way.

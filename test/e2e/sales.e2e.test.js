@@ -15,7 +15,7 @@ async function fakeStore(t) {
   const store = await startFakeWoo(t, { name: 'Northern Tins', timezone: 'America/Vancouver' });
   const today = store.localNow(Date.now()).slice(0, 10);
   store.state.orders = [
-    // Today in the store: $25 of goods − $2 coupon = $23 net (plus tax and shipping).
+    // Today in the store: $25 of goods − $2 coupon + $3.25 tax + $8 shipping = $34.25 total sales.
     order({ id: 101, created: `${today}T00:01:00`, items: [{ name: 'Cool Mint 6mg', sku: 'NT-CM6', qty: 2, price: 12.5 }], coupon: 2, tax: 3.25, shipping: 8, first: 'Robin', last: 'Quincey', email: 'robin.q@example.com' }),
     order({ id: 102, status: 'cancelled', created: `${today}T00:02:00`, items: [{ name: 'Citrus', sku: 'NT-C', qty: 9, price: 10 }] }),
   ];
@@ -51,12 +51,12 @@ async function walkThrough(page, server, store, label) {
   await page.waitForURL(/\/costs\/sales$/, WAIT);
   const storeCard = page.getByTestId('sales-store').filter({ hasText: 'Northern Tins' });
   for (let i = 0; i < 20; i += 1) {
-    if (await storeCard.locator('[data-period="today"]').filter({ hasText: '$23' }).count()) break;
+    if (await storeCard.locator('[data-period="today"]').filter({ hasText: '$34.25' }).count()) break;
     await page.getByRole('button', { name: 'Check again' }).click();
     await page.waitForTimeout(500);
   }
-  await storeCard.locator('[data-period="today"]').filter({ hasText: '$23' }).filter({ hasText: '1 order' }).waitFor(WAIT);
-  await page.getByTestId('sales-overall').locator('[data-period="today"]').filter({ hasText: '$23' }).waitFor(WAIT);
+  await storeCard.locator('[data-period="today"]').filter({ hasText: '$34.25' }).filter({ hasText: '1 order' }).waitFor(WAIT);
+  await page.getByTestId('sales-overall').locator('[data-period="today"]').filter({ hasText: '$34.25' }).waitFor(WAIT);
   await storeCard.getByText(/Updated .* its day is \d{4}-\d{2}-\d{2} \(America\/Vancouver\)/).waitFor(WAIT);
   if (label === 'iPhone') assert.ok((await noSideways(page)) <= 0, 'no sideways scrolling on Sales');
   await shot(page, `d12-sales-${label.toLowerCase()}`);

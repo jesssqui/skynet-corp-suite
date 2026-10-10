@@ -70,6 +70,14 @@ if (config.woocommerce.scheduled) {
   log.info('WooCommerce pulls are off (WOO_PULL_ENABLED); Pull now on a store’s card still works');
 }
 
+// eBay (D13): Save Point Shop's orders (one look a minute; read when due).
+let stopEbay = () => {};
+if (config.ebay.scheduled) {
+  stopEbay = ctx.services.ebay.startPuller();
+} else {
+  log.info('eBay pulls are off (EBAY_PULL_ENABLED); Pull now on its card still works');
+}
+
 let shuttingDown = false;
 function shutdown(signal) {
   if (shuttingDown) return;
@@ -80,6 +88,7 @@ function shutdown(signal) {
   stopWholesale();
   stopStockroom();
   stopWoo();
+  stopEbay();
   server.close(() => {
     db.close(); // checkpoints the WAL into the main file
     stopHeartbeat();

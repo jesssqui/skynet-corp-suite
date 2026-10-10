@@ -9,7 +9,7 @@ import { useServerData } from '../../api/useServerData.js';
 import { PageHeader, Card, Badge, Notice, EmptyState, Button, TextField } from '../../ui/index.js';
 import { formatDateTime } from '../../ui/format.js';
 import MoneyTabs from '../costs/MoneyTabs.jsx';
-import { Periods } from './SalesPage.jsx';
+import { Periods, StateLine } from './SalesPage.jsx';
 import { lookupQuery, orderStatus, trackingText, orderMoneyLines, stateText, updatedText, backfillText } from './logic.js';
 import './sales.css';
 
@@ -135,7 +135,7 @@ export default function StorePage() {
               <span style={muted}>
                 {totals ? `${updatedText(totals, formatDateTime)} · ` : ''}its day is {store.today}{store.timeZone ? ` (${store.timeZone})` : ''} · {backfillText(store)}
               </span>
-              {st ? <Badge tone={st.tone}>{st.text}</Badge> : null}
+              {st ? <StateLine st={st} /> : null}
               <span style={muted}>
                 Its key, switch and settings are on <Link to="/system/connections">System → Connections</Link>.
               </span>

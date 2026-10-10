@@ -62,7 +62,7 @@ test('the page lists the backup (always on), the placeholders (not connected yet
   const { call } = await setup(t);
   const { status, body } = await call('GET', '/api/connections');
   assert.equal(status, 200);
-  assert.deepEqual(body.connections.map((c) => c.id), ['backup', 'wom', 'calendar', 'stockroom', 'calendar-feed', 'woocommerce', 'conndemo']);
+  assert.deepEqual(body.connections.map((c) => c.id), ['backup', 'wom', 'calendar', 'stockroom', 'calendar-feed', 'woocommerce', 'ebay', 'conndemo']);
   // D12: the WooCommerce stores' row (each store added gets its own row under it).
   assert.deepEqual([row(body.connections, 'woocommerce').state, row(body.connections, 'woocommerce').queueLabel], ['always_on', 'No stores yet']);
   const backup = row(body.connections, 'backup');

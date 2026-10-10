@@ -66,6 +66,8 @@ async function setup(t, { config = testConfig(tmpDir(t)), clock = testClock(), w
   for (const id of ['service-renewals', 'cost-renewals']) autos.setSettings(id, { enabled: false }, { actor: 'owner' });
   // D8's monthly cross-sell list likewise (server/test/leads.test.js has it).
   autos.setSettings('cross-sell', { enabled: false }, { actor: 'owner' });
+  // D13's daily eBay sign-in reminder likewise (server/test/ebay.test.js has it).
+  autos.setSettings('ebay-sign-in', { enabled: false }, { actor: 'owner' });
   return { ...env, config, clock, users, owner, sync, make, update, remove, call, setNow, autos };
 }
 
@@ -270,7 +272,7 @@ test('switches: off skips the scheduler but Run now still works; who changed it 
   assert.deepEqual(list.body.automations.map((a) => a.id),
     ['friday-review', 'no-next-step', 'lead-no-next-step', 'cross-sell', 'wholesale-check-in', 'wholesale-balances', 'wholesale-ready-to-ship', 'wholesale-follow-ups', 'wholesale-auto-link',
       'service-renewals', 'cost-renewals',
-      'stockroom-reorders', 'stockroom-spot-check', 'stockroom-deliveries', 'stockroom-differences', 'probe-off']);
+      'stockroom-reorders', 'stockroom-spot-check', 'stockroom-deliveries', 'stockroom-differences', 'ebay-orders-to-ship', 'ebay-sign-in', 'probe-off']);
   assert.equal(list.body.timeZone, 'America/Toronto');
 });
 
