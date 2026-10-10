@@ -9,6 +9,8 @@
 //
 // Hosts: api.ebay.com and auth.ebay.com (production), replaceable for tests (config.ebay.apiUrl / authUrl: https
 // only, http just for this machine).
+import { KEY_RE, RUNAME_RE, ruNameMixUp } from '@suite/shared/ebay';
+
 export const ORDERS_PATH = '/sell/fulfillment/v1/order';
 export const TOKEN_PATH = '/identity/v1/oauth2/token';
 export const AUTHORIZE_PATH = '/oauth2/authorize';
@@ -21,9 +23,8 @@ export const AUTHORIZE_PATH = '/oauth2/authorize';
  */
 export const SCOPES = Object.freeze(['https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly']);
 
-const APP_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{9,99}$/; // e.g. SavePoin-suite-PRD-1a2b3c4d5-6e7f8a9b
-const CERT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{9,99}$/; // e.g. PRD-1a2b3c4d5e6f-7a8b-9c0d-1e2f-3a4b
-const RUNAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{4,99}$/; // e.g. Save_Point_Shop-SavePoin-suite-abcdefgh
+const APP_ID_RE = KEY_RE; // e.g. SavePoin-suite-PRD-1a2b3c4d5-6e7f8a9b
+const CERT_ID_RE = KEY_RE; // e.g. PRD-1a2b3c4d5e6f-7a8b-9c0d-1e2f-3a4b
 
 /** A plain-English problem with eBay or a call; `code` for the code. Never carries a secret or a token. */
 export class EbayError extends Error {
@@ -57,6 +58,9 @@ export function parseKeyset({ appId, certId, ruName }) {
   if (/-SBX-/.test(a)) throw new EbayError('bad_app_id', 'That is a Sandbox App ID: use the Production keyset');
   if (!CERT_ID_RE.test(c)) throw new EbayError('bad_cert_id', 'The Cert ID (Client Secret) is under Production → Cert ID on eBay’s Application Keys page');
   if (!RUNAME_RE.test(r) || /^https?:/i.test(r)) throw new EbayError('bad_runame', 'The RuName is the eBay Redirect URL name (User Tokens → Get a Token from eBay via Your Application), not the accept URL itself');
+  // D13b: the App ID (or Cert ID) pasted into the RuName box — eBay then answers the sign-in with invalid_request.
+  const mixUp = ruNameMixUp({ ruName: r, appId: a, certId: c });
+  if (mixUp) throw new EbayError('bad_runame', mixUp);
   return { appId: a, certId: c, ruName: r };
 }
 

@@ -29,6 +29,7 @@ import { localDateIn } from '@suite/shared/sales';
 import { HttpError } from '../../lib/httpError.js';
 import { loadKey, encryptSecret, decryptSecret } from '../../lib/sealed.js';
 import { createEbayClient, parseKeyset, consentUrl, codeFromUrl, EbayError, SCOPES } from './client.js';
+import { ruNameMixUp } from '@suite/shared/ebay';
 import { dayRows, zoneMidnightUtc, waitingToShip, shipView } from './figures.js';
 import { registerEbayAutomations, PULLED_EVENT } from './automations.js';
 
@@ -210,6 +211,10 @@ export function createEbayService(ctx) {
     const row = q.conn.get();
     if (!row) throw refused(409, 'not_set_up', 'Enter the App ID, Cert ID and RuName first');
     if (isPaused()) throw refused(409, 'paused', 'eBay is switched off on Connections: switch it on to sign in');
+    // D13b: a keyset saved before the RuName guard with the App ID in the RuName box would only get invalid_request
+    // from eBay: refuse here with the same words, so the card says what to fix (save the keyset again).
+    const mixUp = ruNameMixUp({ ruName: row.ru_name, appId: row.app_id });
+    if (mixUp) throw refused(409, 'bad_runame', `${mixUp} Then save the keyset again (New keyset…).`);
     const state = crypto.randomBytes(32).toString('base64url');
     const now = clock();
     q.pruneStates.run(nowIso(new Date(now)));
@@ -440,6 +445,8 @@ export function createEbayService(ctx) {
     const p = q.pull.get() ?? {};
     return {
       set: Boolean(row), state: state(row, p), appId: row?.app_id ?? null, ruName: row?.ru_name ?? null, account: row?.account ?? null,
+      // D13b: the saved RuName is really the App ID (or Cert ID shaped): the keyset needs saving again before a sign-in.
+      ruNameProblem: row ? ruNameMixUp({ ruName: row.ru_name, appId: row.app_id }) : null,
       timeZone: row?.time_zone ?? cfg.timeZone, currency: row?.currency ?? 'CAD', scopes: SCOPES,
       keysetSetAt: row?.keyset_set_at ?? null, keysetSetBy: row?.keyset_set_by ?? null,
       signedInAt: row?.signed_in_at ?? null, signedInBy: row?.signed_in_by ?? null, refreshExpiresAt: row?.refresh_expires_at ?? null,
@@ -459,7 +466,7 @@ export function createEbayService(ctx) {
     description: 'Save Point Shop’s sales totals and orders waiting to ship, read with the seller’s own eBay sign-in (read-only: orders only). Nothing is changed on eBay; no buyer details are kept.',
     describe: () => {
       const s = info();
-      const label = {
+      const label = s.ruNameProblem && ['not_signed_in', 'signed_out'].includes(s.state) ? 'Save the keyset again: the RuName isn’t right' : {
         not_set_up: 'Not set up', not_signed_in: 'Sign in to eBay', signed_out: 'Signed out by eBay: sign in again', paused: null, unreadable: 'Keys can’t be read here',
       }[s.state];
       return {

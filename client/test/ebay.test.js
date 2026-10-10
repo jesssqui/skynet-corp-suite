@@ -47,3 +47,17 @@ test('review fix: the code and state leave the address before the app renders, a
   const again = await import(`../src/modules/ebay/acceptedParams.js?reload=${Date.now()}`);
   assert.deepEqual(again.takeAcceptedParams(storage), { code: 'c2', state: 's2', declined: false });
 });
+
+test('D13b: the App ID (or Cert ID) in the RuName box is refused with where to find the RuName; a real RuName is fine', () => {
+  const appId = 'SavePoin-suite-PRD-1a2b3c4d5-6e7f8a9b';
+  const certId = 'PRD-1a2b3c4d5e6f-7a8b-9c0d-1e2f-3a4b';
+  assert.match(keysetProblem({ appId, certId, ruName: appId }), /^That’s the App ID, not the RuName: on developer\.ebay\.com → Application Keysets → Production → User Tokens/);
+  assert.match(keysetProblem({ appId, certId, ruName: 'JessyRho-GWNLISTE-PRD-6b7c5d3e4-1f2a3b4c' }), /App ID, not the RuName/, 'another App ID’s shape too');
+  assert.match(keysetProblem({ appId, certId, ruName: certId }), /Cert ID, not the RuName/);
+  for (const ruName of ['Jessy_Rho-JessyRho-GWNLIS-abcdefgh', 'Save_Point_Shop-SavePoin-suite-abcdefgh', 'Jessy_Rho-PRD-GWNLIS-abcdefgh']) {
+    assert.equal(keysetProblem({ appId, certId, ruName }), null, ruName);
+  }
+  // A keyset saved before the guard: the card says to save it again.
+  assert.match(stateLine({ state: 'not_signed_in', ruNameProblem: 'That’s the App ID…' }, String), /RuName isn’t right: save the keyset again/);
+  assert.match(stateLine({ state: 'not_signed_in' }, String), /Next: sign in/);
+});
