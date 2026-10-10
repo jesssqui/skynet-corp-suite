@@ -99,9 +99,10 @@ export default function EbayPage() {
         <Card title="Enter a month by hand">
           <div style={{ display: 'grid', gap: 'var(--space-3)' }} data-testid="ebay-manual">
             <span style={muted}>
-              For months eBay isn’t connected for — or only read in part before it was signed out or switched off: in Seller
-              Hub, Performance → Sales, pick the month and copy its <strong>Total sales</strong>. Once eBay is reading again
-              and has the whole month, its own figure counts and this entry is kept, shown as replaced.
+              For months eBay isn’t connected for — or read only in part before it stopped reading (signed out by eBay,
+              switched off or forgotten; failing for a while still counts as reading): in Seller Hub, Performance → Sales,
+              pick the month and copy its <strong>Total sales</strong>. Once eBay has that month’s figure, it counts and this
+              entry is kept, shown as replaced — for good, unless you save the month again.
             </span>
             {!open.length ? <span style={muted} data-testid="ebay-all-real">Every month shown has eBay’s own figure: nothing to enter by hand.</span> : <>
             <SelectField id="ebay-month" label="Month" value={month} onChange={(v) => setForm({ ...form, month: v })}

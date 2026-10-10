@@ -37,6 +37,8 @@ test('shared: sums per currency, a zone’s day, the periods, last week, money a
   assert.equal(localDateIn('America/Vancouver', instant), '2026-10-13');
   assert.equal(localDateIn('Etc/GMT-1', new Date('2026-10-13T23:30:00Z')), '2026-10-14');
   assert.equal(localDateIn('Not/AZone', instant), localDateIn(null, instant), 'an unknown zone falls back to this machine’s');
+  assert.equal(localDateIn('America/Toronto', new Date('nope')), null, 'an invalid date: null, not endless recursion');
+  assert.equal(localDateIn('Not/AZone', new Date(NaN)), null);
   assert.deepEqual(salesPeriods('2026-10-14'), { today: { from: '2026-10-14', to: '2026-10-14' }, week: { from: '2026-10-12', to: '2026-10-14' }, month: { from: '2026-10-01', to: '2026-10-14' } });
   assert.deepEqual(lastWeek('2026-10-14'), { from: '2026-10-05', to: '2026-10-11' });
   assert.deepEqual(lastWeek('2026-10-12'), { from: '2026-10-05', to: '2026-10-11' });

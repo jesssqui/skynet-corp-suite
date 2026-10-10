@@ -46,7 +46,9 @@ export function createSalesService(ctx) {
     putManual: db.prepare(`INSERT INTO sales_manual_months (store, month, currency, total, orders, note, entered_at, entered_by, entered_device)
       VALUES (@store, @month, @currency, @total, @orders, @note, @at, @actor, @device)
       ON CONFLICT (store, month) DO UPDATE SET currency = excluded.currency, total = excluded.total, orders = excluded.orders,
-      note = excluded.note, entered_at = excluded.entered_at, entered_by = excluded.entered_by, entered_device = excluded.entered_device`),
+      note = excluded.note, entered_at = excluded.entered_at, entered_by = excluded.entered_by, entered_device = excluded.entered_device,
+      replaced_at = NULL`),
+    markReplaced: db.prepare('UPDATE sales_manual_months SET replaced_at = ? WHERE store = ? AND month = ? AND replaced_at IS NULL'),
     dropManual: db.prepare('DELETE FROM sales_manual_months WHERE store = ? AND month = ?'),
     lastFetched: db.prepare('SELECT source, store, MAX(fetched_at) AS fetched_at, MIN(day) AS first_day, MAX(day) AS last_day FROM sales_daily GROUP BY source, store'),
   };
@@ -88,6 +90,8 @@ export function createSalesService(ctx) {
       for (const d of days) {
         q.put.run({ source, store, day: d.day, business_id: businessId, currency, fetched_at: fetchedAt, ...Object.fromEntries(SALES_FIGURES.map((k) => [k, d[k] ?? 0])) });
       }
+      // D13 re-check: a hand-entered month this store's own days now count for is replaced for good (until saved again).
+      markReplacedFor(source, store, [...new Set(days.map((d) => d.day.slice(0, 7)))], fetchedAt);
     })();
     return days.length;
   }
@@ -170,9 +174,9 @@ export function createSalesService(ctx) {
       for (const [p, { from, to }] of Object.entries(periods)) {
         let rows = filtered({ from, to, store: s.store, source: s.source });
         // D13: a month the connection has no days for is filled by a month entered by hand (its manual target).
-        if (p === 'month' && s.manualStore && !realWins(s, today.slice(0, 7))) {
+        if (p === 'month' && s.manualStore) {
           const m = q.manual.get(s.manualStore, today.slice(0, 7));
-          if (m) {
+          if (manualCounts(m, s, today.slice(0, 7))) {
             rows = [manualRow(m, s.businessId)];
             out.monthFromManual = true;
             out.manualEntry = manualView(m);
@@ -224,10 +228,20 @@ export function createSalesService(ctx) {
     if (!st?.store || !hasDays(st, month)) return false;
     return st.delivering !== false || covered(st, month);
   }
+  /** Mark the hand-entered months of this store that its own days now count for (inside putDays' transaction). */
+  function markReplacedFor(source, store, monthsTouched, when) {
+    for (const t of manualTargets().values()) {
+      if (!t.store || t.source !== source || t.store.store !== store) continue;
+      const st = { ...t.store, source };
+      for (const month of monthsTouched) if (realWins(st, month)) q.markReplaced.run(when, t.target, month);
+    }
+  }
+  /** Does this hand-entered month count? Not once replaced (for good), nor while the connection's days count. */
+  const manualCounts = (m, st, month) => Boolean(m && !m.replaced_at && !realWins(st, month));
   const manualRow = (m, businessId = null) => ({ ...zeroFigures(), currency: m.currency, total: m.total, orders: m.orders ?? 0, business_id: businessId });
   const manualView = (m) => ({
     store: m.store, month: m.month, currency: m.currency, total: m.total, orders: m.orders, note: m.note,
-    enteredAt: m.entered_at, enteredBy: m.entered_by,
+    enteredAt: m.entered_at, enteredBy: m.entered_by, replacedAt: m.replaced_at ?? null,
   });
   /** The manual targets some source accepts ('ebay'), and the live store each one fills (if listed now). */
   function manualTargets() {
@@ -294,10 +308,12 @@ export function createSalesService(ctx) {
         const real = rows.length ? figures(sumByCurrency(rows)) : null;
         const m = manual.get(month) ?? null;
         const wins = realWins(st, month);
+        const counts = manualCounts(m, st, month);
         return {
           month, real, manual: m ? manualView(m) : null,
-          shown: wins ? 'real' : m ? 'manual' : real ? 'real' : null,
-          replaced: Boolean(wins && m),
+          shown: counts ? 'manual' : real ? 'real' : null,
+          // Replaced: eBay's figure counts now, or did once (then for good, until the month is saved again by hand).
+          replaced: Boolean(m && (wins || m.replaced_at)),
           // The connection read only part of it and isn't reading now: a hand-entered month may count instead.
           partial: Boolean(real && !wins && !covered(st, month)),
           canEnter: !wins,
@@ -318,7 +334,7 @@ export function createSalesService(ctx) {
       for (const t of manualTargets().values()) {
         const m = q.manual.get(t.target, month);
         const st = t.store ? { ...t.store, source: t.source } : null;
-        if (!m || realWins(st, month)) continue;
+        if (!manualCounts(m, st, month)) continue;
         if (st) replacedByHand.add(`${st.source}|${st.store}`);
         out.push({ month, source: 'manual', store: t.target, business_id: t.store?.businessId ?? null, from: 'manual', ...manualRow(m), days: 0 });
       }

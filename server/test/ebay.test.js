@@ -535,4 +535,20 @@ test('review fix: a month eBay stopped reading part way (signed out) may be ente
   assert.deepEqual([oct.shown, oct.replaced, oct.partial], ['real', true, false]);
   monthly = (await s.call('GET', '/api/sales/monthly?from=2026-10&to=2026-10')).body.months;
   assert.deepEqual(monthly.map((x) => [x.source, x.total]), [['ebay', 7000]]);
+  assert.ok(s.db.prepare("SELECT replaced_at FROM sales_manual_months WHERE month = '2026-10'").get().replaced_at, 'marked replaced for good');
+  // Re-check fix: paused for 3 days (October no longer complete, eBay not reading) — the replaced entry never comes back.
+  await s.call('PUT', '/api/connections/ebay', { body: { paused: true } });
+  s.clock.advance(3 * 24 * HOUR);
+  c = await card();
+  assert.ok(!c.monthFromManual, 'still eBay’s figure on the card');
+  assert.equal(c.month[0].total, 7000);
+  oct = (await s.call('GET', '/api/sales/manual/ebay')).body.months.find((m) => m.month === '2026-10');
+  assert.deepEqual([oct.shown, oct.replaced, oct.partial, oct.canEnter], ['real', true, true, true], 'shown as eBay’s days, read in part; open to a new entry');
+  monthly = (await s.call('GET', '/api/sales/monthly?from=2026-10&to=2026-10')).body.months;
+  assert.deepEqual(monthly.map((x) => [x.source, x.total]), [['ebay', 7000]]);
+  // Saving the month again by hand (a person's newer figure) counts again.
+  const again = await s.call('PUT', '/api/sales/manual/ebay/2026-10', { body: { total: 30000 } });
+  assert.equal(again.status, 200, again.text);
+  assert.equal((await card()).month[0].total, 30000);
+  assert.deepEqual((await s.call('GET', '/api/sales/monthly?from=2026-10&to=2026-10')).body.months.map((x) => [x.source, x.total]), [['manual', 30000]]);
 });

@@ -2282,13 +2282,18 @@ one table — D12's WooCommerce stores now, **D13's eBay next** (source `ebay`),
   the connection's own days don't count for it (`monthFromManual: true`, `manualEntry`), and it adds into per-business
   and all-stores totals the same way; today / this week stay real only. **When the connection's days count**
   (`realWins`): it has days in that month **and** either it is reading now (the store's `delivering`: eBay on, not read
-  yet or failing for now; sources that don't say count as reading) **or** it has every day of the month so far
-  (`covered`, to the store's today). So a month eBay **stopped reading part way** — signed out by eBay, switched off,
-  forgotten mid-month — can be entered by hand and counts (review fix; `months()` marks it `partial`, the page says
-  "Read in part from eBay"), until eBay reads again and has the whole month: then **its figure wins**, the entry is
-  kept and shown `replaced: true`. Entering a month whose days count is refused (409 `has_data`) — after a Forget too,
-  for a month eBay read completely (no double count); future months refused. Never both: `summary`, `months` and
-  `monthly` all decide with `realWins`.
+  yet, or **failing for a while — that still counts as reading**, so a month doesn't flip to the hand entry during an
+  outage; sources that don't say count as reading) **or** it has every day of the month so far (`covered`, to the
+  store's today). So a month eBay **stopped reading part way** — signed out by eBay, switched off or forgotten
+  mid-month — can be entered by hand and counts (review fix; `months()` marks it `partial`, the page says "Read in part
+  from eBay"), until eBay's days count for it: then **its figure wins**, and (re-check fix, migration 003) the entry is
+  **marked replaced for good** (`replaced_at`, set by `putDays` the first time the store's own days count for that
+  month) — it never counts again, even if eBay later stops reading (paused, signed out) and the month is only part
+  read: the card, `months()` and `monthly()` then show eBay's days ("read in part"). **Saving the month again by hand**
+  clears the mark (a person's newer figure counts again while eBay's days don't). Entering a month whose days count is
+  refused (409 `has_data`) — after a Forget too, for a month eBay read completely (no double count); future months
+  refused. Never both: `summary`, `months` and `monthly` all decide with `manualCounts` (not replaced, and the store's
+  days don't count).
   **Server data, not synced** (like the totals): entering one needs a connection to the suite. Not kept across
   restores (data, rolled back with the rest). API: `GET /api/sales/manual/:store` (13 months: real, manual, shown,
   replaced), `PUT|DELETE /api/sales/manual/:store/:month`; `totals()` stays days only, and **D15 reads

@@ -513,7 +513,8 @@ it is connected — or whenever it is off — a month's total can be entered by 
 one by hand*. In Seller Hub: **Performance → Sales**, pick the month, copy **Total sales** (and orders if you like), save.
 It fills the eBay card for that month. Once eBay is connected and has that month, eBay's own figure counts and the
 entry is kept, shown as replaced. A month eBay read only in part before it was signed out or switched off can be
-entered by hand too (the page says "Read in part"); it counts until eBay reads the whole month again. Needs a connection to the suite.
+entered by hand too (the page says "Read in part"; eBay merely failing for a while doesn't count as stopped); it counts
+until eBay's own figure for the month counts — from then on the entry stays replaced, unless you save the month again. Needs a connection to the suite.
 
 **Connecting (once)**:
 1. **Developer account** (free): sign in at **developer.ebay.com** with Save Point Shop's eBay account (or the owner's;
