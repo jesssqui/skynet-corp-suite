@@ -31,6 +31,7 @@ test('stateText / updatedText / backfillText', () => {
   assert.equal(backfillText({ backfill: { doneAt: 'x', target: '2025-09-13' } }), 'Totals from 2025-09-13 on');
   assert.match(backfillText({ backfill: { before: '2026-05-01', target: '2025-09-13' } }), /back to 2026-05-01/);
   assert.equal(backfillText({ backfill: {} }), 'Older totals not read yet');
+  assert.match(backfillText({ backfill: { error: 'The store didn’t answer within 20 s', chunkDays: 45, before: '2026-05-01' } }), /didn’t answer.*45 days at a time \(back to 2026-05-01/);
 });
 
 test('lookupQuery: an order number (with or without #) or an email; anything else is named', () => {

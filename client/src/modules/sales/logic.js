@@ -82,6 +82,7 @@ export function addStoreProblem({ url, key, secret, confirmed }) {
 export function backfillText(store) {
   if (!store?.backfill) return '';
   if (store.backfill.doneAt) return `Totals from ${store.backfill.target} on`;
+  if (store.backfill.error) return `Older totals: ${store.backfill.error} — tried again later, ${store.backfill.chunkDays} days at a time${store.backfill.before ? ` (back to ${store.backfill.before} so far)` : ''}`;
   if (store.backfill.before) return `Reading older totals: back to ${store.backfill.before} so far (to ${store.backfill.target})`;
   return 'Older totals not read yet';
 }

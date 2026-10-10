@@ -98,6 +98,8 @@ export default function SalesPage() {
             {stores.map((s) => <StoreCard key={`${s.source}|${s.store}`} store={s} businessName={names.get(s.businessId ?? null) ?? '—'} />)}
           </div>
           <p style={{ ...muted, margin: 0 }}>
+            Weeks run Monday–Sunday, each store in its own calendar (Analytics may start weeks on another day: compare
+            with a custom Monday–Sunday range there).
             Net sales = gross sales − coupons − returns, before tax and shipping; a refund counts on the day it was made.
             Which orders count (statuses) is each store’s own Analytics setting. Read about once an hour; the last 60
             days are read again each time, so late refunds land. No customer details are kept.

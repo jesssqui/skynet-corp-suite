@@ -38,8 +38,25 @@ export function sumByCurrency(rows) {
   return out;
 }
 
-/** "YYYY-MM-DD" in a time zone (IANA name; null = this machine's zone). Invalid zone → this machine's zone. */
+/** A fixed UTC offset written "+05:30" / "-03:30" (a WordPress site with only a gmt_offset, D12 review fix). */
+export const OFFSET_RE = /^([+-])(\d{2}):(\d{2})$/;
+/** gmt_offset hours (5.5, -3.5, 1) → "+05:30" / "-03:30" / "+01:00". */
+export function offsetZone(hours) {
+  const minutes = Math.round(Number(hours) * 60);
+  const abs = Math.abs(minutes);
+  return `${minutes < 0 ? '-' : '+'}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`;
+}
+
+/**
+ * "YYYY-MM-DD" in a time zone: an IANA name, or a fixed offset "+05:30" (counted from its minutes, no DST); null = this
+ * machine's zone. Invalid zone → this machine's zone.
+ */
 export function localDateIn(timeZone, date = new Date()) {
+  const m = OFFSET_RE.exec(timeZone ?? '');
+  if (m) {
+    const minutes = (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3]));
+    return new Date(date.getTime() + minutes * 60_000).toISOString().slice(0, 10);
+  }
   try {
     const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timeZone || undefined, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
     const get = (t) => parts.find((p) => p.type === t)?.value;

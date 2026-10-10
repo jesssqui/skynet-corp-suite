@@ -474,12 +474,14 @@ For **each store**:
    through; on Apache, `SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1`); *Analytics is off* = see the start of this step; *sends this
    address elsewhere* = use the exact address the shop redirects to (e.g. with or without `www`).
 3. The store gets its own card under *WooCommerce stores*. The first read takes a minute or two (60 days, then 13 months
-   back in 90-day reads); after that its last 60 days are read again every hour. **Money → Sales** shows each store's
+   back in 90-day reads; a store slow to answer those reads them in smaller pieces over the next hours — its card then
+   says "Older totals: …", which is not an error with the store); after that its last 60 days are read again every hour. **Money → Sales** shows each store's
    today / this week / this month (in the store's own time zone), per business and all together per currency.
 
 **Check one week against WooCommerce** (once per store, after the first read):
-4. In WooCommerce: **Analytics → Revenue** → date range **Last week** (Monday–Sunday; if the store's week starts on
-   Sunday, pick the Monday–Sunday dates under *Custom*), *Compare* off. Note **Orders**, **Net sales**, **Returns**,
+4. In WooCommerce: **Analytics → Revenue** → date range **Last week** (the suite's weeks run Monday–Sunday; if the
+   store's week starts on Sunday, pick the Monday–Sunday dates under *Custom*), *Compare* off. The store's days are its
+   own: WordPress → Settings → General → *Timezone* (a city, or a UTC offset — half-hour offsets like UTC+5:30 work). Note **Orders**, **Net sales**, **Returns**,
    **Taxes**, **Shipping** and **Total sales** from the summary at the top.
 5. In the suite: in a browser where you are signed in, open the suite's address (step 3) followed by
    `/api/sales/totals?from=<Monday>&to=<Sunday>&store=<the store's address without https://>` (e.g.
@@ -487,7 +489,8 @@ For **each store**:
    `overall[0]`: `orders`, `net`, `refunds`, `tax`, `shipping`, `total` are in **cents** — they must equal WooCommerce's
    figures × 100. A difference usually means Analytics' cache: in WooCommerce reload the report (or Analytics → Settings
    → *Clear analytics cache*), then **Pull now** on the store's card and compare again; or historical data not imported.
-6. **Order lookup**: the store's name on **Money → Sales** → its page → *Look up an order* by number or email. It shows the
+6. **Order lookup**: the store's name on **Money → Sales** → its page → *Look up an order* by number or email (sent in
+   the request's body, never in an address, and never logged). It shows the
    status, items, totals, dates, shipping method, tracking (with the Shipment Tracking plugin) and the customer's **first
    name only**; nothing is kept.
 

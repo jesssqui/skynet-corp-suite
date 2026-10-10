@@ -56,8 +56,11 @@ export function cleanStoreUrl(value) {
   return `${u.origin}${path}`;
 }
 
-/** The store's key in the sales table: its address without the scheme ("tinsxpress.com", "shop.example.com/store"). */
-export const storeKey = (url) => cleanStoreUrl(url).replace(/^https?:\/\//, '').toLowerCase();
+/**
+ * The store's key in the sales table: its address without the scheme or a leading "www." ("tinsxpress.com",
+ * "shop.example.com/store") — so the same shop added again under its other host continues the same totals (review fix).
+ */
+export const storeKey = (url) => cleanStoreUrl(url).replace(/^https?:\/\//, '').toLowerCase().replace(/^www\./, '');
 
 /** The consumer key and secret as WooCommerce shows them (ck_… / cs_…, 40 hex each). → { key, secret } or throws. */
 export function parseKeys({ key, secret }) {
