@@ -9,32 +9,11 @@ import { useServerData } from '../../api/useServerData.js';
 import { PageHeader, Card, Notice, EmptyState, Button } from '../../ui/index.js';
 import { formatDateTime } from '../../ui/format.js';
 import MoneyTabs from '../costs/MoneyTabs.jsx';
-import { periodText, ordersText, stateText, updatedText } from './logic.js';
+import { stateText, updatedText } from './logic.js';
+import { Periods, StateLine } from './parts.jsx';
 import './sales.css';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
-const PERIODS = [['today', 'Today'], ['week', 'This week'], ['month', 'This month']];
-
-export function Periods({ figures, testId }) {
-  return (
-    <div className="sales-periods" data-testid={testId}>
-      {PERIODS.map(([k, label]) => (
-        <div key={k} style={{ display: 'grid', gap: 2, minWidth: 0 }} data-period={k}>
-          <span style={{ ...muted, fontSize: 'var(--text-xs)', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 600 }}>{label}</span>
-          <span className="sales-figure">{periodText(figures?.[k])}</span>
-          <span style={muted}>{ordersText(figures?.[k])}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** A store's state in words (wraps on phones; a Badge doesn't). */
-export function StateLine({ st }) {
-  const color = st.tone === 'danger' ? 'var(--danger)' : st.tone === 'warn' ? 'var(--warn, var(--text))' : 'var(--text-muted)';
-  return <span style={{ fontSize: 'var(--text-sm)', color, overflowWrap: 'anywhere' }} data-testid="store-state">{st.text}</span>;
-}
-
 function StoreCard({ store, businessName }) {
   const st = stateText(store);
   const title = store.link ? <Link to={store.link}>{store.name}</Link> : store.name;
@@ -48,8 +27,9 @@ function StoreCard({ store, businessName }) {
         <Periods figures={store} />
         <span style={muted}>
           {store.monthFromManual ? `This month entered by hand${store.manualEntry?.enteredAt ? ` (${formatDateTime(store.manualEntry.enteredAt)})` : ''} · ` : ''}
-          {updatedText(store, formatDateTime)} · its day is {store.date}{store.timeZone ? ` (${store.timeZone})` : ''}
+          {store.source === 'manual' ? 'Total only' : updatedText(store, formatDateTime)} · its day is {store.date}{store.timeZone ? ` (${store.timeZone})` : ''}
         </span>
+        {store.note ? <span style={muted} data-testid="store-note">{store.note}.</span> : null}
         {store.manualStore ? <Link to={store.link ?? '/costs/sales'} style={{ fontSize: 'var(--text-sm)' }}>Months, and entering one by hand</Link> : null}
         {st ? <StateLine st={st} /> : null}
       </div>
@@ -70,6 +50,10 @@ export default function SalesPage() {
         subtitle="Total sales and orders per store, as each store’s own report shows them"
         actions={<Button onClick={checkAgain} disabled={loading || checking}>{checking ? 'Checking…' : 'Check again'}</Button>}
       />
+      <p style={{ margin: '0 0 var(--space-4)', display: 'flex', gap: 'var(--space-2) var(--space-4)', flexWrap: 'wrap' }}>
+        <Link to="/overview" data-testid="sales-overview-link">Overview: every business and what needs dealing with ›</Link>
+        <Link to="/costs/sales/entries" data-testid="sales-entries-link">Sales entered by hand ›</Link>
+      </p>
       {offline ? (
         <Notice tone="warn" style={{ marginBottom: 'var(--space-4)' }}>
           Can’t reach the suite server. Sales are read by the server and aren’t kept on this device, so this page needs a
@@ -112,7 +96,9 @@ export default function SalesPage() {
             Total sales = items, shipping and tax, after discounts and refunds — as WooCommerce Analytics and eBay’s
             Seller Hub show it; a refund counts on the day it was made. Which orders count is each store’s own setting
             (eBay: cancelled and unpaid orders don’t). Read about once an hour, recent weeks again each time, so late
-            refunds land. No customer details are kept.
+            refunds land. The Order Manager’s sales come from what it sends the suite, counted as its P&L counts them
+            (active orders, UTC days; its “Net revenue” is before tax and shipping). Sales entered by hand count as
+            typed (refunds and credit notes come off). No customer details are kept.
           </p>
         </div>
       ) : null}

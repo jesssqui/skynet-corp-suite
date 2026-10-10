@@ -9,7 +9,7 @@ import { useServerData } from '../../api/useServerData.js';
 import { PageHeader, Card, Badge, Notice, EmptyState, Button, TextField } from '../../ui/index.js';
 import { formatDateTime } from '../../ui/format.js';
 import MoneyTabs from '../costs/MoneyTabs.jsx';
-import { Periods, StateLine } from './SalesPage.jsx';
+import { Periods, StateLine } from './parts.jsx';
 import { lookupQuery, orderStatus, trackingText, orderMoneyLines, stateText, updatedText, backfillText } from './logic.js';
 import './sales.css';
 

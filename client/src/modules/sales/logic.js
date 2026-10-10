@@ -1,5 +1,5 @@
 // The Sales page's and the store page's words (D12), no React (client/test/sales.test.js).
-import { salesMoney } from '@suite/shared/sales';
+import { salesMoney, ENTRY_KINDS, ENTRY_CURRENCIES } from '@suite/shared/sales';
 
 /**
  * One period's figures (a list per currency) → "$1,234.50" (each currency on its own; never added). D13: the headline
@@ -23,7 +23,10 @@ export function stateText(store) {
     case 'unreadable': return { tone: 'danger', text: 'Its key can’t be read on this server: replace the key on Connections' };
     case 'not_read': return { tone: 'neutral', text: 'Not read yet' };
     case 'removed': return { tone: 'neutral', text: 'Not connected (removed): totals up to when it was' };
-    case 'not_set_up': return { tone: 'neutral', text: 'Not connected: set it up on System → Connections, or enter a month by hand' };
+    case 'not_set_up': return { tone: 'neutral', text: `Not connected: set it up on System → Connections${store.manualStore ? ', or enter a month by hand' : ''}` };
+    // D11: the Order Manager with its secret made but nothing sent yet; a business's sales entered by hand.
+    case 'nothing_yet': return { tone: 'neutral', text: 'Nothing received from the Order Manager yet (its connection is on System → Connections)' };
+    case 'by_hand': return null;
     case 'not_signed_in': return { tone: 'neutral', text: 'Not signed in to eBay yet (System → Connections)' };
     case 'signed_out': return { tone: 'danger', text: 'eBay stopped accepting the sign-in: sign in again on System → Connections' };
     default: return null;
@@ -173,4 +176,47 @@ export function monthBreakdown(m) {
 export function ebayCards(stores) {
   return (stores ?? []).filter((s) => s.source === 'ebay')
     .sort((a, b) => (a.manualStore ? -1 : b.manualStore ? 1 : String(a.name).localeCompare(String(b.name))));
+}
+
+// ---- D11: sales entered by hand ---------------------------------------------------------------------------------
+export const KIND_LABELS = Object.freeze({ sale: 'Sale', refund: 'Refund', credit_note: 'Credit note' });
+export const KIND_OPTIONS = ENTRY_KINDS.map((k) => ({ value: k, label: KIND_LABELS[k] }));
+export const CURRENCY_OPTIONS = ENTRY_CURRENCIES.map((c) => ({ value: c, label: c }));
+
+/** A new entry's form: today, the business picked last (or the filter's), a sale in CAD. */
+export function newEntryForm({ today, businessId = '' } = {}) {
+  return { kind: 'sale', day: today ?? '', businessId, amount: '', currency: 'CAD', orders: '', note: '' };
+}
+/** An entry → its form (amounts as typed: positive, the kind says which way it counts). */
+export function entryToForm(e) {
+  return {
+    kind: e.kind, day: e.day, businessId: e.businessId, amount: (Math.abs(e.amount) / 100).toFixed(2), currency: e.currency,
+    orders: e.orders === null || e.orders === undefined ? '' : String(e.orders), note: e.note ?? '',
+  };
+}
+/** What is wrong with the form, or null: { field: words } for the first problem. */
+export function entryProblem(f, { today = null } = {}) {
+  if (!f.businessId) return { field: 'businessId', text: 'Pick the business' };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f.day ?? '')) return { field: 'day', text: 'Pick the day' };
+  if (today && f.day > today) return { field: 'day', text: 'That day hasn’t come yet' };
+  const cents = parseAmount(f.amount);
+  if (cents === null || cents <= 0) return { field: 'amount', text: f.amount ? 'Type the amount like 1234.56' : 'The amount' };
+  if (f.kind === 'sale' && String(f.orders ?? '').trim() !== '' && !/^\d+$/.test(String(f.orders).trim())) return { field: 'orders', text: 'Orders is a whole number' };
+  if (!/^[A-Za-z]{3}$/.test(f.currency ?? '')) return { field: 'currency', text: 'A currency is three letters' };
+  return null;
+}
+/** The form → the request body (cents; orders only on a sale). */
+export function entryBody(f) {
+  const orders = f.kind === 'sale' && String(f.orders ?? '').trim() !== '' ? Number(String(f.orders).trim()) : null;
+  return { businessId: f.businessId, day: f.day, kind: f.kind, amount: parseAmount(f.amount), currency: String(f.currency).toUpperCase(), orders, note: f.note?.trim() || null };
+}
+/** "$1,500" / "−$200" (refunds and credit notes count down) with the currency when not CAD. */
+export function entryAmountText(e) {
+  const money = salesMoney(Math.abs(e.amount), e.currency);
+  return `${e.amount < 0 ? '−' : ''}${money}${e.currency === 'CAD' ? '' : ` ${e.currency}`}`;
+}
+/** The list's sums: "$1,750 + $100 USD" (never added across currencies). */
+export function sumsText(sums) {
+  if (!sums?.length) return '$0';
+  return sums.map((s) => `${s.total < 0 ? '−' : ''}${salesMoney(Math.abs(s.total), s.currency)}${s.currency === 'CAD' ? '' : ` ${s.currency}`}`).join(' + ');
 }
