@@ -419,6 +419,54 @@ export function createStockroomService(ctx) {
     return { state, asOf: o.asOf ?? null, fetchedAt: o.fetchedAt ?? null, items };
   }
 
+  /**
+   * D15 (the overview's stock card): what Stockroom said last, from the answers already pulled — counts, differences,
+   * order-soon and deliveries (no call of its own: the card never makes Stockroom work out its forecast again).
+   * → { state, fetchedAt, counts, differences, reorder, deliveries } — each part null when that read has no answer yet;
+   * state: not_connected | revoked | not_read (nothing read yet) | paused (the last answers) | ok.
+   */
+  function stockCard() {
+    const row = q.connection.get();
+    if (!row) return { state: 'not_connected', fetchedAt: null, counts: null, differences: null, reorder: null, deliveries: null };
+    const c = snapshot('counts');
+    const f = snapshot('differences');
+    const o = snapshot('order-soon');
+    const d = snapshot('deliveries');
+    const got = [c, f, o, d].filter(Boolean);
+    const paused = handle?.isPaused() ?? false;
+    const state = row.revoked_at ? 'revoked' : !got.length ? 'not_read' : paused ? 'paused' : 'ok';
+    const num = (v) => (Number.isFinite(v) ? v : null);
+    const counts = c ? {
+      lastFullCountAt: c.body.last_full_count?.applied_at ?? null,
+      lastSpotCheckAt: c.body.last_spot_check?.applied_at ?? null,
+      due: typeof c.body.due === 'boolean' ? c.body.due : null,
+      overdue: typeof c.body.overdue === 'boolean' ? c.body.overdue : null,
+      pctMatched30Days: num(c.body.accuracy?.last_30_days?.pct_matched),
+      asOf: c.asOf ?? null,
+    } : null;
+    const diffItems = f?.body?.items ?? [];
+    const differences = f ? {
+      open: num(f.body.open) ?? diffItems.length,
+      valueCents: diffItems.reduce((a, x) => a + (Number.isFinite(x.value_cents) ? Math.abs(x.value_cents) : 0), 0),
+      truncated: Boolean(f.body.truncated), asOf: f.asOf ?? null,
+    } : null;
+    const groups = o ? [...reorderGroups(o.body).values()] : [];
+    const reorder = o ? {
+      products: groups.reduce((a, g) => a + g.items.length, 0), suppliers: groups.length,
+      out: (o.body.items ?? []).filter((i) => i.status === 'out').length, asOf: o.asOf ?? null,
+    } : null;
+    const dItems = d?.body?.items ?? [];
+    const next = dItems.map((i) => i.expected_on).filter((x) => typeof x === 'string').sort()[0] ?? null;
+    const deliveries = d ? {
+      expected: dItems.length,
+      tins: num(d.body.counts?.tins) ?? dItems.reduce((a, i) => a + (num(i.remaining_tins) ?? 0), 0),
+      overdue: num(d.body.counts?.overdue) ?? dItems.filter((i) => i.overdue).length,
+      nextOn: next, asOf: d.asOf ?? null,
+    } : null;
+    const fetchedAt = got.map((g) => g.fetchedAt).filter(Boolean).sort().at(-1) ?? null;
+    return { state, fetchedAt, counts, differences, reorder, deliveries };
+  }
+
   // ---- the Connections row ----------------------------------------------------------------------
   function describe() {
     const row = q.connection.get();
@@ -478,5 +526,5 @@ export function createStockroomService(ctx) {
   };
   if (automations && planner) registerStockroomAutomations({ automations, planner, store, clock });
 
-  return { connect, forget, connectionInfo, pullRound, pullNow, startPuller, snapshot, lists, lowStock, describe, store };
+  return { connect, forget, connectionInfo, pullRound, pullNow, startPuller, snapshot, lists, lowStock, stockCard, describe, store };
 }
