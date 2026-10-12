@@ -2761,31 +2761,40 @@ plan's "done when": every card shows its data or a clear "not connected", and ea
     active; by kind), active services and what plans/retainers bring a month (yearly ÷ 12, hourly counted apart; no
     currency on services: CAD), renewals in 30 days (+ the next one), the open pipeline (count per stage, first-year
     value per currency, won this month), sales this month, recurring costs. Consulting stays thin (D7 skipped: says
-    its sales are the ones entered by hand).
+    its sales are the ones entered by hand — only while no `invoices` sales source is registered: D18).
   - **Save Point Shop**: today / this week / this month from the summary (the month entered by hand when it fills the
     card, marked), eBay orders waiting to ship (`ebay.store.waiting()`: count, next ship-by, past it), costs; eBay's state.
-  - **Clients**: active, new this month (made this calendar month, active), gone quiet (the Friday review's rule — the
+  - **Clients**: active, **clients added this month** (made in the suite this calendar month, active — imports included,
+    so labelled "added", not "new"; the scorecard's "new clients" is the start-date rule below), gone quiet (the Friday review's rule — the
     same list as "To deal with"), open leads.
   - **All businesses**: each business's Total sales for the last three calendar months beside its recurring costs a
-    month **as they are now** (D6 keeps no history), and "less costs" per month and currency (never across currencies);
+    month **as they are now** (D6 keeps no history: past months say "less today's costs"; the month in progress takes
+    only the share of its days completed — elapsed ÷ days), and "less costs" per month and currency (never across currencies);
     **Personal** (the home) on its own line, left out of the together line (home costs aren't the businesses').
   - **Retail stores**: each WooCommerce store (and retail sales by hand) with this month / today and its state; **open
-    tickets per store: "Not connected yet · comes with the helpdesk (D14)"** until a service `helpdesk` has
-    `openTicketsByStore()` → `{ <sales store key or name>: count }` (the seam; tested with a stand-in module; tickets not
-    matched to a store are counted apart).
+    tickets per store: "Not connected yet · comes with the helpdesk (D14)"** until the `helpdesk` service has
+    `openTicketsByStore()` → `{ <sales store key>: open tickets (waiting + answered) }`. That call is guarded on its own
+    (a failure → the support line says it couldn't be read; the stores still show); tickets for a key no WooCommerce
+    store has are counted apart. The server test stands it in on `ctx.services.helpdesk` (never a second module).
 - **Monthly targets** — synced record `target` (`overview_targets`; create/update/delete; registered only with the CRM):
   business_id*⇧ (one of ours), month* (the 1st, "YYYY-MM-01" — **calendar months**, as sales), measure*
-  (`sales` Total sales · `net_sales` before tax and shipping · `orders` · `new_clients` relationships with the business
-  started that month (start_date, else made that day) · `won_leads`), amount* (cents for money measures, else a count;
-  > 0), currency (money only; null = CAD), notes. `checkTargetStep` (shared): month a 1st, amount > 0, currency shape,
-  and an update may not touch business/month/measure (a different one is a new target). Two devices setting the same
-  target offline make two records (nothing refused): readers use the one changed last (`pickTargets`) and the plan
-  offers "Remove the extra".
+  (`sales` Total sales · `net_sales` before tax and shipping · `orders` · `new_clients` "New clients (first relationship
+  started)": **distinct clients whose first relationship with the business has its start_date in the month** —
+  start_date only, so C7's imports (no start date) never count · `won_leads`; Personal is offered no sales measures),
+  amount* (cents for money measures, else a count; > 0), currency (money only; null = CAD), notes. `checkTargetStep`
+  (shared): month a 1st, amount > 0, currency shape, and an update may not touch business/month/measure/**currency** (a
+  different one is a new target). Two devices setting the same target offline make two records (nothing refused):
+  readers use the one changed last (`pickTargets`: pulled times; on a device a change still waiting to be sent counts as
+  newest; without times, the ids) and the plan offers "Remove the extra…" behind a confirm.
+- **Orders and D18**: `orders` is Σ the `orders` column of `sales_daily` as each source writes it. D18's `invoices`
+  source should write **one order per invoice on its own day** (not one per payment day) for the target to mean invoices
+  issued; whatever it writes is what the target counts.
 - **Actuals** (`scorecard.js`): sales/net/orders from `sales.monthly()` per business and currency — **totalOnly-aware**:
   `net_sales` is "can't tell" (`reason: total_only`) when a hand entry or hand-entered month is in it (only totals are
   known); `orders` is `partial` then; `sales` is always known. **Pace** (`targetPace`): a straight line from 0 on the 1st
   to the target on the last day — expected by the end of today, projected at the same rate, status reached / ahead /
-  on pace (±5 %) / behind; a past month reached or missed; a future one not started.
+  on pace (±5 %) / behind, **by the days completed** (today isn't over: elapsed = day − 1), and **"too early to tell"**
+  before 3 completed days (`PACE_MIN_DAYS`); a past month reached or missed; a future one not started.
 - **Relation to C4b's priorities (decision, no duplication)**: a priority is a piece of work ticked by hand (its own
   `target`/`progress` are typed); a target is a number the suite measures. Both are set per business on the monthly
   plan (targets above the priorities in each business's card) and the scorecard shows them together ("1 of 2 priorities

@@ -3,7 +3,7 @@
 // into rows — { key, label, value, detail, tone, link } — and says plainly when a card's source isn't connected.
 import { salesMoney } from '@suite/shared/sales';
 import { BUSINESS_IDS } from '@suite/shared/crm';
-import { MEASURE_LABELS, PACE_LABELS, isMoneyMeasure, targetPace } from '@suite/shared/targets';
+import { MEASURE_LABELS, PACE_LABELS, PACE_MIN_DAYS, isMoneyMeasure, targetPace } from '@suite/shared/targets';
 import { periodText, ordersText } from '../sales/logic.js';
 
 const B = BUSINESS_IDS;
@@ -75,7 +75,7 @@ export function cardView(card, fmt = { date: (d) => d, dateTime: (d) => d }) {
       : card.id === 'wholesale' ? ['ok', 'paused'].includes(card.state)
         : card.state === 'ok';
   if (card.id === 'retail') {
-    view.support = card.support?.state === 'ok'
+    view.support = card.support?.state === 'error' ? 'Open support tickets per store couldn’t be read just now.' : card.support?.state === 'ok'
       ? `${plural(card.support.total, 'open support ticket')}${card.support.unmatched ? ` (${n(card.support.unmatched)} not matched to a store)` : ''}`
       : `Open support tickets per store: not connected yet · comes with ${card.support?.comesWith ?? 'the helpdesk (D14)'}.`;
   }
@@ -122,7 +122,8 @@ export function cardView(card, fmt = { date: (d) => d, dateTime: (d) => d }) {
         { key: 'month', label: 'Sales this month', value: periodText(card.month), detail: handNote(card.month) },
         costsRow(card.costs),
       ];
-      if (card.id === 'consulting') view.extra = 'Consulting engagements and invoices aren’t tracked yet: sales here are the ones entered by hand.';
+      // Until invoices are a sales source (D18), consulting's sales are only those entered by hand.
+      if (card.id === 'consulting' && !card.invoicesConnected) view.extra = 'Invoices aren’t connected yet: sales here are the ones entered by hand.';
       break;
     }
     case 'savePoint': {
@@ -138,7 +139,7 @@ export function cardView(card, fmt = { date: (d) => d, dateTime: (d) => d }) {
     case 'clients':
       view.rows = [
         { key: 'active', label: 'Active clients', value: n(card.active) },
-        { key: 'new', label: 'New this month', value: n(card.newThisMonth) },
+        { key: 'new', label: 'Clients added this month', value: n(card.newThisMonth), detail: 'made in the suite this month, imports included' },
         { key: 'quiet', label: `Gone quiet (${card.quietDays ?? 60} days)`, value: card.quiet === null || card.quiet === undefined ? '—' : n(card.quiet), detail: 'nothing logged, no order', tone: card.quiet ? 'warn' : null, link: '/crm' },
         { key: 'leads', label: 'Open leads', value: n(card.openLeads), link: '/crm/pipeline' },
       ];
@@ -159,18 +160,28 @@ export function cardView(card, fmt = { date: (d) => d, dateTime: (d) => d }) {
 const STORE_STATES = { paused: 'paused', failing: 'can’t be read right now', unreadable: 'its key can’t be read', removed: 'not connected (removed)', not_read: 'not read yet', by_hand: 'entered by hand' };
 
 /**
- * The all-businesses card as a small table: { months: [label…], rows: [{ businessId, name, personal, cells: [{ month,
- * sales, less }], costs }], together } — sales per month, recurring costs a month, and each month's sales less those
- * costs (per currency; only where both are in that currency). The month in progress is marked "so far".
+ * The all-businesses card as a small table: { months: [{ month, label, lessLabel }], rows: [{ businessId, name,
+ * personal, cells: [{ month, sales, less, negative }], costs }], together } — sales per month, recurring costs a month,
+ * and each month's sales less those costs (per currency; only where both are in that currency). Costs are today's (no
+ * history is kept): a past month says "less today's costs"; the month in progress takes only the share of its days
+ * completed (elapsed ÷ days), so a month just begun isn't shown deep in the red.
  */
 export function allBusinessesView(card, today) {
   const thisMonth = String(today).slice(0, 7);
-  const months = (card.months ?? []).map((m) => ({ month: m, label: m === thisMonth ? `${shortMonth(m)} (so far)` : shortMonth(m) }));
-  const less = (sales, costs) => {
+  const [y, mo] = thisMonth.split('-').map(Number);
+  const days = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  const elapsed = Math.max(0, Number(String(today).slice(8, 10)) - 1);
+  const months = (card.months ?? []).map((m) => ({
+    month: m,
+    label: m === thisMonth ? `${shortMonth(m)} (so far)` : shortMonth(m),
+    lessLabel: m === thisMonth ? `less costs for ${elapsed} of ${days} days` : 'less today’s costs',
+  }));
+  const share = (m, cents) => (m === thisMonth ? Math.round((cents * elapsed) / days) : cents);
+  const less = (m, sales, costs) => {
     const cur = new Set([...(sales ?? []).map((f) => f.currency), ...(costs ?? []).filter((c) => c.monthlyCents).map((c) => c.currency)]);
     return [...cur].map((c) => {
       const s = (sales ?? []).find((f) => f.currency === c)?.total ?? 0;
-      const k = (costs ?? []).find((x) => x.currency === c)?.monthlyCents ?? 0;
+      const k = share(m, (costs ?? []).find((x) => x.currency === c)?.monthlyCents ?? 0);
       return { currency: c, cents: s - k };
     }).filter((x) => x.cents !== 0);
   };
@@ -179,7 +190,7 @@ export function allBusinessesView(card, today) {
     name, ...extra,
     cells: months.map((m) => {
       const sales = monthsOf(m.month);
-      const l = less(sales, costs);
+      const l = less(m.month, sales, costs);
       return { month: m.month, sales: periodText(sales), handEntered: (sales ?? []).some((f) => f.totalOnly), less: lessText(l), negative: l.some((x) => x.cents < 0) };
     }),
     costs: perCurrency(costs, 'monthlyCents') || '$0',
@@ -196,7 +207,7 @@ export function measureValue(measure, value, currency = 'CAD') {
   if (value === null || value === undefined) return '—';
   return isMoneyMeasure(measure) ? money(value, currency ?? 'CAD') : n(value);
 }
-const TONES = { reached: 'good', ahead: 'good', on_pace: 'good', behind: 'warn', missed: 'danger', not_started: null, unknown: null };
+const TONES = { reached: 'good', ahead: 'good', on_pace: 'good', behind: 'warn', missed: 'danger', too_early: null, not_started: null, unknown: null };
 
 /**
  * One target on the scorecard → { key, label, value ("$1,500 of $3,000"), pct (0–100 for the bar), expectedPct (where
@@ -211,8 +222,9 @@ export function targetLine(t, { month, today } = {}) {
   if (t.reason === 'total_only') detail = 'Can’t tell: sales entered by hand this month only have a total (use Total sales for this business).';
   else if (t.reason === 'not_available') detail = 'Not available here.';
   else if (pace.status === 'not_started') detail = 'This month hasn’t started.';
+  else if (pace.status === 'too_early') detail = `${plural(pace.elapsed ?? 0, 'day')} of the month complete: the pace shows from the ${PACE_MIN_DAYS + 1}th.`;
   else if (pace.expected !== null && pace.expected !== undefined && pace.status !== 'reached') {
-    detail = join([`${measureValue(t.measure, pace.expected, t.currency)} expected by today`, pace.projected !== null ? `on course for ${measureValue(t.measure, pace.projected, t.currency)}` : null]);
+    detail = join([`${measureValue(t.measure, pace.expected, t.currency)} expected by yesterday’s end`, pace.projected !== null ? `on course for ${measureValue(t.measure, pace.projected, t.currency)}` : null]);
   } else detail = null;
   if (t.partial) detail = join([detail, 'orders entered by hand may be left out']);
   const pct = pace.pct === null || pace.pct === undefined ? 0 : Math.max(0, Math.min(100, pace.pct));

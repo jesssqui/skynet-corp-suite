@@ -47,9 +47,8 @@ function Rows({ rows }) {
   );
 }
 
-function AllBusinesses({ card, today }) {
-  const v = allBusinessesView(card, today);
-  const Row = ({ r, strong = false }) => (
+function MoneyRow({ r, months, strong = false }) {
+  return (
     <div className="overview-money-row" data-business={r.businessId ?? 'together'} style={strong ? { fontWeight: 650 } : undefined}>
       <span className="overview-money-name">
         {r.businessId ? <span aria-hidden="true" className="overview-dot" style={{ background: businessColor({ id: r.businessId, color: r.color }) }} /> : null}
@@ -57,25 +56,30 @@ function AllBusinesses({ card, today }) {
       </span>
       {r.cells.map((c, i) => (
         <span key={c.month} className="overview-money-cell" data-month={c.month}>
-          <span className="overview-money-label">{v.months[i].label}</span>
+          <span className="overview-money-label">{months[i].label}</span>
           <span className="overview-figure">{c.sales}{c.handEntered ? '*' : ''}</span>
-          <span style={{ ...muted, fontSize: 'var(--text-xs)', color: c.negative ? 'var(--danger)' : muted.color }}>less costs {c.less}</span>
+          <span style={{ ...muted, fontSize: 'var(--text-xs)', color: c.negative ? 'var(--danger)' : muted.color }}>{months[i].lessLabel}: {c.less}</span>
         </span>
       ))}
       <span className="overview-money-cell" data-month="costs">
-        <span className="overview-money-label">Costs a month</span>
+        <span className="overview-money-label">Costs a month (today)</span>
         <span className="overview-figure">{r.costs}</span>
       </span>
     </div>
   );
+}
+
+function AllBusinesses({ card, today }) {
+  const v = allBusinessesView(card, today);
   return (
     <div style={{ display: 'grid', gap: 'var(--space-2)' }} data-testid="all-businesses">
-      {v.rows.length ? v.rows.map((r) => <Row key={r.businessId} r={r} />) : <span style={muted}>No sales or recurring costs yet.</span>}
-      <Row r={v.together} strong />
-      {v.personal.map((r) => <Row key={r.businessId} r={{ ...r, name: `${r.name} (the home, not in the total)` }} />)}
+      {v.rows.length ? v.rows.map((r) => <MoneyRow key={r.businessId} r={r} months={v.months} />) : <span style={muted}>No sales or recurring costs yet.</span>}
+      <MoneyRow r={v.together} months={v.months} strong />
+      {v.personal.map((r) => <MoneyRow key={r.businessId} r={{ ...r, name: `${r.name} (the home, not in the total)` }} months={v.months} />)}
       <span style={{ ...muted, fontSize: 'var(--text-xs)' }}>
-        Total sales per calendar month (each store’s own days), beside today’s recurring costs a month (yearly ÷ 12; one-off
-        costs left out). Each currency on its own. * includes sales entered by hand.
+        Total sales per calendar month (each store’s own days), less the recurring costs as they are today (yearly ÷ 12;
+        one-off costs left out; no history is kept) — for this month only the share of its days completed. Each currency
+        on its own. * includes sales entered by hand.
       </span>
     </div>
   );
@@ -113,9 +117,9 @@ export function BusinessCards({ cards, today }) {
 /** One target's bar: how far, with a tick where a straight line would be today. */
 export function TargetBar({ line }) {
   return (
-    <div className="overview-target-bar" role="meter" aria-label={`${line.label}: ${line.value}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={line.pct}>
+    <div className="overview-target-bar" role="meter" aria-label={line.label} aria-valuetext={`${line.value}: ${line.statusText}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={line.pct}>
       <span className={`overview-target-fill${line.tone ? ` ${line.tone}` : ''}`} style={{ width: `${line.pct}%` }} />
-      {line.expectedPct !== null ? <span className="overview-target-expected" style={{ left: `${line.expectedPct}%` }} title="Where a straight line would be today" /> : null}
+      {line.expectedPct !== null ? <span className="overview-target-expected" style={{ left: `min(${line.expectedPct}%, calc(100% - 2px))` }} aria-hidden="true" title="Where a straight line would be after the days completed" /> : null}
     </div>
   );
 }
@@ -177,7 +181,7 @@ export function GoalsScorecard({ goals, today }) {
         {goals?.businesses?.length ? (
           <span style={{ ...muted, fontSize: 'var(--text-xs)' }}>
             Measured by the suite for the calendar month; the tick on each bar is where a straight line from the 1st would be
-            today. Priorities are ticked by hand on the monthly plan.
+            after the days completed. Priorities are ticked by hand on the monthly plan.
           </span>
         ) : null}
       </section>

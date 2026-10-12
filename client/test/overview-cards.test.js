@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { BUSINESS_IDS } from '@suite/shared/crm';
 import { startServer, makeDevice, row } from './helpers.js';
 import { cardView, cardStateNote, allBusinessesView, targetLine, prioritiesText, priorityProgress, measureValue, longMonth, CARD_META } from '../src/modules/overview/cards.js';
-import { targetValues, targetFields, newTargetFields, targetEditChanges, businessTargets, freeMeasure } from '../src/modules/overview/targetForm.js';
+import { targetValues, targetFields, newTargetFields, targetEditChanges, businessTargets, freeMeasure, measureOptionsFor } from '../src/modules/overview/targetForm.js';
 
 const B = BUSINESS_IDS;
 const TODAY = '2026-10-14';
@@ -76,7 +76,9 @@ test('the cards in words: wholesale, stock, web and social, Save Point Shop, cli
   assert.deepEqual([web.pipeline.value, web.pipeline.detail, web.pipeline.link], ['2 leads', '1 talking · 1 quoted · $9,000 first-year value · 1 won this month', `/crm/pipeline?business=${B.agency}`]);
   assert.equal(web.month.detail, 'includes sales entered by hand');
   assert.equal(web.costs.value, 'None set');
-  assert.match(cardView({ id: 'consulting', state: 'ok', relationships: { total: 0, byKind: { consulting: 0 } }, pipeline: { open: [], openCount: 0, value: [] } }, fmt).extra, /entered by hand/);
+  const consulting = (invoicesConnected) => cardView({ id: 'consulting', state: 'ok', invoicesConnected, relationships: { total: 0, byKind: { consulting: 0 } }, pipeline: { open: [], openCount: 0, value: [] } }, fmt);
+  assert.match(consulting(false).extra, /Invoices aren’t connected yet/);
+  assert.equal(consulting(true).extra, null, 'once invoices are a sales source (D18), no note');
 
   const sp = cardView({ id: 'savePoint', state: 'not_set_up', month: [{ currency: 'CAD', total: 98700, orders: 21, totalOnly: true }], today: [], week: [], monthFromManual: true, toShip: null }, fmt);
   assert.match(sp.note.text, /enter a month by hand/);
@@ -85,7 +87,7 @@ test('the cards in words: wholesale, stock, web and social, Save Point Shop, cli
   assert.deepEqual([sp2.ship.value, sp2.ship.detail, sp2.ship.tone], ['3', 'next ships by [2026-10-15] · 1 past the ship-by day', 'danger']);
 
   const cl = rows(cardView({ id: 'clients', state: 'ok', active: 2700, newThisMonth: 12, quiet: 40, quietDays: 60, openLeads: 5 }, fmt));
-  assert.deepEqual([cl.active.value, cl.new.value, cl.quiet.label, cl.quiet.value], ['2,700', '12', 'Gone quiet (60 days)', '40']);
+  assert.deepEqual([cl.active.value, cl.new.label, cl.new.value, cl.quiet.label, cl.quiet.value], ['2,700', 'Clients added this month', '12', 'Gone quiet (60 days)', '40']);
 
   const re = cardView({
     id: 'retail', state: 'ok', support: { state: 'ok', total: 4, unmatched: 1 }, costs: null,
@@ -93,6 +95,7 @@ test('the cards in words: wholesale, stock, web and social, Save Point Shop, cli
   }, fmt);
   assert.deepEqual([re.rows[0].label, re.rows[0].value, re.rows[0].detail, re.rows[0].tone], ['TinsXpress', '$111.70', 'this month · today $0 · can’t be read right now · 3 open tickets', 'danger']);
   assert.equal(re.support, '4 open support tickets (1 not matched to a store)');
+  assert.equal(cardView({ id: 'retail', state: 'ok', stores: [], support: { state: 'error' } }, fmt).support, 'Open support tickets per store couldn’t be read just now.');
 });
 
 test('all businesses: three months beside the recurring costs, less costs per month and currency; Personal apart', () => {
@@ -104,10 +107,10 @@ test('all businesses: three months beside the recurring costs, less costs per mo
     ],
     together: { months: [{ month: '2026-08', sales: [{ currency: 'CAD', total: 100000 }] }, { month: '2026-09', sales: [] }, { month: '2026-10', sales: [] }], costs: [{ currency: 'CAD', monthlyCents: 10000 }] },
   }, TODAY);
-  assert.deepEqual(v.months.map((m) => m.label), ['Aug', 'Sep', 'Oct (so far)']);
+  assert.deepEqual(v.months.map((m) => [m.label, m.lessLabel]), [['Aug', 'less today’s costs'], ['Sep', 'less today’s costs'], ['Oct (so far)', 'less costs for 13 of 31 days']]);
   const gwnd = v.rows[0];
   assert.deepEqual(gwnd.cells.map((c) => [c.sales, c.less, c.negative, c.handEntered]), [
-    ['$1,000', '$900', false, false], ['$0', '−$100', true, false], ['$2,000 + US$50 USD', '$1,900 + US$50 USD', false, true],
+    ['$1,000', '$900', false, false], ['$0', '−$100', true, false], ['$2,000 + US$50 USD', '$1,958.06 + US$50 USD', false, true],
   ]);
   assert.equal(gwnd.costs, '$100');
   assert.deepEqual(v.personal.map((r) => r.name), ['Personal']);
@@ -115,9 +118,11 @@ test('all businesses: three months beside the recurring costs, less costs per mo
 });
 
 test('the scorecard: actual against target with the pace and where the line is today; can’t tell; priorities', () => {
-  const ahead = targetLine({ id: 't1', measure: 'sales', amount: 300000, currency: 'CAD', actual: 150000, pace: { status: 'ahead', pct: 50, expected: 135484, projected: 332143 } }, { month: '2026-10', today: TODAY });
-  assert.deepEqual([ahead.label, ahead.value, ahead.pct, ahead.expectedPct, ahead.statusText, ahead.tone], ['Total sales', '$1,500 of $3,000', 50, 45, 'Ahead of pace · 50 %', 'good']);
-  assert.equal(ahead.detail, '$1,354.84 expected by today · on course for $3,321.43');
+  const ahead = targetLine({ id: 't1', measure: 'sales', amount: 300000, currency: 'CAD', actual: 150000, pace: { status: 'ahead', pct: 50, expected: 125806, projected: 357692 } }, { month: '2026-10', today: TODAY });
+  assert.deepEqual([ahead.label, ahead.value, ahead.pct, ahead.expectedPct, ahead.statusText, ahead.tone], ['Total sales', '$1,500 of $3,000', 50, 42, 'Ahead of pace · 50 %', 'good']);
+  assert.equal(ahead.detail, '$1,258.06 expected by yesterday’s end · on course for $3,576.92');
+  const early = targetLine({ id: 't5', measure: 'orders', amount: 40, actual: 0 }, { month: '2026-10', today: '2026-10-02' });
+  assert.deepEqual([early.statusText, early.detail], ['Too early to tell · 0 %', '1 day of the month complete: the pace shows from the 4th.']);
   const net = targetLine({ id: 't2', measure: 'net_sales', amount: 200000, currency: 'USD', actual: null, reason: 'total_only', pace: { status: 'unknown', pct: null, expected: null, projected: null } }, { month: '2026-10', today: TODAY });
   assert.deepEqual([net.label, net.value, net.pct, net.statusText], ['Sales before tax and shipping (USD)', '— of US$2,000 USD', 0, 'Can’t tell']);
   assert.match(net.detail, /only have a total/);
@@ -125,6 +130,7 @@ test('the scorecard: actual against target with the pace and where the line is t
   assert.deepEqual([orders.value, orders.status], ['1 of 4', 'behind'], 'pace worked out on the device when the server sent none');
   assert.match(orders.detail, /orders entered by hand may be left out/);
   const reached = targetLine({ id: 't4', measure: 'new_clients', amount: 2, actual: 2 }, { month: '2026-10', today: TODAY });
+  assert.equal(reached.label, 'New clients (first relationship started)');
   assert.deepEqual([reached.statusText, reached.detail, reached.pct], ['Reached · 100 %', null, 100]);
   assert.equal(measureValue('won_leads', 3), '3');
   assert.equal(longMonth('2026-10'), 'October 2026');
@@ -145,7 +151,18 @@ test('the target sheet: dollars to cents, whole numbers for counts, CAD stored a
   assert.deepEqual(start, { measure: 'sales', amount: '12000.50', currency: 'CAD', notes: 'Holiday push' });
   assert.deepEqual(targetEditChanges(start, { ...start, amount: '15000' }).fields, { amount: 1500000 });
   assert.deepEqual(targetEditChanges(start, start).fields, {});
+  assert.deepEqual(targetEditChanges(start, { ...start, currency: 'USD', notes: '' }).fields, { notes: null }, 'the currency never changes on an edit');
   assert.equal(freeMeasure([{ measure: 'sales' }, { measure: 'orders' }]), 'net_sales');
+  assert.equal(freeMeasure([], B.personal), 'new_clients', 'Personal: no sales measures');
+  assert.deepEqual(measureOptionsFor(B.personal).map((o) => o.value), ['new_clients', 'won_leads']);
+  // A change waiting to be sent is the newest; else pulled times; without times the ids.
+  const recs = [
+    { id: '01a', business_id: B.agency, month: '2026-10-01', measure: 'sales', amount: 1, _sync: { updatedAt: '2026-10-02T00:00:00.000Z' } },
+    { id: '01b', business_id: B.agency, month: '2026-10-01', measure: 'sales', amount: 2, _sync: { updatedAt: '2026-10-01T00:00:00.000Z', pending: true } },
+  ];
+  assert.equal(businessTargets(recs, B.agency).current[0].id, '01b');
+  assert.equal(businessTargets([recs[0], { ...recs[1], _sync: { local: true } }], B.agency).current[0].id, '01b', 'not pulled back yet: by id');
+  assert.equal(businessTargets([{ ...recs[0], id: '01c' }, { ...recs[1], _sync: { local: true } }], B.agency).current[0].id, '01c');
 });
 
 test('two devices: a target set offline syncs; the same one set on both offline survives, the newer counts; an open sheet keeps the other’s change', async (t) => {

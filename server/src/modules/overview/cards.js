@@ -18,7 +18,7 @@
 //   allBusinesses  each business's sales for the last three months beside its recurring costs a month (D6's monthly
 //                  equivalent), per currency; Personal (the home) on its own line, left out of the together line
 //   retail         each WooCommerce store's sales and state (and the retail stores' sales entered by hand), and open
-//                  support tickets per store once the helpdesk (D14) is there
+//                  support tickets per store (waiting + answered) once the helpdesk (D14) is there
 // Each card: { id, state, businessId?, … }; state ok | not_connected | not_available | paused | revoked | not_read |
 // not_set_up | not_signed_in | signed_out | failing | error.
 import { BUSINESS_IDS } from '@suite/shared/crm';
@@ -96,7 +96,7 @@ export function createCards({ services, log, now }) {
     const { crm } = services;
     if (!crm?.liveRelationships) return card(id, 'not_available', { businessId });
     const day = reads.day;
-    const rels = crm.liveRelationships().filter((r) => r.business_id === businessId && r.status === 'active' && r.client_status === 'active');
+    const rels = (reads.relationships() ?? []).filter((r) => r.business_id === businessId && r.status === 'active' && r.client_status === 'active');
     const byKind = {};
     for (const k of kinds) byKind[k] = 0;
     let other = 0;
@@ -108,7 +108,7 @@ export function createCards({ services, log, now }) {
       && x.relationship_status !== 'ended' && x.client_status === 'active');
     const recurring = services_.filter((x) => x.billing !== 'hourly' && x.period && x.period !== 'once');
     const renewals = (crm.renewalsBetween?.(day, addDays(day, CARD_RENEWAL_DAYS)) ?? []).filter((x) => x.business_id === businessId);
-    const leads = (crm.liveLeads?.() ?? []).filter((l) => l.business_id === businessId);
+    const leads = (reads.leads() ?? []).filter((l) => l.business_id === businessId);
     const p = pipelineTotals(leads, { today: day });
     const open = OPEN_LEAD_STAGES.map((stage) => ({ stage, count: p.stages[stage].count }));
     const openValue = new Map();
@@ -120,6 +120,8 @@ export function createCards({ services, log, now }) {
       renewals: { count: renewals.length, days: CARD_RENEWAL_DAYS, next: renewals[0] ? { name: renewals[0].name, date: renewals[0].renewal_date, accountName: renewals[0].account_name ?? null } : null },
       pipeline: { open, openCount: open.reduce((a, s) => a + s.count, 0), value: mapToList(openValue), wonThisMonth: p.wonThisMonth, lostThisMonth: p.lostThisMonth },
       month: monthSales(reads, businessId, day.slice(0, 7)),
+      // D18 adds the `invoices` sales source: until it is there, this business's sales are only those entered by hand.
+      invoicesConnected: (reads.summary()?.sources ?? []).some((x) => x.source === 'invoices'),
       costs: costsOf(reads, businessId),
     });
   }
@@ -158,7 +160,7 @@ export function createCards({ services, log, now }) {
     } catch (err) {
       log?.error?.('overview: quiet clients failed:', err);
     }
-    const leads = crm.liveLeads?.() ?? [];
+    const leads = reads.leads() ?? [];
     return card('clients', 'ok', {
       active: active.length, newThisMonth, quiet, quietDays: services.planner?.quietDays ?? 60,
       openLeads: leads.filter((l) => OPEN_LEAD_STAGES.includes(l.stage)).length,
@@ -215,13 +217,23 @@ export function createCards({ services, log, now }) {
     const helpdesk = services.helpdesk;
     let support = { state: 'not_connected', comesWith: 'the helpdesk (D14)' };
     if (helpdesk?.openTicketsByStore) {
-      const byStore = helpdesk.openTicketsByStore();
-      support = { state: 'ok', total: 0, unmatched: 0 };
-      for (const [key, n] of Object.entries(byStore ?? {})) {
-        const s = stores.find((x) => x.store === key || x.name === key);
-        if (s) s.tickets = n;
-        else support.unmatched += n;
-        support.total += n;
+      // D14: { <sales store key>: open tickets (waiting + answered) }. Read on its own: a failure here says so on the
+      // support line and leaves the rest of the card alone.
+      try {
+        const byStore = helpdesk.openTicketsByStore() ?? {};
+        support = { state: 'ok', total: 0, unmatched: 0 };
+        for (const s of stores) if (s.source === 'woo') s.tickets = 0;
+        for (const [key, count] of Object.entries(byStore)) {
+          const n = Number(count) || 0;
+          const s = stores.find((x) => x.source === 'woo' && x.store === key);
+          if (s) s.tickets = n;
+          else support.unmatched += n;
+          support.total += n;
+        }
+      } catch (err) {
+        log?.error?.('overview: open tickets per store failed:', err);
+        support = { state: 'error' };
+        for (const s of stores) s.tickets = null;
       }
     }
     const woo = stores.filter((s) => s.source === 'woo');

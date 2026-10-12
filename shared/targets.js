@@ -14,20 +14,24 @@
 export const TARGET_MEASURES = Object.freeze(['sales', 'net_sales', 'orders', 'new_clients', 'won_leads']);
 export const MONEY_MEASURES = Object.freeze(['sales', 'net_sales']);
 export const isMoneyMeasure = (measure) => MONEY_MEASURES.includes(measure);
+/** Measures that need sales: never offered for Personal (the home doesn't sell). */
+export const SALES_MEASURES = Object.freeze(['sales', 'net_sales', 'orders']);
+/** The measures a business's target may use (Personal: no sales measures). */
+export const measuresFor = (businessId, personalId) => TARGET_MEASURES.filter((m) => businessId !== personalId || !SALES_MEASURES.includes(m));
 
 export const MEASURE_LABELS = Object.freeze({
   sales: 'Total sales',
   net_sales: 'Sales before tax and shipping',
   orders: 'Orders',
-  new_clients: 'New clients',
+  new_clients: 'New clients (first relationship started)',
   won_leads: 'Leads won',
 });
 /** One line on what each measure counts (the sheet and the scorecard say it). */
 export const MEASURE_HELP = Object.freeze({
   sales: 'Items, shipping and tax after discounts and refunds — every store, the Order Manager, eBay and sales entered by hand of this business, this month.',
   net_sales: 'Item sales after discounts and refunds, before tax and shipping (the Order Manager’s net revenue). Sales entered by hand only have a total, so they can’t be counted here.',
-  orders: 'Orders in the month, from every sales source of this business.',
-  new_clients: 'Relationships with this business that started this month (their start date, else the day they were made).',
+  orders: 'Orders in the month as each sales source counts them (a store’s orders; sales entered by hand: as typed).',
+  new_clients: 'Clients whose first relationship with this business has its start date in this month (each client once; relationships with no start date — an import, say — don’t count).',
   won_leads: 'Leads of this business marked won this month.',
 });
 
@@ -45,7 +49,10 @@ export function daysInMonth(value) {
 
 /** One target per business, month, measure and (money measures) currency. */
 export const targetKey = (t) => `${t.business_id}|${monthFirst(t.month)}|${t.measure}|${isMoneyMeasure(t.measure) ? (t.currency ?? 'CAD') : ''}`;
-const newer = (a, b) => String(a.updated_at ?? a.created_at ?? '').localeCompare(String(b.updated_at ?? b.created_at ?? '')) || String(a.id).localeCompare(String(b.id));
+// When was it last changed: the newer one counts. Without a time on both (a device's own record not pulled back yet),
+// the ids decide (UUIDv7: the one made later).
+const when = (t) => t.updated_at ?? t.created_at ?? null;
+const newer = (a, b) => ((when(a) && when(b) ? String(when(a)).localeCompare(String(when(b))) : 0) || String(a.id).localeCompare(String(b.id)));
 
 /**
  * Two devices setting the same target offline make two records (nothing is refused: both must survive). Readers use
@@ -74,21 +81,26 @@ export function pickTargets(targets) {
 /** Within this share either side of the expected figure is "on pace". */
 export const PACE_BAND = 0.05;
 
+/** The first days of a month say too little about its pace: before this many completed days it is "too early to tell". */
+export const PACE_MIN_DAYS = 3;
+
 /**
  * Where a target stands on `today` (the device's day): { status, pct, expected, projected, elapsed, days }.
- *  status  reached (actual ≥ target) · ahead · on_pace · behind (this month, against the straight line from 0 on the
- *          1st to the target on the last day) · missed (a month gone by) · not_started (a month to come) · unknown
- *          (no actual: can't be measured)
+ *  status  reached (actual ≥ target) · ahead · on_pace · behind (this month, against the straight line from 0 at the
+ *          start of the 1st to the target at the end of the last day, by the days **completed** — today isn't over)
+ *          · too_early (fewer than PACE_MIN_DAYS days completed) · missed (a month gone by) · not_started (a month to
+ *          come) · unknown (no actual: can't be measured)
  *  pct       actual ÷ target, 0–100+ (rounded)
- *  expected  where a straight line would be by the end of today (this month only)
- *  projected the actual carried on at the same rate to the month's end (this month only)
+ *  expected  where the straight line was at the end of yesterday (this month only)
+ *  projected the actual carried on at the same rate to the month's end (this month, once a day is complete)
+ *  elapsed   days completed
  */
 export function targetPace({ amount, actual, month, today }) {
   const first = monthFirst(month);
   const days = daysInMonth(first);
   const thisMonth = String(today).slice(0, 7) === first.slice(0, 7);
   const past = !thisMonth && String(today) > first;
-  const elapsed = thisMonth ? Number(String(today).slice(8, 10)) : past ? days : 0;
+  const elapsed = thisMonth ? Math.max(0, Number(String(today).slice(8, 10)) - 1) : past ? days : 0;
   const out = { status: 'unknown', pct: null, expected: null, projected: null, elapsed, days };
   if (!(amount > 0)) return out;
   if (!thisMonth && !past) return { ...out, status: 'not_started', pct: actual === null || actual === undefined ? null : Math.round((actual / amount) * 100) };
@@ -96,29 +108,30 @@ export function targetPace({ amount, actual, month, today }) {
   out.pct = Math.round((actual / amount) * 100);
   if (thisMonth) {
     out.expected = Math.round((amount * elapsed) / days);
-    out.projected = Math.round((actual * days) / elapsed);
+    out.projected = elapsed > 0 ? Math.round((actual * days) / elapsed) : null;
   }
   if (actual >= amount) return { ...out, status: 'reached' };
   if (past) return { ...out, status: 'missed' };
+  if (elapsed < PACE_MIN_DAYS) return { ...out, status: 'too_early' };
   const ratio = out.expected > 0 ? actual / out.expected : 1;
   return { ...out, status: ratio >= 1 + PACE_BAND ? 'ahead' : ratio >= 1 - PACE_BAND ? 'on_pace' : 'behind' };
 }
 
 export const PACE_LABELS = Object.freeze({
-  reached: 'Reached', ahead: 'Ahead of pace', on_pace: 'On pace', behind: 'Behind pace', missed: 'Missed', not_started: 'Not started', unknown: 'Can’t tell',
+  reached: 'Reached', too_early: 'Too early to tell', ahead: 'Ahead of pace', on_pace: 'On pace', behind: 'Behind pace', missed: 'Missed', not_started: 'Not started', unknown: 'Can’t tell',
 });
 
 /**
  * The rules for a `target` step that hold in any arrival order (the sync `check`; only the step's own values): the
- * month is a 1st, the amount above 0, the currency three capital letters; a target's business, month and measure never
- * change once made (screens delete it and set a new one), so an update naming one is refused.
+ * month is a 1st, the amount above 0, the currency three capital letters; a target's business, month, measure and
+ * currency never change once made (screens delete it and set a new one), so an update naming one is refused.
  */
 export function checkTargetStep({ op, fields }) {
   if (op === 'delete' || !fields) return null;
   const has = (k) => Object.hasOwn(fields, k) && fields[k] !== null;
   if (op === 'update') {
-    for (const k of ['business_id', 'month', 'measure']) {
-      if (Object.hasOwn(fields, k)) return { code: 'invalid_value', reason: `${k}: a target’s business, month and measure don’t change — remove it and set a new one` };
+    for (const k of ['business_id', 'month', 'measure', 'currency']) {
+      if (Object.hasOwn(fields, k)) return { code: 'invalid_value', reason: `${k}: a target’s business, month, measure and currency don’t change — remove it and set a new one` };
     }
   }
   if (has('month') && !isMonthFirst(fields.month)) return { code: 'invalid_value', reason: 'month: the 1st of a month (YYYY-MM-01)' };

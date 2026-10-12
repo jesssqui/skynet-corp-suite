@@ -74,12 +74,20 @@ test('targets: each shows actual against target with the pace; priorities beside
   target(B.consulting, 'orders', 4);
   target(B.agency, 'new_clients', 2);
   target(B.agency, 'won_leads', 1);
-  // New clients for GWND this month: one started this month, one in September, one with no start date made today.
+  // New clients for GWND this month: a client whose first relationship with it started this month (counted once, with
+  // a second one this month too), one whose first started in September (a second this month doesn't make it new), and
+  // one with no start date (as an import makes them: not counted).
   const client = local('client', { name: 'Maple Dental', status: 'active' });
   const acc = local('account', { client_id: client, name: 'Maple Dental' });
   local('relationship', { account_id: acc, business_id: B.agency, kind: 'website', status: 'active', start_date: '2026-10-05' });
-  local('relationship', { account_id: acc, business_id: B.agency, kind: 'social', status: 'active', start_date: '2026-09-05' });
-  local('relationship', { account_id: acc, business_id: B.agency, kind: 'website', status: 'paused' });
+  local('relationship', { account_id: acc, business_id: B.agency, kind: 'social', status: 'active', start_date: '2026-10-09' });
+  const older = local('client', { name: 'Harbour Books', status: 'active' });
+  const olderAcc = local('account', { client_id: older, name: 'Harbour Books' });
+  local('relationship', { account_id: olderAcc, business_id: B.agency, kind: 'social', status: 'active', start_date: '2026-09-05' });
+  local('relationship', { account_id: olderAcc, business_id: B.agency, kind: 'website', status: 'active', start_date: '2026-10-03' });
+  const imported = local('client', { name: 'From the accounting list', status: 'active' });
+  const importedAcc = local('account', { client_id: imported, name: 'From the accounting list' });
+  local('relationship', { account_id: importedAcc, business_id: B.agency, kind: 'website', status: 'active' });
   local('lead', { name: 'Harbour Books', business_id: B.agency, kind: 'website', stage: 'won', won_client_id: client, closed_at: '2026-10-10T15:00:00.000Z' });
   local('lead', { name: 'Old win', business_id: B.agency, kind: 'website', stage: 'won', won_client_id: client, closed_at: '2026-09-10T15:00:00.000Z' });
   // A month priority of consulting (C4b), shown beside its targets.
@@ -90,13 +98,13 @@ test('targets: each shows actual against target with the pace; priorities beside
   const consulting = goals.businesses[1];
   const m = Object.fromEntries(consulting.targets.map((x) => [x.measure, x]));
   assert.deepEqual([m.sales.actual, m.sales.amount, m.sales.currency], [150000, 300000, 'CAD']);
-  // Oct 14 of 31 days: a straight line expects $1,354.84 → $1,355; $1,500 is ahead; carried on: $3,321.
-  assert.deepEqual([m.sales.pace.status, m.sales.pace.expected, m.sales.pace.projected, m.sales.pace.pct], ['ahead', 135484, 332143, 50]);
+  // Oct 14: 13 of 31 days complete — a straight line expects $1,258.06; $1,500 is ahead; carried on: $3,576.92.
+  assert.deepEqual([m.sales.pace.status, m.sales.pace.expected, m.sales.pace.projected, m.sales.pace.pct], ['ahead', 125806, 357692, 50]);
   assert.deepEqual([m.net_sales.actual, m.net_sales.reason, m.net_sales.pace.status], [null, 'total_only', 'unknown'], 'sales entered by hand only have a total');
   assert.deepEqual([m.orders.actual, m.orders.partial, m.orders.pace.status], [1, true, 'behind']);
   assert.deepEqual(consulting.priorities.map((p) => [p.title, p.target, p.progress]), [['Sign two retainers', 2, 1]]);
   const agency = Object.fromEntries(goals.businesses[0].targets.map((x) => [x.measure, x]));
-  assert.deepEqual([agency.new_clients.actual, agency.new_clients.pace.status], [2, 'reached'], 'the one started this month and the one made today');
+  assert.deepEqual([agency.new_clients.actual, agency.new_clients.pace.status], [1, 'on_pace'], 'Maple Dental only, once');
   assert.deepEqual([agency.won_leads.actual, agency.won_leads.pace.status], [1, 'reached']);
 
   // The same target set on another device offline: the one changed last is used, the other listed to remove.
@@ -116,6 +124,7 @@ test('targets: each shows actual against target with the pace; priorities beside
   assert.equal(apply('target', { business_id: B.consulting, month: '2026-10-02', measure: 'sales', amount: 1 }).code, 'invalid_value');
   assert.equal(apply('target', { business_id: B.consulting, month: '2026-10-01', measure: 'sales', amount: 0 }).code, 'invalid_value');
   assert.equal(apply('target', { measure: 'orders' }, { op: 'update', recordId: twin }).code, 'invalid_value');
+  assert.equal(apply('target', { currency: 'USD' }, { op: 'update', recordId: twin }).code, 'invalid_value', 'a different currency is a new target');
   assert.equal(apply('target', { amount: 450000 }, { op: 'update', recordId: twin }).status, 'applied');
   assert.ok((await call('GET', '/api/sync/info')).body.entities.some((e) => e.entity === 'target'), 'devices learn it (set offline)');
 });
@@ -211,7 +220,7 @@ test('web and social, consulting: active relationships, services a month, renewa
   assert.deepEqual(w.month.map((f) => [f.currency, f.total, f.totalOnly]), [['CAD', 120000, true]]);
   assert.deepEqual(w.costs.map((x) => [x.currency, x.monthlyCents]), [['CAD', 2400]]);
   const c2 = cardOf(body, 'consulting');
-  assert.deepEqual([c2.relationships.total, c2.pipeline.openCount], [0, 1]);
+  assert.deepEqual([c2.relationships.total, c2.pipeline.openCount, c2.invoicesConnected], [0, 1, false]);
 });
 
 test('Save Point Shop: eBay not set up, with a month entered by hand; clients: active, new this month, quiet', async (t) => {
@@ -252,9 +261,11 @@ test('all businesses: three months of sales beside recurring costs a month, per 
 });
 
 test('retail stores: each store’s sales and state, and open tickets per store once the helpdesk (D14) is there', async (t) => {
-  // A stand-in for D14's service (the seam: helpdesk.openTicketsByStore() → { store key: open tickets }).
-  const helpdesk = { name: 'helpdesk', createService: () => ({ openTicketsByStore: () => ({ 'tinsxpress.com': 3, 'elsewhere.example': 1 }) }) };
-  const { db, overview, cardOf } = await setup(t, { extraModules: [helpdesk] });
+  const { db, ctx, overview, cardOf } = await setup(t);
+  // D14's read (helpdesk.openTicketsByStore() → { <sales store key>: open tickets }), stood in on the real service when
+  // it is registered, else on its own — never a second module called "helpdesk".
+  const helpdesk = ctx.services.helpdesk ?? (ctx.services.helpdesk = {});
+  helpdesk.openTicketsByStore = () => ({ 'tinsxpress.com': 3, 'elsewhere.example': 1 });
   db.prepare(`INSERT INTO sales_stores (source, store, name, business_id, currency, time_zone, updated_at) VALUES ('woo', 'tinsxpress.com', 'TinsXpress', ?, 'CAD', 'America/Toronto', ?)`).run(B.retail, NOW);
   db.prepare(`INSERT INTO sales_daily (source, store, day, business_id, currency, orders, items, gross, discounts, refunds, net, tax, shipping, total, fetched_at)
     VALUES ('woo', 'tinsxpress.com', ?, ?, 'CAD', 3, 5, 9000, 0, 0, 9000, 1170, 1000, 11170, ?)`).run(TODAY, B.retail, NOW);
@@ -262,6 +273,10 @@ test('retail stores: each store’s sales and state, and open tickets per store 
   assert.equal(r.state, 'ok');
   assert.deepEqual(r.stores.map((s) => [s.name, s.state, s.tickets, s.today.map((f) => f.total)]), [['TinsXpress', 'removed', 3, [11170]]]);
   assert.deepEqual(r.support, { state: 'ok', total: 4, unmatched: 1 });
+  // Its failure says so on the support line; the stores still show.
+  helpdesk.openTicketsByStore = () => { throw new Error('mailbox gone'); };
+  const broken = cardOf(await overview(), 'retail');
+  assert.deepEqual([broken.state, broken.support.state, broken.stores[0].name, broken.stores[0].tickets], ['ok', 'error', 'TinsXpress', null]);
 });
 
 test('one card failing says so; the rest and the goals still come', async (t) => {

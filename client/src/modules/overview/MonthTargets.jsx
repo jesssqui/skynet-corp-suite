@@ -13,7 +13,7 @@ import { targetLine, measureValue } from './cards.js';
 import './overview.css';
 import { TargetBar } from './Cards.jsx';
 import {
-  MEASURE_OPTIONS, TARGET_CURRENCIES, targetValues, newTargetFields, targetEditChanges, businessTargets, freeMeasure,
+  measureOptionsFor, TARGET_CURRENCIES, targetValues, newTargetFields, targetEditChanges, businessTargets, freeMeasure,
 } from './targetForm.js';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
@@ -53,26 +53,34 @@ function TargetItem({ target, extras, ctx, onOpen }) {
   const fresh = server && server.amount === target.amount && (server.currency ?? 'CAD') === (target.currency ?? 'CAD');
   const line = targetLine({ ...target, currency: isMoneyMeasure(target.measure) ? (target.currency ?? 'CAD') : null, actual: fresh ? server.actual : null, partial: fresh && server.partial, reason: fresh ? server.reason : null, pace: fresh ? server.pace : null, extras: [] },
     { month: ctx.month.slice(0, 7), today: ctx.today });
+  const [confirming, setConfirming] = useState(false);
   const removeExtras = async () => {
     for (const x of extras) await store.remove('target', x.id);
+    setConfirming(false);
   };
   return (
     <li className="overview-target" data-target-id={target.id} data-measure={target.measure}>
-      <button type="button" className="overview-target-open" onClick={() => onOpen(target)} aria-label={`Change the target: ${line.label}`}>
+      <button type="button" className="overview-target-open" onClick={() => onOpen(target)} aria-label={`Change the target: ${line.label}, ${fresh ? line.value : measureValue(target.measure, target.amount, target.currency ?? 'CAD')}`}>
         <span className="overview-target-head">
           <span style={{ fontWeight: 600 }}>{line.label}</span>
           <span className="overview-figure" data-testid="target-value">{fresh ? line.value : `Target ${measureValue(target.measure, target.amount, target.currency ?? 'CAD')}`}</span>
         </span>
       </button>
       {fresh ? <TargetBar line={line} /> : null}
-      <span style={{ ...muted, fontSize: 'var(--text-xs)' }} data-testid="target-so-far">
+      <span style={{ ...muted, fontSize: 'var(--text-xs)' }} data-testid="target-so-far" aria-live="polite">
         {fresh ? [line.statusText, line.detail].filter(Boolean).join(' · ')
           : ctx.offline ? 'So far: needs a connection to the suite (sales are worked out there).' : ctx.loaded ? 'So far: saving…' : 'So far: …'}
       </span>
       {extras.length ? (
         <Notice tone="warn">
-          <span data-testid="target-twice">Set on two devices: the one changed last counts.</span>{' '}
-          <TextButton onClick={removeExtras}>Remove the extra</TextButton>
+          <span data-testid="target-twice">
+            Set on two devices: the one changed last counts ({extras.map((x) => measureValue(x.measure, x.amount, x.currency ?? 'CAD')).join(', ')} is the other).
+          </span>{' '}
+          {confirming ? (
+            <span role="group" aria-label="Remove the other target?">
+              Remove it? <TextButton onClick={removeExtras}>Remove</TextButton> <TextButton onClick={() => setConfirming(false)}>Keep both</TextButton>
+            </span>
+          ) : <TextButton onClick={() => setConfirming(true)}>Remove the extra…</TextButton>}
         </Notice>
       ) : null}
     </li>
@@ -88,16 +96,16 @@ export function BusinessTargets({ business }) {
   return (
     <div className="planner-month-targets" data-testid={`month-targets-${business.id}`} style={{ display: 'grid', gap: 'var(--space-2)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <h3 style={{ ...muted, fontWeight: 600, margin: 0 }}>Targets</h3>
-        <TextButton style={{ marginLeft: 'auto' }} onClick={() => setSheet({ initial: { measure: freeMeasure(current) } })} aria-label={`Add a target for ${business.name}`}>
+        <h3 style={{ ...muted, fontWeight: 600, margin: 0 }}>Targets · calendar month</h3>
+        <TextButton style={{ marginLeft: 'auto' }} onClick={() => setSheet({ initial: { measure: freeMeasure(current, business.id) } })} aria-label={`Add a target for ${business.name}`}>
           <Icon name="plus" size={14} />Target
         </TextButton>
       </div>
       {current.length ? (
-        <ul className="overview-targets">
+        <ul className="overview-targets" aria-label={`${business.name}: targets`}>
           {current.map((t) => <TargetItem key={t.id} target={t} extras={extras.get(t.id) ?? []} ctx={ctx} onOpen={(r) => setSheet({ record: r })} />)}
         </ul>
-      ) : <p style={{ ...muted, margin: 0 }}>No targets this month: sales, orders, new clients or leads won, measured by the suite.</p>}
+      ) : <p style={{ ...muted, margin: 0 }}>No targets this month: sales, orders, new clients or leads won, measured by the suite for the calendar month.</p>}
       {sheet ? <TargetSheet record={sheet.record} initial={sheet.initial} business={business} month={ctx.month} onClose={() => setSheet(null)} /> : null}
     </div>
   );
@@ -143,7 +151,7 @@ export function TargetSheet({ record = null, initial = {}, business, month, onCl
     >
       {live ? <RecordSync record={live} what="target" /> : null}
       {record ? null : (
-        <SelectField id="target-measure" label="What to measure" value={v.measure} onChange={set('measure')} error={problems.measure} options={MEASURE_OPTIONS} />
+        <SelectField id="target-measure" label="What to measure" value={v.measure} onChange={set('measure')} error={problems.measure} options={measureOptionsFor(business.id)} />
       )}
       <span style={muted}>{MEASURE_HELP[v.measure]}</span>
       <div style={{ display: 'grid', gap: 'var(--space-3)', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))' }}>
@@ -157,12 +165,15 @@ export function TargetSheet({ record = null, initial = {}, business, month, onCl
           autoFocus={!record}
           placeholder={money ? 'e.g. 12,000' : 'e.g. 5'}
         />
-        {money ? (
+        {money && !record ? (
           <SelectField id="target-currency" label="Currency" value={v.currency} onChange={set('currency')} options={TARGET_CURRENCIES.map((c) => ({ value: c, label: c }))} />
         ) : null}
       </div>
       <TextAreaField id="target-notes" label="Notes (optional)" value={v.notes} onChange={set('notes')} error={problems.notes} rows={2} />
-      <span style={{ ...muted, fontSize: 'var(--text-xs)' }}>For {business.name}, the calendar month. Saved on this device and sent when it can be.</span>
+      <span style={{ ...muted, fontSize: 'var(--text-xs)' }}>
+        For {business.name}, the calendar month (the 1st to the last day — not the plan’s Monday-to-Sunday weeks).
+        {record && money ? ` In ${v.currency}: another currency is a new target.` : ''} Saved on this device and sent when it can be.
+      </span>
     </FormSheet>
   );
 }

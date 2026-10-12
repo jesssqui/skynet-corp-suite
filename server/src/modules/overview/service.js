@@ -204,6 +204,9 @@ export function createOverviewService(ctx) {
       costs: once('costs', () => services.costs?.monthlyTotals?.() ?? null),
       lines: once('lines', () => services.wholesale.moneyLines(day)),
       quietClients: once('quiet', () => services.planner.quietClients(day)),
+      // The CRM's live relationships and leads, read once for the cards and the scorecard.
+      relationships: once('relationships', () => services.crm?.liveRelationships?.() ?? null),
+      leads: once('leads', () => services.crm?.liveLeads?.() ?? null),
       womState,
     };
   }

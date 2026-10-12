@@ -8,8 +8,9 @@
 //   net_sales    Σ `net` there — unknown (null, reason total_only) when any of those rows is total-only (entered by hand:
 //                only its total and orders are known; D13b's `totalOnly`).
 //   orders       Σ `orders` there (every currency); `partial` when a total-only row is in it (orders by hand are optional).
-//   new_clients  the business's relationships (any status, their client live) that started in the month: start_date,
-//                else the local day they were made.
+//   new_clients  clients (live) whose FIRST relationship with the business (any status) has its start_date in the
+//                month — each client once; relationships with no start_date don't count (C7's imports make none), so
+//                an import of an old client list doesn't count as a month of new clients.
 //   won_leads    the business's leads won in the month (stage won, closed_at's local month).
 import { localDate } from '@suite/shared/time';
 import { addMonthStarts } from '@suite/shared/planner';
@@ -20,6 +21,19 @@ export const isMonth = (m) => typeof m === 'string' && MONTH_RE.test(m);
 /** "YYYY-MM" n months from `month`. */
 export const shiftMonth = (month, n) => addMonthStarts(`${month}-01`, n).slice(0, 7);
 const localDayOf = (iso) => (iso ? localDate(new Date(iso)) : null);
+
+/** Clients whose first relationship with `businessId` (by start_date; none = not counted) started in `month`. */
+export function newClientsIn(relationships, businessId, month) {
+  const first = new Map();
+  for (const r of relationships) {
+    if (r.business_id !== businessId || !r.start_date) continue;
+    const cur = first.get(r.client_id);
+    if (!cur || r.start_date < cur) first.set(r.client_id, r.start_date);
+  }
+  let n = 0;
+  for (const d of first.values()) if (d.slice(0, 7) === month) n += 1;
+  return n;
+}
 
 export function createScorecard({ db, services }) {
   const q = {
@@ -64,10 +78,7 @@ export function createScorecard({ db, services }) {
       }
       case 'new_clients': {
         if (!ctx.relationships) return { actual: null, reason: 'not_available' };
-        return {
-          actual: ctx.relationships.filter((r) => r.business_id === t.business_id
-            && (r.start_date ?? localDayOf(r.created_at) ?? '').slice(0, 7) === month).length,
-        };
+        return { actual: newClientsIn(ctx.relationships, t.business_id, month) };
       }
       case 'won_leads': {
         if (!ctx.leads) return { actual: null, reason: 'not_available' };
@@ -91,8 +102,8 @@ export function createScorecard({ db, services }) {
     const need = new Set(current.map((t) => t.measure));
     const ctx = {
       sales: [...need].some((x) => ['sales', 'net_sales', 'orders'].includes(x)) ? salesOf(reads, m) : null,
-      relationships: need.has('new_clients') ? services.crm.liveRelationships() : null,
-      leads: need.has('won_leads') && services.crm.liveLeads ? services.crm.liveLeads() : null,
+      relationships: need.has('new_clients') ? reads.relationships() : null,
+      leads: need.has('won_leads') ? reads.leads() : null,
     };
     const byBusiness = new Map();
     const entry = (id) => {
