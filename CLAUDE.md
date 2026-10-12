@@ -2301,6 +2301,11 @@ its cards). Tests `server/test/campaigns.test.js`, `client/test/campaigns.test.j
   campaign counts its sub-campaigns), New campaign, Sub-campaign, Edit (rename, move, archive, delete), "Pipeline ›".
   Pipeline `?campaign=<id>` (a main campaign includes its sub-campaigns) or `none`; a lead made while a campaign is
   filtered starts in it. Lead page: Campaigns card (chips with ✕, "Add to a campaign"). All offline.
+- **Bulk changes (D8e)**: the Pipeline's **Select leads** turns cards into checkboxes (per-column "Select all N here", "Select
+  all N shown" for the current filters); the bar adds to / removes from a campaign and sets the source or owner on all
+  selected (`bulkJoin`/`bulkLeave`/`bulkSet` in `campaigns.js`, one `store` write per lead, progress and a report; offline).
+  A start-time backfill (`backfillEmailOutreach`, once, `crm_backfills`) puts imported leads that are in no campaign into
+  Email Outreach (leads imported before D8c).
 - Not built: picking campaigns in the new-lead sheet itself (the lead page does it), per-campaign targets/costs, campaigns
   on clients or quotes.
 

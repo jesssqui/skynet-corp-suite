@@ -15,6 +15,7 @@ export default {
     service.seedBusinesses();
     service.seedCampaigns(); // D8c
     service.backfillScrapedSource(); // D8d
+    service.backfillEmailOutreach(); // D8e
     service.imports.markInterrupted(); // an import cut off by a restart
   },
   // The CSV import sends the file's text as JSON (up to 5 MB of text): a larger body limit there.

@@ -132,3 +132,20 @@ test('two devices: a campaign deleted on one hides its sub-campaigns on the othe
 function dev(d) {
   return { create: (entity, fields) => d.engine.create(entity, fields), remove: (entity, id) => d.engine.remove(entity, id) };
 }
+
+test('D8e: bulk join / leave / set work through a fake store and report what happened', async () => {
+  const { bulkJoin, bulkLeave, bulkSet } = await import('../src/modules/crm/campaigns.js');
+  const memberships = [{ id: 'm1', lead_id: 'a', campaign_id: 'c1' }];
+  const calls = [];
+  const store = {
+    create: async (e, f) => { if (f.lead_id === 'bad') throw new Error('x'); calls.push(['create', e, f]); },
+    remove: async (e, id) => { calls.push(['remove', e, id]); },
+    update: async (e, id, f) => { calls.push(['update', id, f]); return id !== 'same'; },
+  };
+  const seen = [];
+  const j = await bulkJoin(store, memberships, ['a', 'b', 'bad'], 'c1', (n) => seen.push(n));
+  assert.deepEqual(j, { added: 1, already: 1, failed: 1 });
+  assert.deepEqual(seen, [1, 2, 3]);
+  assert.deepEqual(await bulkLeave(store, memberships, ['a', 'b'], 'c1'), { removed: 1, notIn: 1, failed: 0 });
+  assert.deepEqual(await bulkSet(store, ['a', 'same'], 'source', 'scraped'), { changed: 1, same: 1, failed: 0 });
+});

@@ -300,3 +300,22 @@ test('D8d: leads imported as "outreach" become "scraped" once; other leads are l
   assert.equal(crm.backfillScrapedSource(), 0);
   assert.equal(s.lead('Delhi Heating').source, 'outreach');
 });
+
+test('D8e: imported leads that are in no campaign join Email Outreach once', async (t) => {
+  const s = await setup(t);
+  await s.commit(csv([FRESH, SENT]));
+  const { crm } = s.ctx.services;
+  const inEmail = () => s.ctx.db.prepare('SELECT lead_id FROM crm_lead_campaigns WHERE deleted_at IS NULL').all().map((r) => r.lead_id);
+  // As before campaigns: forget the memberships (raw SQL is fine on a test copy only after removing the guard — use sync deletes).
+  for (const m of s.ctx.db.prepare('SELECT id FROM crm_lead_campaigns WHERE deleted_at IS NULL').all()) {
+    s.ctx.services.sync.applyLocal({ actor: 'owner', entity: 'lead_campaign', op: 'delete', recordId: m.id });
+  }
+  assert.equal(inEmail().length, 0);
+  const byHand = s.ctx.services.sync.applyLocal({ actor: 'owner', entity: 'lead', op: 'create', fields: { name: 'Hand Made', business_id: AGENCY, stage: 'lead' } });
+  assert.equal(byHand.status, 'applied');
+  s.ctx.db.prepare('DELETE FROM crm_backfills').run();
+  assert.equal(crm.backfillEmailOutreach(), 2);
+  assert.equal(inEmail().length, 2);
+  assert.ok(!inEmail().includes(s.lead('Hand Made').id));
+  assert.equal(crm.backfillEmailOutreach(), 0);
+});

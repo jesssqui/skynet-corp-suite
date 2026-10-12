@@ -13,9 +13,10 @@ import { useToday } from '../planner/parts.jsx';
 import { usePipelineData } from './data.js';
 import { BusinessChip, Badges, TextButton } from './parts.jsx';
 import { pickableBusinesses, KIND_LABELS } from './logic.js';
-import { campaignOptions, campaignScope, inCampaign, joinCampaign, leadCampaignList } from './campaigns.js';
+import { campaignOptions, campaignScope, inCampaign, joinCampaign, leadCampaignList, bulkJoin, bulkLeave, bulkSet } from './campaigns.js';
+import { LEAD_SOURCES } from '@suite/shared/leads';
 import { store } from '../../sync/index.js';
-import { STAGE_LABELS, LOST_LABELS, filterLeads, pipelineView, valueText, leadValueText, daysInStage, nextStepOf } from './leads.js';
+import { SOURCE_LABELS, STAGE_LABELS, LOST_LABELS, filterLeads, pipelineView, valueText, leadValueText, daysInStage, nextStepOf } from './leads.js';
 import { LeadForm } from './leadForms.jsx';
 import CrmTabs from './CrmTabs.jsx';
 import './crm.css';
@@ -31,12 +32,23 @@ function stageAge(days) {
   return days === 1 ? '1 day' : `${days} days`;
 }
 
-function LeadCard({ lead, business, client, next, today, campaigns = [] }) {
+/** In select mode a card is a checkbox row, not a link. */
+function SelectableCard({ children, className, lead, selected, onToggle }) {
+  return (
+    <label className={className} style={{ cursor: 'pointer', outline: selected ? '2px solid var(--accent, #2563eb)' : 'none' }}>
+      <input type="checkbox" checked={selected} onChange={() => onToggle(lead.id)} aria-label={`Select ${lead.name}`} />
+      {children}
+    </label>
+  );
+}
+
+function LeadCard({ lead, business, client, next, today, campaigns = [], selecting = false, selected = false, onToggle = null }) {
   const open = isOpenLead(lead);
   const value = leadValueText(lead);
+  const Wrap = selecting ? SelectableCard : Link;
   return (
     <li data-lead-id={lead.id}>
-      <Link to={`/crm/leads/${lead.id}`} className="pipeline-card">
+      <Wrap className="pipeline-card" {...(selecting ? { lead, selected, onToggle } : { to: `/crm/leads/${lead.id}` })}>
         <span style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <strong style={{ overflowWrap: 'anywhere' }}>{lead.name}</strong>
           {value ? <span style={{ ...muted, fontWeight: 600 }}>{value}</span> : null}
@@ -67,12 +79,12 @@ function LeadCard({ lead, business, client, next, today, campaigns = [] }) {
           </span>
         ) : null}
         <Badges record={lead} />
-      </Link>
+      </Wrap>
     </li>
   );
 }
 
-function Column({ stage, leads, active, head, data, today }) {
+function Column({ stage, leads, active, head, data, today, selecting, selected, onToggle, onSelectAll }) {
   const [shown, setShown] = useState(PAGE);
   return (
     <section className="pipeline-col" data-active={active ? 'true' : 'false'} data-testid={`pipeline-${stage}`} aria-label={STAGE_LABELS[stage]}>
@@ -81,6 +93,11 @@ function Column({ stage, leads, active, head, data, today }) {
           <h2 style={h2}>{head.title}</h2>
           <span style={muted} data-testid={`pipeline-${stage}-total`}>{head.figure}</span>
         </div>
+        {selecting && leads.length ? (
+          <div style={{ marginBottom: 'var(--space-2)' }}>
+            <TextButton onClick={() => onSelectAll(leads.map((l) => l.id))}>Select all {leads.length} here</TextButton>
+          </div>
+        ) : null}
         {leads.length ? (
           <ul className="pipeline-list">
             {leads.slice(0, shown).map((l) => (
@@ -92,6 +109,9 @@ function Column({ stage, leads, active, head, data, today }) {
                 next={nextStepOf(data.tasksByLead.get(l.id))}
                 campaigns={leadCampaignList(data.campaigns, data.campaignsByLead.get(l.id))}
                 today={today}
+                selecting={selecting}
+                selected={selected.has(l.id)}
+                onToggle={onToggle}
               />
             ))}
           </ul>
@@ -119,6 +139,14 @@ export default function PipelinePage() {
   const flaggedOnly = params.get('flag') === '1';
   const campaign = params.get('campaign') ?? ''; // a campaign id (with its sub-campaigns), or 'none'
   const [sheet, setSheet] = useState(null);
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
+  const [busy, setBusy] = useState(null); // { label, done, total } while a bulk change runs
+  const [report, setReport] = useState('');
+  const [pickCampaign, setPickCampaign] = useState('');
+  const toggle = (id) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const addAll = (ids) => setSelected((s) => new Set([...s, ...ids]));
+  const stopSelecting = () => { setSelecting(false); setSelected(new Set()); setReport(''); };
   const navigate = useNavigate();
   const setParam = (key, value, fallback = '') => {
     const next = new URLSearchParams(window.location.search);
@@ -134,11 +162,25 @@ export default function PipelinePage() {
     const hasNext = (l) => Boolean(nextStepOf(data.tasksByLead.get(l.id)));
     const flagged = filtered.filter((l) => isOpenLead(l) && !hasNext(l));
     const shownLeads = flaggedOnly ? flagged : filtered;
-    return { ...pipelineView(shownLeads, { today }), flagged: flagged.length, total: filtered.length };
+    const pv = pipelineView(shownLeads, { today });
+    const shownIds = [...OPEN_LEAD_STAGES.flatMap((s) => pv.columns[s]), ...pv.won, ...pv.lost].map((l) => l.id);
+    return { ...pv, flagged: flagged.length, total: filtered.length, shownIds };
   }, [data, business, q, owner, flaggedOnly, today, campaign]);
 
   const businessOptions = useMemo(() => pickableBusinesses(data?.businesses ?? [], business || null), [data, business]);
   const close = () => setSheet(null);
+  const ids = [...selected];
+  const run = async (label, fn, summarise) => {
+    if (busy || !ids.length) return;
+    setBusy({ label, done: 0, total: ids.length });
+    setReport('');
+    try {
+      const r = await fn((done) => setBusy({ label, done, total: ids.length }));
+      setReport(`${summarise(r)}${r.failed ? ` ${r.failed} could not be changed.` : ''}`);
+      if (!r.failed) setSelected(new Set());
+    } finally { setBusy(null); }
+  };
+  const campaignName = (id) => campaignOptions(data?.campaigns ?? [], { keep: id }).find((o) => o.value === id)?.label ?? 'the campaign';
 
   const heads = view ? {
     ...Object.fromEntries(OPEN_LEAD_STAGES.map((s) => {
@@ -165,6 +207,9 @@ export default function PipelinePage() {
             <Link to="/crm/import-leads" className="crm-link-button" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               <Icon name="upload" size={16} />Import leads
             </Link>
+            <Button disabled={!data} onClick={() => (selecting ? stopSelecting() : setSelecting(true))}>
+              {selecting ? 'Done selecting' : 'Select leads'}
+            </Button>
             <Button variant="primary" disabled={!data} onClick={() => setSheet({ initial: business ? { business_id: business } : {} })}>
               <Icon name="plus" size={18} />New lead
             </Button>
@@ -199,6 +244,54 @@ export default function PipelinePage() {
         <div className="pipeline-stage-switch">
           <Segmented label="Stage" value={stage} onChange={(v) => setParam('stage', v, 'lead')} options={switchOptions} />
         </div>
+        {selecting && view ? (
+          <Card>
+            <div style={{ display: 'grid', gap: 'var(--space-3)' }} data-testid="bulk-bar">
+              <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap', alignItems: 'center' }}>
+                <strong data-testid="bulk-count">{ids.length} selected</strong>
+                <TextButton onClick={() => addAll(view.shownIds)}>Select all {view.shownIds.length} shown</TextButton>
+                {ids.length ? <TextButton onClick={() => setSelected(new Set())}>Clear</TextButton> : null}
+              </div>
+              <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <SelectField
+                  id="bulk-campaign"
+                  label="Campaign"
+                  value={pickCampaign}
+                  onChange={setPickCampaign}
+                  options={[{ value: '', label: 'Pick a campaign…' }, ...campaignOptions(data.campaigns)]}
+                />
+                <Button
+                  disabled={!ids.length || !pickCampaign || Boolean(busy)}
+                  onClick={() => run('Adding', (p) => bulkJoin(store, data.memberships, ids, pickCampaign, p),
+                    (r) => `Added ${r.added} to ${campaignName(pickCampaign)}${r.already ? ` (${r.already} already in it)` : ''}.`)}
+                >Add to campaign</Button>
+                <Button
+                  disabled={!ids.length || !pickCampaign || Boolean(busy)}
+                  onClick={() => run('Removing', (p) => bulkLeave(store, data.memberships, ids, pickCampaign, p),
+                    (r) => `Removed ${r.removed} from ${campaignName(pickCampaign)}${r.notIn ? ` (${r.notIn} weren’t in it)` : ''}.`)}
+                >Remove from campaign</Button>
+              </div>
+              <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <SelectField
+                  id="bulk-source"
+                  label="Source"
+                  value=""
+                  onChange={(v) => v && run('Changing source', (p) => bulkSet(store, ids, 'source', v, p), (r) => `Source set to “${SOURCE_LABELS[v]}” on ${r.changed} lead${r.changed === 1 ? '' : 's'}${r.same ? ` (${r.same} already had it)` : ''}.`)}
+                  options={[{ value: '', label: 'Set the source…' }, ...LEAD_SOURCES.map((s) => ({ value: s, label: SOURCE_LABELS[s] ?? s }))]}
+                />
+                <SelectField
+                  id="bulk-owner"
+                  label="Whose"
+                  value=""
+                  onChange={(v) => v && run('Changing owner', (p) => bulkSet(store, ids, 'owner', v, p), (r) => `Owner changed on ${r.changed} lead${r.changed === 1 ? '' : 's'}${r.same ? ` (${r.same} already had it)` : ''}.`)}
+                  options={[{ value: '', label: 'Hand over to…' }, { value: me, label: 'Me' }, { value: me === 'owner' ? 'partner' : 'owner', label: 'My partner' }, { value: 'shared', label: 'Shared' }]}
+                />
+              </div>
+              {busy ? <p style={{ ...muted, margin: 0 }} role="status">{busy.label}… {busy.done} of {busy.total}</p> : null}
+              {report ? <p style={{ margin: 0 }} role="status" data-testid="bulk-report">{report}</p> : null}
+            </div>
+          </Card>
+        ) : null}
         {view?.flagged ? (
           <Notice tone="warn">
             <span data-testid="pipeline-flagged">
@@ -223,12 +316,12 @@ export default function PipelinePage() {
           <>
             <div className="pipeline-open">
               {OPEN_LEAD_STAGES.map((s) => (
-                <Column key={s} stage={s} leads={view.columns[s]} active={stage === s} head={heads[s]} data={data} today={today} />
+                <Column key={s} stage={s} leads={view.columns[s]} active={stage === s} head={heads[s]} data={data} today={today} selecting={selecting} selected={selected} onToggle={toggle} onSelectAll={addAll} />
               ))}
             </div>
             <div className="pipeline-closed">
-              <Column stage="won" leads={view.won} active={stage === 'won'} head={heads.won} data={data} today={today} />
-              <Column stage="lost" leads={view.lost} active={stage === 'lost'} head={heads.lost} data={data} today={today} />
+              <Column stage="won" leads={view.won} active={stage === 'won'} head={heads.won} data={data} today={today} selecting={selecting} selected={selected} onToggle={toggle} onSelectAll={addAll} />
+              <Column stage="lost" leads={view.lost} active={stage === 'lost'} head={heads.lost} data={data} today={today} selecting={selecting} selected={selected} onToggle={toggle} onSelectAll={addAll} />
             </div>
           </>
         )}

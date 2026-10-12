@@ -5,7 +5,7 @@ import { isId } from '@suite/shared/ids';
 import { localDate } from '@suite/shared/time';
 import { normalizePhone } from '@suite/shared/normalize';
 import { OUR_BUSINESSES, consentStatus } from '@suite/shared/crm';
-import { CAMPAIGN_SEEDS } from '@suite/shared/campaigns';
+import { CAMPAIGN_SEEDS, CAMPAIGN_IDS } from '@suite/shared/campaigns';
 import { CRM_ENTITIES, CRM_ENTITY } from './entities.js';
 import { createImportService } from './import.js';
 import { createLeadImportService } from './leadImport.js';
@@ -168,6 +168,29 @@ export function createCrmService({ db, services, log }) {
     }
     db.prepare('INSERT INTO crm_backfills (name, done_at) VALUES (?, ?)').run(NAME, new Date().toISOString());
     if (n) log?.info(`marked ${n} imported leads as scraped from the internet`);
+    return n;
+  }
+
+  /**
+   * D8e: leads imported before campaigns existed (D8b, before D8c) are in no campaign. Once (crm_backfills),
+   * through applyLocal: each lead in crm_lead_import_rows that is live and has no campaign at all joins
+   * Email Outreach (when that campaign is live). Later changes by people are never touched.
+   */
+  function backfillEmailOutreach() {
+    const NAME = 'lead-campaign-email-outreach';
+    if (db.prepare('SELECT 1 FROM crm_backfills WHERE name = ?').get(NAME)) return 0;
+    const campaignId = CAMPAIGN_IDS.email_outreach;
+    if (!db.prepare('SELECT 1 FROM crm_campaigns WHERE id = ? AND deleted_at IS NULL').get(campaignId)) return 0; // try again at the next start
+    const rows = db.prepare(`SELECT l.id FROM crm_lead_import_rows r JOIN crm_leads l ON l.id = r.lead_id
+      WHERE l.deleted_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM crm_lead_campaigns m WHERE m.lead_id = l.id AND m.deleted_at IS NULL)`).all();
+    let n = 0;
+    for (const { id } of rows) {
+      const r = sync.applyLocal({ entity: 'lead_campaign', op: 'create', fields: { lead_id: id, campaign_id: campaignId } });
+      if (r.status === 'applied') n++;
+    }
+    db.prepare('INSERT INTO crm_backfills (name, done_at) VALUES (?, ?)').run(NAME, new Date().toISOString());
+    if (n) log?.info(`put ${n} imported leads in Email Outreach`);
     return n;
   }
 
@@ -503,6 +526,7 @@ export function createCrmService({ db, services, log }) {
     seedBusinesses,
     seedCampaigns,
     backfillScrapedSource,
+    backfillEmailOutreach,
     /** D8c: is this campaign live (and not under a deleted one)? */
     liveCampaign: (id) => {
       const c = campaignRow.get(id);
