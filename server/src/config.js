@@ -139,6 +139,20 @@ export function loadConfig(env = process.env) {
       publicUrl: publicUrl(env.SUITE_URL),
       // The zone of tasks' due times; timed events are written in it (with a VTIMEZONE).
       timeZone: timeZone(env),
+      // C6b: meetings read from each person's iCloud calendars (CalDAV, read-only).
+      apple: {
+        // The key that encrypts each person's app-specific password in the database — a file in the data
+        // folder, like D16's (never in the database or the backups). Made on first use.
+        keyFile: path.resolve(env.CALDAV_KEY_FILE || path.join(dataDir, 'calendar-secret.key')),
+        // iCloud's CalDAV address. Not an env setting: tests pass their fake's address through loadConfig's overrides only.
+        baseUrl: 'https://caldav.icloud.com',
+        // Each call gives up after this long.
+        timeoutMs: int(env.CALDAV_TIMEOUT_MS, 20_000, 'CALDAV_TIMEOUT_MS'),
+        // How often each person's calendars are read again (minutes).
+        everyMinutes: Math.max(5, int(env.CALDAV_PULL_EVERY_MIN, 15, 'CALDAV_PULL_EVERY_MIN')),
+        // The pull loop (one look a minute; reads only when due): on by default in production; Pull now works either way.
+        scheduled: bool(env.CALDAV_PULL_ENABLED, production),
+      },
     },
     stockroom: {
       // D16: the key that encrypts Stockroom's read key (its secret) in the database — a file in the
