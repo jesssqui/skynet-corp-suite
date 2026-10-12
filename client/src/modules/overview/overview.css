@@ -145,3 +145,176 @@ a.overview-item:hover .overview-item-text {
   font-weight: 600;
   min-height: var(--tap);
 }
+
+/* D15: the business cards and the goals scorecard, below "To deal with". A grid of cards (two or three across on a
+   Mac; the all-businesses card the whole width); one column on a phone. Rows: a label left, the figure right, its
+   detail under it — they wrap rather than scroll at 320 px. */
+.overview-cards {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  align-items: start;
+}
+.overview-card-wide {
+  grid-column: 1 / -1;
+}
+.overview-card {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.overview-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.overview-card-head h2 {
+  font-size: var(--text-md);
+  font-weight: 650;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.overview-rows {
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+.overview-rows > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.overview-rows > div:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.overview-rows dt {
+  font-size: var(--text-sm);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.overview-rows dd {
+  margin: 0;
+  display: grid;
+  justify-items: end;
+  text-align: right;
+  min-width: 0;
+  max-width: 100%;
+}
+.overview-money-row {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: minmax(0, 1.3fr) repeat(4, minmax(0, 1fr));
+  align-items: start;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+.overview-money-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.overview-money-cell {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.overview-money-label {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+@media (max-width: 700px) {
+  .overview-money-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .overview-money-name {
+    grid-column: 1 / -1;
+    font-weight: 650;
+  }
+}
+.overview-goals {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+}
+.overview-goal-business {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+.overview-targets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+.overview-target {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.overview-target-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-size: var(--text-sm);
+  min-width: 0;
+}
+.overview-target-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.overview-target-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  border-radius: 4px;
+}
+.overview-target-fill.good { background: var(--ok); }
+.overview-target-fill.warn { background: var(--warn); }
+.overview-target-fill.danger { background: var(--danger); }
+.overview-target-expected {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+  opacity: 0.55;
+}
+.overview-target-open {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-height: 32px;
+  width: 100%;
+}
+.overview-target-open:hover .overview-target-head span:first-child {
+  text-decoration: underline;
+}

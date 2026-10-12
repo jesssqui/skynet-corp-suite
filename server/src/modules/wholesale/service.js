@@ -1434,10 +1434,32 @@ export function createWholesaleService(ctx) {
   function moneyLines(today) {
     const overdue = [];
     const credit = [];
+    // D15 (the overview's wholesale card), in the same pass: what is owed altogether, the payments received this month
+    // (their local Toronto day, as the sales days) and the linked regulars gone quiet (D3's rhythm — the flag on the
+    // client list; their clients' status is checked after the pass).
+    const totals = { owingCents: 0, owingCustomers: 0, paidThisMonthCents: 0, paymentsThisMonth: 0, quietRegulars: 0 };
+    const monthFirst = `${String(today).slice(0, 7)}-01`;
+    const quietClients = [];
     for (const c of allHeldCustomers.all()) {
       const orders = q.ordersFull.all(c.uid);
       const money = q.moneyOf.all(c.uid);
       const owing = owingByOrder(orders, money);
+      if (owing.balance_cents > 0) {
+        totals.owingCents += owing.balance_cents;
+        totals.owingCustomers += 1;
+      }
+      for (const m of money) {
+        if (m.kind !== 'payment' || m.removed || !m.at) continue;
+        const day = localDayOf(m.at);
+        if (day >= monthFirst && day <= today) {
+          totals.paidThisMonthCents += m.amount_cents ?? 0;
+          totals.paymentsThisMonth += 1;
+        }
+      }
+      if (c.account_id && c.client_id) {
+        const r = orderRhythm(orders);
+        if (r.regular && r.quiet_from && r.quiet_from <= today) quietClients.push(c.client_id);
+      }
       const late = overdueOrders(owing, today);
       if (late.length) {
         overdue.push({
@@ -1458,7 +1480,23 @@ export function createWholesaleService(ctx) {
     const byName = (a, b) => String(a.name).localeCompare(String(b.name));
     overdue.sort((a, b) => b.overdueCents - a.overdueCents || byName(a, b));
     credit.sort((a, b) => b.unusedCents - a.unusedCents || byName(a, b));
-    return { overdue, credit };
+    // Never for a closed client (as the flag and the check-ins).
+    if (quietClients.length) {
+      const clients = crm.clientNames(quietClients);
+      totals.quietRegulars = quietClients.filter((id) => clients.get(id)?.status === 'active').length;
+    }
+    return { overdue, credit, totals };
+  }
+  /**
+   * D15 (the overview's wholesale card): orders packed in the Order Manager and not shipped yet (active, not deleted,
+   * packing state "packed" as it last said) — every customer's, linked or not. → { orders, totalCents, oldestPackedAt }
+   */
+  const packedQuery = db.prepare(`SELECT count(*) AS n, COALESCE(sum(total_cents), 0) AS cents,
+      min(json_extract(snapshot, '$.packing.packed_at')) AS oldest
+    FROM wholesale_held_orders WHERE deleted = 0 AND status = 'active' AND json_extract(snapshot, '$.packing.state') = 'packed'`);
+  function readyToShip() {
+    const r = packedQuery.get();
+    return { orders: r.n, totalCents: r.cents, oldestPackedAt: r.oldest ?? null };
   }
   const overdueBalances = (today) => moneyLines(today).overdue;
   const paymentsWithoutOrder = (today) => moneyLines(today).credit;
@@ -1489,7 +1527,7 @@ export function createWholesaleService(ctx) {
   return {
     receive, precheck, applyEvents, reconcile, reconcileAll, checkRestore, checkCardVersion, project, describe, status, startReconciler,
     /** D11: wholesale as a sales source (sales.js): startSales() at start; sales.flush() writes marked days. */
-    startSales, sales, moneyLines, overdueBalances, paymentsWithoutOrder, unmatchedState,
+    startSales, sales, moneyLines, overdueBalances, paymentsWithoutOrder, unmatchedState, readyToShip,
     /** D3: a customer's money owing as the Order Manager's Balances page works it out (figures.js owingByOrder). */
     owingOf: (uid) => owingByOrder(q.ordersFull.all(uid), q.moneyOf.all(uid)),
     /** Latest Order Manager order time per client (Map client_id -> at), for "last activity" elsewhere (planner). */

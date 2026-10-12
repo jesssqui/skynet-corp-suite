@@ -21,7 +21,8 @@
     "./ebay": "./ebay.js",
     "./files": "./files.js",
     "./playbooks": "./playbooks.js",
-    "./billing": "./billing.js"
+    "./billing": "./billing.js",
+    "./targets": "./targets.js"
   },
   "scripts": {
     "test": "node --test \"test/*.test.js\""
