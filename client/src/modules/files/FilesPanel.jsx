@@ -304,7 +304,7 @@ export function FilesPanel({ owner, items, showWhere = false, accountsById = new
       <p style={{ ...muted, margin: 0 }}>
         {offline
           ? 'Uploading and opening files need a connection. Links and password pointers can be added now.'
-          : `Drop files here or use Upload: ${ALLOWED_TEXT}${usage ? `, up to ${sizeText(usage.maxFileBytes)} each` : ''}.`}
+          : `Drop files here or use Upload: ${ALLOWED_TEXT}${usage ? `, up to ${sizeText(usage.maxFileBytes)} each (${sizeText(usage.usedBytes)} of ${sizeText(usage.maxTotalBytes)} used)` : ''}.`}
       </p>
       {adding ? <NewEntry key={adding} kind={adding} owner={owner} onDone={() => setAdding(null)} /> : null}
       {uploads.length ? (

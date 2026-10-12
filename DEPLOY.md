@@ -595,6 +595,29 @@ Then check once:
   area (kept across restores) at start, and the last unmatched e-Transfer count is kept; sales entered by hand roll back
   with the backup (like the rest of the data).
 
+## 14. Files on clients, accounts and tasks (D10)
+
+Nothing to set up: the Files tab works after the update. Uploads, links and password pointers are on each client's
+page (**Files** card, and **Files (N)** under each account → the Files tab with a tab per account) and in each task's
+sheet. Links and password pointers can be added offline; **uploading and opening uploads need a connection** (the tab
+says so). A password pointer says *where* a password is (the password manager and the item's name), never the password.
+
+**Files and backup size.** Uploaded files are kept **inside the database**, so every nightly backup holds all of them and
+a restore brings them back together with their records (no second folder to back up or keep in step). The price: each
+backup is as big as the database *with* its files, and each backup folder keeps `BACKUP_KEEP_DAYS` (30) of them. Limits
+(in `.env`, then `docker compose up -d`): `FILES_MAX_MB` (25) per file and `FILES_MAX_TOTAL_MB` (1024) for all files
+together — so the off-machine folder needs room for up to about 30 GB of backups once 1 GB of files is reached. Every
+Files tab shows the space used ("120 MB of 1.0 GB used"); `ls -lh "<your SUITE_OFFSITE_DIR>"` shows the backups' size.
+Lower `BACKUP_KEEP_DAYS` or the file limit if the off-machine folder gets tight. A deleted file's contents are kept `FILES_PURGE_DAYS` (30) more days, then removed; the space is reused by
+later uploads (the database file itself doesn't shrink).
+
+**Restore drill (add to step 5 b):** before the backup, upload a small PDF to a test client's Files tab; after the
+restore, open that client's Files tab and download it: the same file.
+
+**On an iPhone home-screen app**: *Download* saves a file through iOS's download sheet; *View* shows an image inside the
+app; *Open* (a PDF) opens a new browser tab, which on some iOS versions doesn't share the app's sign-in — sign in there
+once, or use *Download*.
+
 ## Troubleshooting
 
 Offline:
