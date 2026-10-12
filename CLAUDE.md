@@ -2107,7 +2107,7 @@ planner's Today, Tasks, task sheet and inbox. Tests `server/test/leads.test.js` 
 **Record types** (synced, UUIDv7, `created_*`/`updated_*`, `flagged`; ⇧ parent, → plain ref, * required):
 - `lead` (`crm_leads`; create/update/delete — delete is for mistakes, a lead that went nowhere is **lost**): name* (their
   business or the person), contact_name, email (format email), phone (format phone), source (`LEAD_SOURCES`: referral,
-  website, social, inbox, event, outreach, cross_sell, other), business_id*⇧ (one of ours — never deleted, so a lead is
+  website, social, inbox, event, outreach, cross_sell, other, scraped), business_id*⇧ (one of ours — never deleted, so a lead is
   never hidden), kind (a relationship kind: what we'd do), stage* (`lead|talking|quoted|won|lost`), lost_reason
   (`LOST_REASONS`: price, timing, went_elsewhere, no_reply, not_a_fit, other) + lost_note, value_cents + value_period
   (`once|monthly|quarterly|yearly`) + currency (null = CAD), owner (`OWNERS`; null reads as shared), notes,
@@ -2267,7 +2267,7 @@ outreach CSV (the Great White North export: `company_name` is the one required c
   { batchId, text, fileName? }` → 201 `{ batch }` (done synchronously, chunks of 100, each row in a savepoint), or 200 with the
   existing batch for the same id and file (a retry never imports twice; another file under that id → 409 `batch_mismatch`).
   ≤ 2,000 rows (413 `too_many_rows`), ≤ 5 MB. Body limit 8 MB on `/leads/import`.
-- **Mapping (decisions)**: every row → Great White North Design, kind `website`, source `outreach`, owner = the importer, stage
+- **Mapping (decisions)**: every row → Great White North Design, kind `website`, source `scraped` ("Scraped from the internet"; D8d — leads imported earlier as `outreach` were switched once at start by `backfillScrapedSource`, remembered in `crm_backfills`, only leads in `crm_lead_import_rows` still saying `outreach`), owner = the importer, stage
   `lead` — even if already emailed (the email is kept as an `email` timeline entry dated from the file). Rows the export
   excluded (`outreach_bucket` / `do_not_email` "excluded") come in as **lost / not a fit** with a note and a `stage` entry.
   Value = `estimated_value` × 100, period `once`. Research, angle, source, offer, priority, "consent not cleared" (CASL) and
@@ -2301,6 +2301,12 @@ its cards). Tests `server/test/campaigns.test.js`, `client/test/campaigns.test.j
   campaign counts its sub-campaigns), New campaign, Sub-campaign, Edit (rename, move, archive, delete), "Pipeline ›".
   Pipeline `?campaign=<id>` (a main campaign includes its sub-campaigns) or `none`; a lead made while a campaign is
   filtered starts in it. Lead page: Campaigns card (chips with ✕, "Add to a campaign"). All offline.
+- **Bulk changes (D8e)**: the Pipeline's **Select leads** turns cards into checkboxes (per-column "Select all N here", "Select
+  all N shown" for the current filters); the bar adds to / removes from a campaign and sets the source or owner on all
+  selected (`bulkJoin`/`bulkLeave`/`bulkSet` in `campaigns.js`, one `store` write per lead, progress and a report; offline).
+  A start-time backfill (`backfillEmailOutreach`, once, `crm_backfills`) puts imported leads that are in no campaign into
+  Email Outreach (leads imported before D8c).
+- **Contacted (D8f)**: the Pipeline reads `lead_activity` too; a lead with an email, call or meeting entry shows a "Contacted <day>" chip and the Contacted filter (`?contacted=yes|no`) uses it (`lastContactByLead` in `leads.js`). The leads import already writes an "Intro email sent" entry for rows the export says were contacted.
 - Not built: picking campaigns in the new-lead sheet itself (the lead page does it), per-campaign targets/costs, campaigns
   on clients or quotes.
 

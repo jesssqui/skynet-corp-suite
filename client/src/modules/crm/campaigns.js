@@ -69,6 +69,39 @@ export async function joinCampaign(store, memberships, leadId, campaignId) {
   return true;
 }
 
+/** Add many leads to a campaign. Returns { added, already, failed }; stops nothing on one failure. */
+export async function bulkJoin(store, memberships, leadIds, campaignId, onProgress = null) {
+  const out = { added: 0, already: 0, failed: 0 };
+  let done = 0;
+  for (const id of leadIds) {
+    try { (await joinCampaign(store, memberships, id, campaignId)) ? out.added++ : out.already++; } catch { out.failed++; }
+    onProgress?.(++done);
+  }
+  return out;
+}
+
+/** Take many leads out of a campaign. Returns { removed, notIn, failed }. */
+export async function bulkLeave(store, memberships, leadIds, campaignId, onProgress = null) {
+  const out = { removed: 0, notIn: 0, failed: 0 };
+  let done = 0;
+  for (const id of leadIds) {
+    try { (await leaveCampaign(store, memberships, id, campaignId)) ? out.removed++ : out.notIn++; } catch { out.failed++; }
+    onProgress?.(++done);
+  }
+  return out;
+}
+
+/** Change one field (source or owner) on many leads, from each lead's latest copy. Returns { changed, same, failed }. */
+export async function bulkSet(store, leadIds, field, value, onProgress = null) {
+  const out = { changed: 0, same: 0, failed: 0 };
+  let done = 0;
+  for (const id of leadIds) {
+    try { (await store.update('lead', id, { [field]: value })) ? out.changed++ : out.same++; } catch { out.failed++; }
+    onProgress?.(++done);
+  }
+  return out;
+}
+
 /** Take a lead out of a campaign (every membership record of the pair, in case two devices both added it). */
 export async function leaveCampaign(store, memberships, leadId, campaignId) {
   const rows = membershipFor(memberships, leadId, campaignId);
