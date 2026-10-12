@@ -9,7 +9,7 @@ import { SyncBadges } from '../../sync/components.jsx';
 import { BusinessChip, useAction } from '../crm/parts.jsx';
 import { captureFields, saveCapture, dueLabel, dueState, formatMinutes, isTop, ownerLabel } from './logic.js';
 import { isPhone, keepFinished } from './prefs.js';
-import { ticketPathIn } from '../helpdesk/logic.js';
+import { ticketPathIn } from './links.js';
 import './planner.css';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };

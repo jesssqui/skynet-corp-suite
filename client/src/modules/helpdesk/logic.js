@@ -9,6 +9,13 @@ export const READ_ONLY_NOTE = 'Read only: the suite never marks anything read, m
   + 'the suite sees your reply in the Sent folder.';
 
 export const STATE_WORDS = Object.freeze({ waiting: 'Waiting for a reply', answered: 'Answered', closed: 'Closed' });
+/** "orders@x.com" / "@x.com" (From) or "subject: New order" — the "never a ticket from" field's hint. */
+export const IGNORE_HINT = 'Comma-separated: an address or @domain matches who it is From; “subject: New order” matches the subject. '
+  + 'A contact form comes From the shop’s own address with the customer as Reply-To, like WooCommerce’s new-order email: '
+  + 'block those order emails by subject, not by blocking the shop’s address.';
+/** What "Write it in Mail" can't do: say it on the page. */
+export const MAILTO_NOTE = '“Write it in Mail” opens your device’s default mail account: check it sends from the store’s support address.';
+
 export const STATE_TONES = Object.freeze({ waiting: 'warn', answered: 'ok', closed: 'neutral' });
 export const STATE_FILTERS = Object.freeze([
   { value: 'waiting', label: 'Waiting' },
@@ -29,15 +36,23 @@ export function waitingText(ticket) {
   return `Waiting ${plural(Math.floor(h / 24), 'day')}`;
 }
 
-/** Why a closed ticket is closed, in words. */
-export function closedText(ticket) {
+const WHO = { owner: 'you', partner: 'your partner', system: 'the suite' };
+/** Why a closed ticket is closed, in words (`me` = who is reading: owner | partner). */
+export function closedText(ticket, me = null) {
   if (ticket?.state !== 'closed') return '';
-  return {
+  const who = ticket.closedBy && ticket.closedBy !== 'system' ? (ticket.closedBy === me ? 'you' : me ? WHO.partner : WHO[ticket.closedBy] ?? null) : null;
+  const base = {
     no_reply_needed: 'Closed: no reply needed',
     task_done: 'Closed when its task was ticked off',
     task_deleted: 'Closed when its task was deleted',
   }[ticket.closedReason] ?? 'Closed';
+  return who ? `${base} (by ${who})` : base;
 }
+/** "Reopened by you on …" for a ticket a person reopened. */
+export const reopenedText = (ticket, me, fmt = (x) => x) => (ticket?.reopenedAt
+  ? `Reopened by ${ticket.reopenedBy === me ? 'you' : 'your partner'} ${fmt(ticket.reopenedAt)}` : '');
+/** An order looked up by a number in the email that isn't under the customer's email (review fix). */
+export const NOT_SENDERS_ORDER = 'This order isn’t under the sender’s email: check it is theirs before saying anything about it.';
 
 /** A ticket's line in the list: "#12 · Where is my order? · Pat (pat@example.com)". */
 export function ticketLine(t) {
@@ -103,7 +118,7 @@ export function mailboxIdOf(connectionId) {
 export const PROVIDERS = Object.freeze([
   { match: /gmail\.com$|googlemail\.com$/, host: 'imap.gmail.com', sent: '[Gmail]/Sent Mail', note: 'Google: an app password (Google Account → Security → 2-Step Verification → App passwords).' },
   { match: /icloud\.com$|me\.com$|mac\.com$/, host: 'imap.mail.me.com', sent: 'Sent Messages', note: 'iCloud: an app-specific password (account.apple.com → Sign-In and Security).' },
-  { match: /outlook\.|hotmail\.|live\.com$|office365\.com$/, host: 'outlook.office365.com', sent: 'Sent Items', note: 'Microsoft 365 / Outlook.com no longer accept passwords over IMAP for most accounts: the login may be refused.' },
+  { match: /outlook\.|hotmail\.|live\.com$|office365\.com$|msn\.com$/, host: 'outlook.office365.com', sent: 'Sent Items', note: 'Microsoft accounts (Microsoft 365, Outlook.com, Hotmail) can’t be read yet: Microsoft only allows OAuth sign-in for IMAP, which the suite doesn’t do.' },
   { match: /yahoo\.com$/, host: 'imap.mail.yahoo.com', sent: 'Sent', note: 'Yahoo: an app password (Account security → Generate app password).' },
 ]);
 export function providerHint(hostOrEmail) {
@@ -129,12 +144,6 @@ export function mailboxStatus(mb) {
   if (mb.failures) return `Can’t be read right now: ${mb.lastError ?? 'unknown error'}`;
   if (!mb.lastSuccessAt) return 'Not read yet';
   return `${plural(mb.counts?.waiting ?? 0, 'ticket')} waiting for a reply · read every ${mb.everyMinutes ?? 5} minutes`;
-}
-
-/** The ticket link the helpdesk puts in its tasks' notes ("/helpdesk/tickets/<id>"), or null. */
-export function ticketPathIn(notes) {
-  const m = /\/helpdesk\/tickets\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/.exec(String(notes ?? ''));
-  return m ? `/helpdesk/tickets/${m[1]}` : null;
 }
 
 /** What the order card says when it can't show an order. */

@@ -10,11 +10,13 @@ import { useServerData } from '../../api/useServerData.js';
 import { useRecords } from '../../sync/index.js';
 import { PageHeader, Card, Notice, Button, Badge } from '../../ui/index.js';
 import { formatDateTime } from '../../ui/format.js';
-import { OrderCard } from '../sales/StorePage.jsx';
+import { OrderCard } from '../sales/OrderCard.jsx';
+import { useAuth } from '../../auth/session.jsx';
 import HelpdeskTabs from './Tabs.jsx';
 import './helpdesk.css';
 import {
-  STATE_WORDS, STATE_TONES, waitingText, closedText, fillAnswer, mailtoLink, replySubject, answersFor, orderNote, PRIVACY_NOTE, READ_ONLY_NOTE,
+  STATE_WORDS, STATE_TONES, waitingText, closedText, reopenedText, fillAnswer, mailtoLink, replySubject, answersFor, orderNote, PRIVACY_NOTE, READ_ONLY_NOTE,
+  NOT_SENDERS_ORDER, MAILTO_NOTE,
 } from './logic.js';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
@@ -68,7 +70,12 @@ function OrderBox({ ticketId, storeId }) {
         {note ? <span style={state.error ? { color: 'var(--danger)', fontSize: 'var(--text-sm)' } : muted}>{note}</span> : null}
         {state.result?.orders?.length ? (
           <ul className="sales-orders" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 'var(--space-2)' }}>
-            {state.result.orders.map((o) => <OrderCard key={o.id} o={o} />)}
+            {state.result.orders.map((o) => (
+              <li key={o.id} style={{ listStyle: 'none', display: 'grid', gap: 6 }} data-sender-matches={o.senderMatches === false ? '0' : '1'}>
+                {o.senderMatches === false ? <Notice tone="warn">{NOT_SENDERS_ORDER}</Notice> : null}
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}><OrderCard o={o} /></ul>
+              </li>
+            ))}
             {state.result.more ? <li style={muted}>More orders match: the 10 newest are shown.</li> : null}
           </ul>
         ) : null}
@@ -115,7 +122,7 @@ function Answers({ ticket, mailboxId }) {
         ) : <span style={muted}>No saved answers for this mailbox yet.</span>}
         <span style={muted}>
           Best: reply to the email itself in your mail app and paste the answer — the suite then finds your reply by its thread.
-          “Write it in Mail” starts a new email “{replySubject(ticket.subject)}”, found by its subject and address. <Link to="/helpdesk/answers">Edit saved answers</Link>
+          “Write it in Mail” starts a new email “{replySubject(ticket.subject)}”, found by its subject and address. {MAILTO_NOTE} <Link to="/helpdesk/answers">Edit saved answers</Link>
         </span>
       </div>
     </Card>
@@ -127,6 +134,8 @@ export default function TicketPage() {
   const { data, error, offline, replace } = useServerData(`/api/helpdesk/tickets/${id}`, { everyMs: 60_000 });
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState(null);
+  const { session } = useAuth();
+  const me = session?.user?.actor ?? null;
   const t = data?.ticket;
   async function act(what) {
     setBusy(true);
@@ -155,7 +164,8 @@ export default function TicketPage() {
                 <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
                   <Badge tone={STATE_TONES[t.state]}>{STATE_WORDS[t.state]}</Badge>
                   {t.flagged ? <Badge tone="danger">Over 24 hours</Badge> : null}
-                  <span style={muted}>{t.state === 'waiting' ? waitingText(t) : t.state === 'closed' ? closedText(t) : `Answered ${formatDateTime(t.lastReplyAt)}`}</span>
+                  <span style={muted}>{t.state === 'waiting' ? waitingText(t) : t.state === 'closed' ? closedText(t, me) : `Answered ${formatDateTime(t.lastReplyAt)}`}</span>
+                  {t.reopenedAt && t.state === 'waiting' ? <span style={muted}>{reopenedText(t, me, formatDateTime)}</span> : null}
                 </div>
                 <span style={muted}>{READ_ONLY_NOTE}</span>
                 <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>

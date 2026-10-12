@@ -6,8 +6,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   waitingText, closedText, ticketLine, fillAnswer, replySubject, mailtoLink, answersFor, answerProblem, answerChanges, mailboxIdOf, providerHint,
-  addMailboxProblem, mailboxStatus, ticketPathIn, orderNote, stateFilterOf,
+  addMailboxProblem, mailboxStatus, orderNote, stateFilterOf, reopenedText, NOT_SENDERS_ORDER,
 } from '../src/modules/helpdesk/logic.js';
+import { ticketPathIn } from '../src/modules/planner/links.js';
 import { itemLine, stateNote, summaryText, attentionTotal, SECTIONS } from '../src/modules/overview/logic.js';
 import { startServer, makeDevice, row } from './helpers.js';
 
@@ -18,6 +19,10 @@ test('tickets in words: waiting, closed, the list line, the filter', () => {
   assert.equal(waitingText({ state: 'answered', hoursWaiting: 75 }), '');
   assert.equal(closedText({ state: 'closed', closedReason: 'task_done' }), 'Closed when its task was ticked off');
   assert.equal(closedText({ state: 'closed', closedReason: 'no_reply_needed' }), 'Closed: no reply needed');
+  assert.equal(closedText({ state: 'closed', closedReason: 'task_done', closedBy: 'partner' }, 'owner'), 'Closed when its task was ticked off (by your partner)');
+  assert.equal(closedText({ state: 'closed', closedReason: 'task_done', closedBy: 'owner' }, 'owner'), 'Closed when its task was ticked off (by you)');
+  assert.equal(reopenedText({ reopenedAt: 'X', reopenedBy: 'owner' }, 'owner'), 'Reopened by you X');
+  assert.match(NOT_SENDERS_ORDER, /isn’t under the sender’s email/);
   assert.deepEqual(ticketLine({ number: 12, subject: 'Late order', customerName: 'Pat', customerEmail: 'pat@example.com' }), { title: '#12 · Late order', who: 'Pat (pat@example.com)' });
   assert.deepEqual(ticketLine({ number: 3, subject: '', customerName: null, customerEmail: 'x@y.co' }), { title: '#3 · (no subject)', who: 'x@y.co' });
   assert.equal(stateFilterOf('closed'), 'closed');
@@ -56,7 +61,7 @@ test('mailboxes: the form’s checks, provider hints, the card’s line, the con
   assert.match(addMailboxProblem({ ...f, sentFolder: ' ' }), /Sent folder/);
   assert.equal(providerHint('imap.gmail.com').sent, '[Gmail]/Sent Mail');
   assert.equal(providerHint('help@icloud.com').host, 'imap.mail.me.com');
-  assert.match(providerHint('outlook.office365.com').note, /no longer accept passwords/);
+  assert.match(providerHint('outlook.office365.com').note, /can’t be read yet: Microsoft only allows OAuth/);
   assert.equal(providerHint('mail.tinsxpress.com'), null);
   assert.equal(mailboxStatus({ paused: true }), 'Paused: nothing is read');
   assert.match(mailboxStatus({ readable: true, failures: 2, lastError: 'refused' }), /Can’t be read right now: refused/);

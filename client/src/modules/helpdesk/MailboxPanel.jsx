@@ -8,7 +8,7 @@ import { formatDateTime } from '../../ui/format.js';
 import { api } from '../../api/client.js';
 import { useServerData } from '../../api/useServerData.js';
 import { businessChoices } from '../woocommerce/logic.js';
-import { mailboxIdOf, mailboxStatus } from './logic.js';
+import { mailboxIdOf, mailboxStatus, IGNORE_HINT } from './logic.js';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
 const mono = { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 'var(--text-sm)', overflowWrap: 'anywhere' };
@@ -67,7 +67,7 @@ export default function MailboxPanel({ connection, offline, onChanged }) {
           <TextField id={`hd-addr-${id}`} label="The mailbox’s own address" value={edit.address ?? ''} onChange={(e) => setEdit({ ...edit, address: e.target.value })}
             hint="Its own emails are never tickets." />
           <TextField id={`hd-ignore-${id}`} label="Never a ticket from" value={edit.ignoreFrom ?? ''} onChange={(e) => setEdit({ ...edit, ignoreFrom: e.target.value })}
-            hint="Addresses or @domains, comma-separated — the store’s own order notifications, say." />
+            hint={IGNORE_HINT} />
           <SelectField id={`hd-store-${id}`} label="Its WooCommerce store" value={edit.storeId ?? ''} onChange={(v) => setEdit({ ...edit, storeId: v || null })}
             options={[{ value: '', label: 'None' }, ...(woo?.stores ?? []).map((s) => ({ value: s.id, label: s.name }))]} />
           <SelectField id={`hd-biz-${id}`} label="Our business (its tasks)" value={edit.businessId ?? ''} onChange={(v) => setEdit({ ...edit, businessId: v })} options={businessChoices(biz?.businesses, edit.businessId)} />

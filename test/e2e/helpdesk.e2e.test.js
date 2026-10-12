@@ -80,6 +80,7 @@ for (const [label, device] of [['iPhone', () => iphone()], ['Mac', () => ({ view
     await found.getByText('for Robin').waitFor(WAIT);
     await found.getByText('2 × Cool Mint 6mg (NT-CM6)').waitFor(WAIT);
     await page.getByTestId('helpdesk-order').getByText(/order number in the email: #1042/).waitFor(WAIT);
+    assert.equal(await page.locator('[data-sender-matches="0"]').count(), 0, 'the order is under the sender’s email');
     const html = await page.content();
     for (const s of ['12 Main St', '5195550100', 'leave at the back door']) assert.ok(!html.includes(s), `${s} isn’t shown`);
 
