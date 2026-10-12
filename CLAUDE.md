@@ -2308,6 +2308,7 @@ its cards). Tests `server/test/campaigns.test.js`, `client/test/campaigns.test.j
   Email Outreach (leads imported before D8c).
 - **Contacted (D8f)**: the Pipeline reads `lead_activity` too; a lead with an email, call or meeting entry shows a "Contacted <day>" chip and the Contacted filter (`?contacted=yes|no`) uses it (`lastContactByLead` in `leads.js`). The leads import already writes an "Intro email sent" entry for rows the export says were contacted.
 - **Lead page notes (D8g)**: the import's "Label: value" note lines are shown as a labelled list (`parseLeadNotes` in `leads.js`, `LeadNotes` in `LeadPage.jsx`): links clickable, the CASL consent and do-not-email lines in the warning colour, typed notes as plain "Notes", the "Imported from…" line in small print. The stored notes text is unchanged.
+- **Email bounced (D8h)**: a lead page button (open leads, beside Lost…) marks the lead lost with the lost reason `bounced` ("Email bounced — undeliverable", added to `LOST_REASONS`), in one tap, with the usual `stage` row; Reopen works as for any lost lead. A device on an older version refuses the new reason until it reloads. Its open follow-up task isn't finished by this.
 - Not built: picking campaigns in the new-lead sheet itself (the lead page does it), per-campaign targets/costs, campaigns
   on clients or quotes.
 

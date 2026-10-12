@@ -14,7 +14,7 @@ export const CLOSED_LEAD_STAGES = Object.freeze(['won', 'lost']);
 /** Where a lead came from. `cross_sell` = made from the cross-sell list (a current client); `inbox` = sorted from the capture inbox. */
 export const LEAD_SOURCES = Object.freeze(['referral', 'website', 'social', 'inbox', 'event', 'outreach', 'cross_sell', 'other', 'scraped']);
 /** Why a lead was lost (a short list + other, with words in lost_note). */
-export const LOST_REASONS = Object.freeze(['price', 'timing', 'went_elsewhere', 'no_reply', 'not_a_fit', 'other']);
+export const LOST_REASONS = Object.freeze(['price', 'timing', 'went_elsewhere', 'no_reply', 'bounced', 'not_a_fit', 'other']);
 /** A lead's own timeline (it may have no client yet, so not the CRM's `activity`): notes, calls… and each stage change. */
 export const LEAD_ACTIVITY_TYPES = Object.freeze(['note', 'call', 'email', 'meeting', 'stage']);
 /** A lead's estimated value: an amount per period, as services have. */

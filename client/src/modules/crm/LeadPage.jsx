@@ -130,6 +130,10 @@ function LeadScreen({ leadId }) {
     const change = stageChange(lead, to); // the buttons only offer moves that can be made
     return change.problem ? null : run(() => saveStageChange(store, lead, change));
   };
+  const bounced = () => {
+    const change = stageChange(lead, 'lost', { reason: 'bounced' });
+    return change.problem ? null : run(() => saveStageChange(store, lead, change));
+  };
   const addStep = () => setSheet({
     kind: 'task',
     initial: newTaskInitial({
@@ -189,6 +193,7 @@ function LeadScreen({ leadId }) {
                 ))}
                 <Button variant="primary" disabled={busy} onClick={() => setSheet({ kind: 'win' })}><Icon name="check" size={16} />Won…</Button>
                 <Button disabled={busy} onClick={() => setSheet({ kind: 'lost' })}>Lost…</Button>
+                <Button disabled={busy} onClick={bounced} data-testid="lead-bounced">Email bounced</Button>
               </>
             ) : lead.stage === 'lost' ? (
               <Button disabled={busy} onClick={() => move(reopenStage(activities))}>Reopen ({STAGE_LABELS[reopenStage(activities)]})</Button>
