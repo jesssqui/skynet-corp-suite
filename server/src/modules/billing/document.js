@@ -5,7 +5,7 @@
 // on an invoice — how to pay. A draft preview says DRAFT across every page and has no number.
 // Pure: the same input always gives the same bytes (pdf.js writes no dates or ids).
 import { parseLocalDate } from '@suite/shared/time';
-import { documentTotals, sortLines, lineAmount, moneyText, rateText, KIND_LABELS } from '@suite/shared/billing';
+import { documentTotals, sortLines, lineAmount, moneyText, taxLineText, KIND_LABELS } from '@suite/shared/billing';
 import { Page, PAGE, writePdf, wrapText, textWidth, tint } from './pdf.js';
 
 const M = 48; // margin
@@ -164,12 +164,12 @@ export function renderDocument(input) {
     y += size + 6;
   };
   sum('Subtotal', moneyText(totals.subtotal));
-  sum(totals.exempt ? `HST ${rateText(totals.rateBp)} on ${moneyText(totals.taxable)}` : `HST ${rateText(totals.rateBp)}`, moneyText(totals.tax));
+  sum(taxLineText(totals.rateBp, { on: totals.exempt ? totals.taxable : null }), moneyText(totals.tax));
   page.line(label2 - 110, y - 4, RIGHT, y - 4, DARK, 1);
   y += 12;
   sum(kind === 'credit_note' ? 'Total credit (CAD)' : 'Total (CAD)', moneyText(totals.total), { bold: true, size: 12 });
   if (anyExempt) {
-    page.text(M, y, '* No HST on this line', { size: 8, color: GREY });
+    page.text(M, y, '* No tax on this line', { size: 8, color: GREY });
     y += 12;
   }
   y += 14;

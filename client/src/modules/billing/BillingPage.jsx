@@ -3,9 +3,11 @@
 // ?new=invoice&client=…&relationship=…&service=… from a lead or a client page), the business details, and — when a
 // restore rolled the database back — the documents whose PDF was kept but whose record isn't here.
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { api } from '../../api/client.js';
+import { store } from '../../sync/index.js';
 import { billingAllowed } from '@suite/shared/billing';
-import { PageHeader, Card, Button, Badge, EmptyState, Icon, Segmented, SelectField, TextField } from '../../ui/index.js';
+import { PageHeader, Card, Button, Badge, EmptyState, Icon, Segmented, SelectField, TextField, Notice } from '../../ui/index.js';
 import { formatDate } from '../../ui/format.js';
 import { useServerData } from '../../api/useServerData.js';
 import { BusinessChip, Badges } from '../crm/parts.jsx';
@@ -71,6 +73,24 @@ export default function BillingPage() {
 
   const rows = useMemo(() => (data ? listRows(tab, data, { business, show: tab === 'credit_note' ? 'all' : show, q, today }) : []), [data, tab, business, show, q, today]);
   const lost = (archive.data?.documents ?? []).filter((d) => !d.inDatabase);
+  const navigate = useNavigate();
+  const [restoring, setRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState(null);
+  // Review fix: put a kept document's record back as it was sent / issued (its original id and number), then open it.
+  const restore = async (d) => {
+    setRestoring(true);
+    setRestoreError(null);
+    try {
+      await api.post(`/api/billing/archive/${d.kind}/${d.doc_id}/restore`, {});
+      await store.syncNow();
+      await archive.reload();
+      navigate(docPath(d.kind, d.doc_id));
+    } catch (err) {
+      setRestoreError(err.message);
+    } finally {
+      setRestoring(false);
+    }
+  };
   const businesses = (data?.businesses ?? []).filter((b) => billingAllowed(b, b.id));
   const filters = tab === 'quote' ? QUOTE_FILTERS : INVOICE_FILTERS;
 
@@ -115,11 +135,18 @@ export default function BillingPage() {
       </p>
       {lost.length ? (
         <Card>
-          <h2 style={{ fontSize: 'var(--text-sm)', margin: '0 0 var(--space-2)' }}>Issued, but not in the database any more</h2>
-          <p style={{ ...muted, margin: '0 0 var(--space-2)' }}>The database was restored from an earlier backup: these were sent or issued after it. Their PDFs were kept (and their numbers are never given again): enter them again if they still count.</p>
-          <ul style={{ margin: 0, paddingLeft: '1.2em' }} data-testid="billing-lost">
-            {lost.map((d) => <li key={`${d.kind}:${d.doc_id}`}>{d.number} · {d.to_name ?? '—'} · {moneyText(d.total_cents ?? 0)} · {formatDate(d.made_on)} — <a href={`/api/billing/pdf-archive/${d.kind}/${d.doc_id}`}>PDF</a></li>)}
+          <h2 style={{ fontSize: 'var(--text-sm)', margin: '0 0 var(--space-2)' }}>Issued, but not in the database as issued</h2>
+          <p style={{ ...muted, margin: '0 0 var(--space-2)' }}>The database was restored from an earlier backup: these were sent or issued after it. Their PDFs were kept (and their numbers are never given again). Restore from archive puts each back as it was sent, with its number; payments recorded after the backup are entered again.</p>
+          <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'grid', gap: 'var(--space-2)' }} data-testid="billing-lost">
+            {lost.map((d) => (
+              <li key={`${d.kind}:${d.doc_id}`} data-archive={d.doc_id}>
+                {KIND_LABELS[d.kind]} {d.number} · {d.to_name ?? '—'} · {moneyText(d.total_cents ?? 0)} · {formatDate(d.made_on)}{d.draftAgain ? ' · a draft again here' : ' · not here'}
+                {' '}— <a href={`/api/billing/pdf-archive/${d.kind}/${d.doc_id}`}>PDF</a>
+                {' '}<Button disabled={archive.offline || restoring} onClick={() => restore(d)}>Restore from archive</Button>
+              </li>
+            ))}
           </ul>
+          {restoreError ? <Notice tone="danger">{restoreError}</Notice> : null}
         </Card>
       ) : null}
       {sheet && data ? <NewDocumentSheet kind={sheet.kind} initial={sheet.initial} data={data} onClose={() => setSheet(null)} /> : null}

@@ -12,6 +12,7 @@
 //   POST /credit-notes/:id/issue { today, fingerprint } approve a credit note
 //   GET  /archive                        every document as sent / issued (newest first), marked when not in the database
 //   GET  /pdf-archive/:kind/:id          a kept PDF, also when its record isn't in the database (after a restore)
+//   POST /archive/:kind/:id/restore      put a kept document's record back as it was sent / issued (original id and number)
 // `fingerprint` = documentFingerprint (@suite/shared/billing) of what the person saw; a different one → 409 changed.
 // Nothing here emails anyone: the person downloads or shares the PDF and sends it themselves.
 import { Router } from 'express';
@@ -54,6 +55,11 @@ export function createBillingRouter(_ctx, service) {
     if (!kind) throw new HttpError(404, 'No such kind of document');
     const { pdf, filename } = service.archivedPdf(kind, req.params.id);
     sendPdf(res, pdf, filename);
+  });
+  router.post('/archive/:kind/:id/restore', (req, res) => {
+    const kind = KINDS[req.params.kind];
+    if (!kind) throw new HttpError(404, 'No such kind of document');
+    res.json(service.restoreFromArchive(kind, req.params.id, who(req)));
   });
   const approve = (kind) => (req, res) => {
     const { today = null, fingerprint = null } = req.body ?? {};

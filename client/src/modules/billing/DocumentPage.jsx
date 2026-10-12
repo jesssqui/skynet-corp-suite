@@ -9,7 +9,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { newId } from '@suite/shared/ids';
-import { DOC_ENTITY, LINE_ENTITY, LINE_PARENT, KIND_LABELS, HST_RATE_BP, documentTotals, lineAmount, moneyText, rateText } from '@suite/shared/billing';
+import { DOC_ENTITY, LINE_ENTITY, LINE_PARENT, KIND_LABELS, HST_RATE_BP, documentTotals, lineAmount, moneyText, taxLineText } from '@suite/shared/billing';
 import { Card, Button, Badge, EmptyState, Icon, Notice } from '../../ui/index.js';
 import { formatDate } from '../../ui/format.js';
 import { store, useSyncStatus } from '../../sync/index.js';
@@ -39,7 +39,7 @@ function Lines({ kind, doc, lines, editable, onEdit }) {
           {lines.map((l) => {
             const body = (
               <>
-                <span className="billing-line-text">{l.description}{l.tax_exempt ? <span style={muted}> · no HST</span> : null}</span>
+                <span className="billing-line-text">{l.description}{l.tax_exempt ? <span style={muted}> · no tax</span> : null}</span>
                 <span className="billing-line-qty">{qty(l.quantity)} × {moneyText(l.unit_cents)}</span>
                 <span className="billing-line-amount">{moneyText(lineAmount(l))}</span>
               </>
@@ -55,7 +55,7 @@ function Lines({ kind, doc, lines, editable, onEdit }) {
       ) : <p style={{ ...muted, margin: 0 }}>No lines yet.</p>}
       <dl className="billing-totals" data-testid="doc-totals">
         <dt>Subtotal</dt><dd>{moneyText(totals.subtotal)}</dd>
-        <dt>{`${(doc.tax_rate_bp ?? HST_RATE_BP) === 500 ? 'GST' : 'HST'} ${rateText(totals.rateBp)}${totals.exempt ? ` on ${moneyText(totals.taxable)}` : ''}`}</dt><dd>{moneyText(totals.tax)}</dd>
+        <dt>{taxLineText(totals.rateBp, { on: totals.exempt ? totals.taxable : null })}</dt><dd>{moneyText(totals.tax)}</dd>
         <dt className="billing-total">{kind === 'credit_note' ? 'Total credit' : 'Total'}</dt><dd className="billing-total" data-testid="doc-total">{moneyText(totals.total)}</dd>
       </dl>
     </>
@@ -72,6 +72,7 @@ function DocumentScreen({ kind, id }) {
   const [sheet, setSheet] = useState(null);
   const { busy, error, run } = useAction();
   const made = useRef(null);
+  const copied = useRef(null);
 
   const doc = data?.[{ quote: 'quotesById', invoice: 'invoicesById', credit_note: 'creditNotesById' }[kind]]?.get(id) ?? null;
   const lines = useMemo(() => (doc ? linesOf(kind, id, kind === 'quote' ? data.quoteLines : kind === 'invoice' ? data.invoiceLines : data.creditNoteLines) : []), [data, doc, kind, id]);
@@ -105,12 +106,22 @@ function DocumentScreen({ kind, id }) {
     const newIdOf = await createDocument(store, target, plan, made.current);
     navigate(docPath(target, newIdOf));
   });
-  const copyInvoiceLines = () => run(async () => {
+  // Review fix: one copy only — ids made once (a retry or a second tap re-uses them: already_exists = done), and the
+  // button is off while it runs.
+  const copyInvoiceLines = () => {
+    if (busy) return null;
     const src = linesOf('invoice', doc.invoice_id, data.invoiceLines);
-    for (const [i, l] of src.entries()) {
-      await store.create(LINE_ENTITY.credit_note, { [LINE_PARENT.credit_note]: id, position: i, description: l.description, quantity: l.quantity ?? null, unit_cents: l.unit_cents, tax_exempt: Boolean(l.tax_exempt) });
-    }
-  });
+    copied.current ??= src.map(() => newId());
+    return run(async () => {
+      for (const [i, l] of src.entries()) {
+        try {
+          await store.create(LINE_ENTITY.credit_note, { [LINE_PARENT.credit_note]: id, position: i, description: l.description, quantity: l.quantity ?? null, unit_cents: l.unit_cents, tax_exempt: Boolean(l.tax_exempt) }, { id: copied.current[i] });
+        } catch (err) {
+          if (err?.code !== 'already_exists') throw err;
+        }
+      }
+    });
+  };
 
   return (
     <div className="billing-doc" data-testid="doc-page" data-kind={kind} data-status={doc.status}>
@@ -192,7 +203,7 @@ function DocumentScreen({ kind, id }) {
             {draft ? <TextButton onClick={() => setSheet({ kind: 'line' })}><Icon name="plus" size={14} />Add a line</TextButton> : null}
           </div>
           {kind === 'credit_note' && draft && !lines.length && invoice ? (
-            <p style={{ margin: '0 0 var(--space-2)' }}><TextButton style={{ padding: 0 }} onClick={copyInvoiceLines}>Copy the invoice’s lines</TextButton> <span style={muted}>then change or take off what isn’t credited.</span></p>
+            <p style={{ margin: '0 0 var(--space-2)' }}><TextButton style={{ padding: 0 }} disabled={busy} onClick={copyInvoiceLines}>Copy the invoice’s lines</TextButton> <span style={muted}>then change or take off what isn’t credited.</span></p>
           ) : null}
           <Lines kind={kind} doc={doc} lines={lines} editable={draft} onEdit={(l) => setSheet({ kind: 'line', record: l })} />
           {doc.notes ? <p style={{ whiteSpace: 'pre-wrap', margin: 'var(--space-3) 0 0' }}><span style={muted}>Notes: </span>{doc.notes}</p> : null}

@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BUSINESS_IDS as B } from '../crm.js';
 import {
+  taxLabel, taxLineText, roundCents, invoicedHereNote,
   documentTotals, lineAmount, formatNumber, defaultPrefix, billingAllowed, BILLING_BLOCKED, documentFingerprint, documentProblems,
   invoiceState, invoiceSalesDays, moneyText, rateText, dueDateOf, sortLines,
 } from '../billing.js';
@@ -130,4 +131,19 @@ test('invoices in sales: money in and kept, on its day; credit notes take back o
   // Overpaid: only the total counts; the extra is not a sale.
   const over = invoiceSalesDays([inv('i9', B.agency, 1000, 1000)], [{ invoice_id: 'i9', amount_cents: 1500, paid_on: '2026-10-01' }], []);
   assert.equal(over.get(B.agency).get('2026-10-01').total, 1000);
+});
+
+test('review: halves round away from zero (a discount mirrors its price); the tax’s name from its rate; the hand-entry note', () => {
+  assert.equal(lineAmount({ quantity: 0.5, unit_cents: 5 }), 3);
+  assert.equal(lineAmount({ quantity: 0.5, unit_cents: -5 }), -3, 'not −2');
+  assert.equal(roundCents(-2.5), -3);
+  assert.equal(roundCents(0), 0);
+  assert.deepEqual([taxLabel(null), taxLabel(1300), taxLabel(500), taxLabel(0), taxLabel(700)], ['HST', 'HST', 'GST', 'Zero-rated', 'Tax']);
+  assert.equal(taxLineText(500), 'GST 5 %');
+  assert.equal(taxLineText(0), 'Zero-rated (0 %)');
+  assert.equal(taxLineText(1300, { on: 250000 }), 'HST 13 % on $2,500.00');
+  assert.match(invoicedHereNote(B.agency), /count in sales by themselves/);
+  assert.ok(invoicedHereNote(B.consulting));
+  assert.equal(invoicedHereNote(B.retail), null, 'retail has its own warning');
+  assert.equal(invoicedHereNote(B.wholesale), null);
 });

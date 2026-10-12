@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { BUSINESS_IDS as B } from '@suite/shared/crm';
 import { newId } from '@suite/shared/ids';
 import { localDate } from '@suite/shared/time';
+import { addDays } from '@suite/shared/planner';
 import { startServer, makeDevice, row, count } from './helpers.js';
 import { valuesFrom, editChanges } from '../src/modules/crm/formFields.js';
 import { planWin, applyWin, winIds, stageChange, saveStageChange } from '../src/modules/crm/leads.js';
@@ -120,6 +121,11 @@ test('the lists and where things stand; an invoice from an accepted quote; a cre
   assert.match(emailFor('quote', data.quotes[0], { business: { name: 'GWND' } }).body, /Reply to this email to go ahead/);
   // A payment and a decline.
   assert.ok(paymentFields({ amount: '0', paid_on: '2026-10-20' }, 'i1').problems.amount);
+  // Review fix: not after tomorrow; before the issue date is a warning (a deposit), not a refusal.
+  assert.match(paymentFields({ amount: '1', paid_on: '2026-10-22' }, 'i1', { today }).problems.paid_on, /hasn’t come yet/);
+  assert.equal(paymentFields({ amount: '1', paid_on: '2026-10-21' }, 'i1', { today }).problems.paid_on, undefined);
+  const early = paymentFields({ amount: '1', paid_on: '2026-08-30' }, 'i1', { today, issueDate: '2026-09-01' });
+  assert.deepEqual([Object.keys(early.problems).length, /deposit/.test(early.warning)], [0, true]);
   assert.deepEqual(paymentFields({ amount: '1,000', paid_on: '2026-10-20', method: 'cheque', note: ' ' }, 'i1').fields, { invoice_id: 'i1', amount_cents: 100000, paid_on: '2026-10-20', method: 'cheque', note: null });
   assert.ok(declineFields({ reason: '', day: today }).problem);
   assert.deepEqual(declineFields({ reason: 'price', note: 'Too much', day: today }).fields, { status: 'declined', decided_on: today, declined_reason: 'price', decided_note: 'Too much' });
@@ -232,19 +238,48 @@ test('two devices: an invoice issued, paid in parts on both devices (one offline
   assert.equal((await approveOn(mac, 'invoice', inv)).number, 'BC-INV-0001');
   await phone.engine.syncNow();
   phone.online = false;
-  await phone.engine.create('invoice_payment', { invoice_id: inv, amount_cents: 50000, paid_on: '2026-10-13', method: 'cash' });
-  await mac.engine.create('invoice_payment', { invoice_id: inv, amount_cents: 63000, paid_on: '2026-10-14', method: 'etransfer' });
+  const day1 = addDays(localDate(), -1);
+  const day2 = localDate();
+  await phone.engine.create('invoice_payment', { invoice_id: inv, amount_cents: 50000, paid_on: day1, method: 'cash' });
+  await mac.engine.create('invoice_payment', { invoice_id: inv, amount_cents: 63000, paid_on: day2, method: 'etransfer' });
   await mac.engine.syncNow();
   phone.online = true;
   await phone.engine.syncNow();
   const days = server.db.prepare("SELECT day, total FROM sales_daily WHERE source = 'invoices' AND store = ? ORDER BY day").all(`invoices:${B.consulting}`);
-  assert.deepEqual(days.map((r) => [r.day, r.total]), [['2026-10-13', 50000], ['2026-10-14', 63000]]);
+  assert.deepEqual(days.map((r) => [r.day, r.total]), [[day1, 50000], [day2, 63000]]);
   await mac.engine.syncNow();
-  const status = docStatus('invoice', await mac.engine.get('invoice', inv), { payments: await mac.engine.list('invoice_payment'), today: '2026-10-14' });
+  const status = docStatus('invoice', await mac.engine.get('invoice', inv), { payments: await mac.engine.list('invoice_payment'), today: day2 });
   assert.equal(status.key, 'paid');
   const cn = await createDocument(mac.engine, 'credit_note', { ...creditNoteFor(await mac.engine.get('invoice', inv), 'One hour less'), lines: [{ description: 'One hour', unit_cents: 10000 }] }, docIds(newId, 1));
   await mac.engine.syncNow();
   assert.equal((await approveOn(mac, 'credit_note', cn)).number, 'BC-CN-0001');
   const total = server.db.prepare("SELECT SUM(total) AS t FROM sales_daily WHERE source = 'invoices' AND store = ?").get(`invoices:${B.consulting}`).t;
   assert.equal(total, 113000 - 11300, 'the credit note took $113 back on its day');
+});
+
+test('two devices (review): accepted offline on the phone while declined on the Mac — the quote stays declined, the phone hears why, the lead shows a stage clash to settle', async (t) => {
+  const { server, mac, phone } = await devices(t);
+  const lead = await mac.engine.create('lead', { name: 'Delta Deli', business_id: B.agency, kind: 'website', stage: 'talking', stage_changed_at: '2026-10-01T12:00:00.000Z' });
+  const q = await makeDraft(mac, 'quote', { business_id: B.agency, lead_id: lead, to_name: 'Delta Deli' }, [{ description: 'Site', unit_cents: 100000 }]);
+  await mac.engine.syncNow();
+  await approveOn(mac, 'quote', q);
+  await phone.engine.syncNow();
+  // The phone, offline, accepts (the win makes the client); the Mac declines first and syncs.
+  phone.online = false;
+  const leadRec = await phone.engine.get('lead', lead);
+  const plan = planWin(leadRec, { clientId: '', kind: 'website', startDate: localDate() }, { accounts: [], contacts: [], relationships: [] }, winIds(newId));
+  await applyWin(phone.engine, plan);
+  await phone.engine.update('quote', q, { status: 'accepted', decided_on: localDate(), client_id: plan.clientId });
+  await mac.engine.update('quote', q, declineFields({ reason: 'price', day: localDate() }).fields);
+  await saveStageChange(mac.engine, await mac.engine.get('lead', lead), stageChange(await mac.engine.get('lead', lead), 'lost', { reason: 'price' }));
+  await mac.engine.syncNow();
+  phone.online = true;
+  await phone.engine.syncNow();
+  assert.equal(row(server.db, 'billing_quotes', q).status, 'declined');
+  const refused = (await phone.engine.attentionList()).find((a) => a.step.recordId === q);
+  assert.equal(refused.reason, 'Already declined on the other device: this quote stays declined');
+  // The win itself went through (its client exists, never twice); the lead's stage set clashed: D8's StageClash settles it.
+  assert.equal(count(server.db, "SELECT COUNT(*) AS n FROM crm_clients WHERE name = 'Delta Deli'"), 1);
+  const leadNow = await phone.engine.get('lead', lead);
+  assert.ok((leadNow._sync.clashes ?? []).some((c) => c.field === 'stage'), 'a stage clash to settle on the lead page');
 });

@@ -2843,6 +2843,34 @@ D17 and D18 built together; D7 (consulting engagements) is skipped, so "engageme
   twice and a document a client has stays findable; Money → Billing lists the kept PDFs whose record isn't in the restored
   database ("Issued, but not in the database any more", `GET /api/billing/archive`, `/pdf-archive/:kind/:id`) to enter
   again if they still count. (Gaps in the restored database's own documents are exactly those.)
+- **Review fixes**:
+  - **Settling a clash never rewrites what was sent or issued**: the checks also refuse **server** steps (applyLocal,
+    which settling a clash uses) that change a non-draft document's `CONTENT_FIELDS`, delete it, or touch any line of it
+    (a field or delete clash on a draft line settled with keep_loser after the approval → 409, the line as issued).
+    Approving itself passes: its step runs while the document is still a draft.
+  - **Restores and kept PDFs** (migration 002: each kept PDF also stores the approved draft's `fingerprint` and a
+    `snapshot` — the document's fields as issued, the server's fields, its lines): approving a draft that has a kept PDF
+    **re-adopts** its kept number, day and totals when it says the same (no new number, no new PDF; a quote's lead moves to
+    Quoted again), and is refused (409 `kept_differs`, naming the kept number) when it doesn't. The archive's `inDatabase` is
+    true only when the record is there **as issued with that number** (`draftAgain` = a draft again). **Restore from
+    archive** (`POST /api/billing/archive/:kind/:id/restore`; Money → Billing's list) puts the record back with its original
+    id, number, dates, content and lines (a credit note needs its invoice back first; a draft deleted since the restore, or
+    a PDF kept before this version, can't be: enter it by hand). Payments recorded after the backup aren't kept.
+  - **Credit notes** stay on their invoice and its business (updates refused, devices and server; approving checks the
+    business matches the invoice's).
+  - **Payment days**: after tomorrow refused (server and sheet); before the issue date allowed with a warning (a deposit).
+  - **Tax label** from the rate (`taxLabel`/`taxLineText`): 13 % HST, 5 % GST, 0 % "Zero-rated", else "Tax" — the same on
+    the PDF and the screen.
+  - **Decided on two devices**: the later decision is refused "Already accepted (declined) on the other device: this quote
+    stays …" (Needs attention). A lead **won on one device while its quote was declined on the other**: the quote stays
+    declined; the win's records stand (one client — D8's kept ids); the lead's stage set clashes (Won vs Lost) and is
+    settled on the lead page with D8's StageClash — keep Won (the client stays; the quote stays declined, its accept
+    discarded in Needs attention) or Lost (then the client the win made is tidied by hand, as D8's "won twice" notes). Tested.
+  - The follow-up is due max(sent + 7 days, today) and goes to the **lead's owner** (else the business's default owner).
+  - D11's hand-entry sheet tells Great White North Design and Business consulting that invoices made here count by themselves.
+  - Halves round away from zero (a negative line mirrors its price); "Copy the invoice's lines" makes its lines once (ids
+    kept, off while running); a partial `PUT /settings` changes only the fields sent (null / '' clears); changing the
+    prefix after numbers were given answers a `warning` (shown on the page).
 - **Not built / open**: emailing from the suite (SMTP); recurring invoices (retainers billed monthly by hand for now);
   currencies other than CAD; a refund paid back as its own record (an overpayment or a credit note on a paid invoice is
   shown, the accountant settles it); deposits on quotes; a quote's own expiry (valid until is printed, not enforced);

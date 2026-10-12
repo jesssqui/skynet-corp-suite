@@ -38,8 +38,8 @@ export function registerBillingAutomations({ automations, planner, crm, billing 
     id: FOLLOW_UP_ID,
     name: 'Follow up on sent quotes',
     module: 'billing',
-    description: `When a quote is sent, makes a task to follow up ${QUOTE_FOLLOW_UP_DAYS} days later, for the business’s default owner `
-      + '(with the lead, so it is the lead’s next step). The task finishes itself when the quote is accepted or declined. Nothing is sent.',
+    description: `When a quote is sent, makes a task to follow up ${QUOTE_FOLLOW_UP_DAYS} days later, for the lead’s owner (else the business’s `
+      + 'default owner; with the lead, so it is the lead’s next step). The task finishes itself when the quote is accepted or declined. Nothing is sent.',
     trigger: {
       type: 'event',
       events: ['billing.quote_sent', 'billing.changed'],
@@ -55,11 +55,12 @@ export function registerBillingAutomations({ automations, planner, crm, billing 
     defaults: { enabled: true, alert: false },
     alertLink: '/costs/billing',
     run(_ctx, io) {
-      const { now, made, madeLike, create } = io;
+      const { now, today, made, madeLike, create } = io;
       const plan = followUpPlan({ billing, made, madeLike, taskState: planner.taskState });
       let made_ = 0;
       for (const quote of plan.create) {
         const who = quote.to_name || 'them';
+        const lead = quote.lead_id ? crm.liveRecord('lead', quote.lead_id) : null;
         create('task', {
           title: `Follow up on quote ${quote.number} for ${who}`.slice(0, 300),
           notes: [
@@ -67,13 +68,15 @@ export function registerBillingAutomations({ automations, planner, crm, billing 
             'Ask whether they have questions or want to go ahead. When they answer, mark the quote Accepted or Declined — this task then finishes itself.',
             `Quote: /costs/billing/quotes/${quote.id}`,
           ].join('\n'),
-          owner: planner.automatedOwnerFor(quote.business_id),
+          // Review fix: the lead's owner when it has one (whoever is working the lead), else the business's default owner.
+          owner: (lead && lead.owner) || planner.automatedOwnerFor(quote.business_id),
           business_id: quote.business_id,
           client_id: quote.client_id ?? null,
           account_id: quote.account_id ?? null,
           relationship_id: quote.relationship_id ?? null,
-          lead_id: quote.lead_id && crm.liveRecord('lead', quote.lead_id) ? quote.lead_id : null,
-          due_date: addDays(quote.sent_on, QUOTE_FOLLOW_UP_DAYS),
+          lead_id: lead ? lead.id : null,
+          // Review fix: never already overdue (a quote re-adopted or restored from the archive after a restore).
+          due_date: [addDays(quote.sent_on, QUOTE_FOLLOW_UP_DAYS), today].sort()[1],
         }, { key: keyOf(quote.id) });
         made_ += 1;
       }

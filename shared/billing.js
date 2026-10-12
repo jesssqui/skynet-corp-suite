@@ -50,6 +50,13 @@ export const BILLING_BLOCKED = Object.freeze({
   [BUSINESS_IDS.save_point]: 'Save Point Shop sells on eBay: its sales are counted from there',
   [BUSINESS_IDS.personal]: 'Personal isn’t a business that bills',
 });
+/**
+ * D17/D18 review: on D11's "Sales entered by hand" sheet, for a business that invoices here — its invoices made on
+ * Money → Billing count in sales by themselves when paid, so entering them by hand too would count them twice.
+ */
+export const INVOICED_HERE_NOTE = 'Invoices made on Money → Billing count in sales by themselves when they’re paid: enter only sales that weren’t invoiced there';
+export const invoicedHereNote = (businessId) => (businessId && !BILLING_BLOCKED[businessId] && businessId !== BUSINESS_IDS.retail ? INVOICED_HERE_NOTE : null);
+
 /** May this business make quotes and invoices? (not blocked; not archived — unless `keep`, the document's own) */
 export const billingAllowed = (business, keep = null) => Boolean(business) && !BILLING_BLOCKED[business.id]
   && (!business.archived || business.id === keep);
@@ -76,12 +83,15 @@ export function formatNumber(prefix, kind, seq) {
 
 // ---- money on a document ---------------------------------------------------------------------------
 
+/** Round to whole cents, halves away from zero (−2.5 → −3, like 2.5 → 3: a discount line mirrors its price). */
+export const roundCents = (x) => Math.sign(x) * Math.round(Math.abs(x));
+
 /** A line's amount in cents: quantity (null = 1) × unit price, rounded once. */
 export function lineAmount(line) {
   const qty = line?.quantity === null || line?.quantity === undefined ? 1 : Number(line.quantity);
   const unit = Number(line?.unit_cents ?? 0);
   if (!Number.isFinite(qty) || !Number.isFinite(unit)) return 0;
-  return Math.round(qty * unit);
+  return roundCents(qty * unit);
 }
 
 /** A document's lines in their order (position, then id: made first comes first). */
@@ -105,6 +115,22 @@ export function documentTotals(lines, rateBp = HST_RATE_BP) {
   }
   const tax = Math.round((taxable * rate) / 10_000);
   return { subtotal: taxable + exempt, taxable, exempt, tax, total: taxable + exempt + tax, rateBp: rate };
+}
+
+/**
+ * The tax's name for a rate (review fix: one label on the PDF and the screen): 13 % HST (Ontario), 5 % GST (outside the
+ * HST provinces), 0 % zero-rated (outside Canada), anything else "Tax".
+ */
+export function taxLabel(rateBp) {
+  const r = rateBp ?? HST_RATE_BP;
+  return r === HST_RATE_BP ? 'HST' : r === 500 ? 'GST' : r === 0 ? 'Zero-rated' : 'Tax';
+}
+/** "HST 13 %", "GST 5 %", "Zero-rated (0 %)", "Tax 7 %"; with `on` (the taxable part when some lines are exempt): "HST 13 % on $X". */
+export function taxLineText(rateBp, { on = null } = {}) {
+  const r = rateBp ?? HST_RATE_BP;
+  const name = taxLabel(r);
+  const base = r === 0 ? `${name} (0 %)` : `${name} ${rateText(r)}`;
+  return on === null ? base : `${base} on ${moneyText(on)}`;
 }
 
 /** "13 %", "5 %", "14.975 %" for a rate in basis points. */

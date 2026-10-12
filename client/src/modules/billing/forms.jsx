@@ -368,7 +368,7 @@ export function PaymentSheet({ invoice, owing, onClose }) {
       error={error}
       dirty
       onSave={async () => {
-        const p = paymentFields(v, invoice.id);
+        const p = paymentFields(v, invoice.id, { today: localDate(), issueDate: invoice.issue_date });
         setProblems(p.problems);
         if (Object.keys(p.problems).length) return;
         if (await run(async () => { saved.current ??= await store.create('invoice_payment', p.fields); })) onClose();
@@ -380,6 +380,7 @@ export function PaymentSheet({ invoice, owing, onClose }) {
       </div>
       <SelectField id="pay-method" label="How" value={v.method} onChange={(x) => setV({ ...v, method: x })} options={PAYMENT_METHODS.map((m) => ({ value: m, label: PAYMENT_METHOD_LABELS[m] }))} />
       <TextField id="pay-note" label="Note (optional)" value={v.note} onChange={(e) => setV({ ...v, note: e.target.value })} maxLength={500} />
+      {paymentFields(v, invoice.id, { issueDate: invoice.issue_date }).warning ? <Notice tone="warn"><span data-testid="pay-warning">{paymentFields(v, invoice.id, { issueDate: invoice.issue_date }).warning}</span></Notice> : null}
       <p style={{ ...muted, margin: 0 }}>It counts in sales on the day it was paid (Money → Sales and the overview).</p>
     </FormSheet>
   );

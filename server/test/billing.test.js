@@ -17,7 +17,8 @@ import { LEAD_STAGE_FIELDS } from '@suite/shared/leads';
 import { documentFingerprint } from '@suite/shared/billing';
 import { modules } from '../src/modules/index.js';
 import { atLocal } from '../src/modules/automations/schedule.js';
-import { KEPT_TABLES } from '../src/backup/restore.js';
+import { KEPT_TABLES, restoreBackup } from '../src/backup/restore.js';
+import { runBackup } from '../src/backup/backup.js';
 import { renderDocument } from '../src/modules/billing/document.js';
 import { tmpDir, testConfig, startApp, ensureTestUsers, testClock, sessionFor } from './helpers.js';
 
@@ -41,15 +42,15 @@ async function setup(t, { start = '2026-10-12 10:00' } = {}) {
   const phone = (actor = 'owner') => {
     const { deviceId } = sessionFor(env.ctx, users[actor]);
     const clockH = createHlc(deviceId, { wallClock: clock.now });
-    const step = (entity, op, recordId, fields) => {
-      const s = { key: newId(), entity, recordId, op, hlc: clockH.now(), seen: sync.info().cursor, ...(op === 'delete' ? {} : { fields }) };
+    const step = (entity, op, recordId, fields, seen = sync.info().cursor) => {
+      const s = { key: newId(), entity, recordId, op, hlc: clockH.now(), seen, ...(op === 'delete' ? {} : { fields }) };
       const r = sync.push({ actor, deviceId, steps: [s] }).results[0];
       return r;
     };
     return {
       create: (entity, fields, id = newId()) => ({ id, ...step(entity, 'create', id, fields) }),
-      update: (entity, id, fields) => step(entity, 'update', id, fields),
-      remove: (entity, id) => step(entity, 'delete', id),
+      update: (entity, id, fields, { seen } = {}) => step(entity, 'update', id, fields, seen),
+      remove: (entity, id, { seen } = {}) => step(entity, 'delete', id, undefined, seen),
     };
   };
   const row = (table, id) => env.db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
@@ -185,7 +186,7 @@ test('the PDF: a valid file with the document on it, the same bytes every time, 
   assert.equal(stored.filename, 'GWND-INV-0001.pdf');
   const text = stored.pdf.toString('latin1');
   assert.ok(text.startsWith('%PDF-1.4\n') && text.trimEnd().endsWith('%%EOF'));
-  for (const s of ['(GWND-INV-0001)', '(HST # 123456789 RT0001)', '(Caf\\351 D\\351j\\340 Vu)', '\\(about\\)', '($1,098.50) Tj', '(Interac e-Transfer to pay@example.ca)', '(* No HST on this line)']) {
+  for (const s of ['(GWND-INV-0001)', '(HST # 123456789 RT0001)', '(Caf\\351 D\\351j\\340 Vu)', '\\(about\\)', '($1,098.50) Tj', '(Interac e-Transfer to pay@example.ca)', '(* No tax on this line)']) {
     assert.ok(text.includes(s), `the PDF says ${s}`);
   }
   assert.doesNotMatch(text, /DRAFT/);
@@ -265,7 +266,10 @@ test('sales: an invoice counts as it is paid, on the payment’s day; a credit n
   assert.deepEqual(salesRows(env, B.agency).filter((r) => r.total), [], 'issued, not paid: not a sale yet');
   // Paid in two parts on two days (recorded on a phone, the way people do).
   dev.create('invoice_payment', { invoice_id: inv, amount_cents: 50000, paid_on: '2026-10-12', method: 'etransfer' });
-  dev.create('invoice_payment', { invoice_id: inv, amount_cents: 63000, paid_on: '2026-10-14', method: 'cheque' });
+  // Review fix: a payment day after tomorrow is refused (a typo); recorded on the 14th it counts.
+  assert.equal(dev.create('invoice_payment', { invoice_id: inv, amount_cents: 63000, paid_on: '2026-10-14', method: 'cheque' }).code, 'invalid_value');
+  env.setNow('2026-10-14 09:00');
+  assert.equal(dev.create('invoice_payment', { invoice_id: inv, amount_cents: 63000, paid_on: '2026-10-14', method: 'cheque' }).status, 'applied');
   let rows = salesRows(env, B.agency);
   assert.deepEqual(rows.map((r) => [r.day, r.total, r.net, r.tax, r.orders]), [['2026-10-12', 50000, 44248, 5752, 1], ['2026-10-14', 63000, 55752, 7248, 1]]);
   // Counted in the overview's sales for the business (the "done when"), not as a total-only hand entry.
@@ -353,4 +357,133 @@ test('HTTP: settings, approving with the fingerprint, the PDF (inline or to down
   assert.equal(env.row('billing_invoices', inv).status, 'void');
   const archive = await call('GET', '/archive');
   assert.deepEqual(archive.body.documents.map((d) => [d.number, d.inDatabase]), [['RC-INV-0001', true]]);
+});
+
+// ---- review fixes --------------------------------------------------------------------------------------------------
+
+test('review: settling a clash after the approval never changes what was issued (a field clash, a delete clash on a line)', async (t) => {
+  const env = await setup(t);
+  const mac = env.phone('owner');
+  const phone = env.phone('partner');
+  const { clientId } = env.client('Alpha Bakery');
+  const inv = env.draft(mac, 'invoice', { business_id: B.agency, client_id: clientId, to_name: 'Alpha Bakery' }, [
+    { description: 'Website', unit_cents: 100000 }, { description: 'Logo', unit_cents: 20000 },
+  ]);
+  const [l1, l2] = env.db.prepare('SELECT id FROM billing_invoice_lines WHERE invoice_id = ? ORDER BY position').pluck().all(inv);
+  // Both edit the website's price at once (neither saw the other's): a field clash. Both touch the logo: one deletes it,
+  // the other edits it — a delete clash (the line is kept, flagged).
+  const before = env.sync.info().cursor;
+  assert.equal(mac.update('invoice_line', l1, { unit_cents: 110000 }, { seen: before }).status, 'applied');
+  assert.equal(phone.update('invoice_line', l1, { unit_cents: 90000 }, { seen: before }).status, 'clash');
+  assert.equal(mac.remove('invoice_line', l2, { seen: before }).status, 'applied');
+  assert.equal(phone.update('invoice_line', l2, { unit_cents: 25000 }, { seen: before }).status, 'clash');
+  const clashes = env.sync.listClashes({ entity: 'invoice_line' }).clashes ?? env.sync.listClashes({ entity: 'invoice_line' });
+  assert.equal(clashes.length, 2);
+  env.approve('invoice', inv);
+  const issued = env.billing.lines('invoice', inv).map((l) => [l.id, l.unit_cents]);
+  for (const c of clashes) {
+    assert.throws(() => env.sync.resolveClash({ id: c.id, resolution: 'keep_loser', actor: 'owner' }), (e) => e.status === 409 && /no longer change/.test(e.message), c.kind);
+  }
+  assert.deepEqual(env.billing.lines('invoice', inv).map((l) => [l.id, l.unit_cents]), issued, 'the lines are as issued');
+  // Keeping what is there settles them.
+  for (const c of clashes) env.sync.resolveClash({ id: c.id, resolution: 'keep_winner', actor: 'owner' });
+  // The server's own content change after the approval is refused too.
+  assert.equal(env.sync.applyLocal({ actor: 'owner', entity: 'invoice', op: 'update', recordId: inv, fields: { title: 'x' } }).code, 'locked');
+});
+
+test('review: credit notes stay on their invoice and its business; a decided quote says so; tax labels; settings change only what is sent', async (t) => {
+  const env = await setup(t);
+  const mac = env.phone('owner');
+  const phone = env.phone('partner');
+  const { clientId } = env.client('Alpha Bakery');
+  const inv = env.draft(mac, 'invoice', { business_id: B.agency, client_id: clientId, to_name: 'Alpha' });
+  const inv2 = env.draft(mac, 'invoice', { business_id: B.agency, client_id: clientId, to_name: 'Alpha' });
+  env.approve('invoice', inv);
+  env.approve('invoice', inv2);
+  const cn = env.draft(mac, 'credit_note', { invoice_id: inv, business_id: B.agency, to_name: 'Alpha' }, [{ description: 'x', unit_cents: 100 }]);
+  assert.match(mac.update('credit_note', cn, { invoice_id: inv2 }).reason, /stays on its invoice/);
+  assert.match(mac.update('credit_note', cn, { business_id: B.consulting }).reason, /stays on its invoice and its business/);
+  // Accepted on one device, declined on the other a moment later: plain words.
+  const q = env.draft(mac, 'quote', { business_id: B.agency, to_name: 'Alpha' });
+  env.approve('quote', q);
+  assert.equal(mac.update('quote', q, { status: 'accepted', decided_on: '2026-10-12' }).status, 'applied');
+  const r = phone.update('quote', q, { status: 'declined', decided_on: '2026-10-12', declined_reason: 'price' });
+  assert.deepEqual([r.status, r.code, r.reason], ['rejected', 'locked', 'Already accepted on the other device: this quote stays accepted']);
+  // GST on the PDF and in words.
+  const gst = env.draft(mac, 'invoice', { business_id: B.agency, client_id: clientId, to_name: 'Out west', tax_rate_bp: 500 });
+  env.approve('invoice', gst);
+  assert.ok(env.billing.pdfOf('invoice', gst).pdf.toString('latin1').includes('(GST 5 %) Tj'));
+  // Settings: a partial update keeps the rest; a new prefix after numbers were given warns.
+  env.billing.putSettings(B.agency, { legal_name: 'GWND Inc.', hst_number: '123456789 RT0001', email: 'a@b.ca' }, { actor: 'owner' });
+  const after = env.billing.putSettings(B.agency, { email: 'hello@b.ca' }, { actor: 'owner' });
+  assert.deepEqual([after.legal_name, after.hst_number, after.email, after.warning], ['GWND Inc.', '123456789 RT0001', 'hello@b.ca', undefined]);
+  const renamed = env.billing.putSettings(B.agency, { prefix: 'GW' }, { actor: 'owner' });
+  assert.match(renamed.warning, /Numbers already given keep GWND \(4 documents\); new ones start with GW/);
+  assert.equal(env.billing.putSettings(B.agency, { email: '' }, { actor: 'owner' }).email, null, 'an empty value clears');
+});
+
+test('review: the follow-up goes to the lead’s owner and is never already overdue', async (t) => {
+  const env = await setup(t);
+  const dev = env.phone();
+  const lead = env.local('lead', { name: 'Alpha', business_id: B.agency, stage: 'talking', owner: 'partner' });
+  const q = env.draft(dev, 'quote', { business_id: B.agency, lead_id: lead, to_name: 'Alpha' });
+  env.approve('quote', q);
+  const [task] = env.tasks('lead_id = ?', lead);
+  assert.deepEqual([task.owner, task.due_date], ['partner', '2026-10-19']);
+  // A quote sent long ago with no task yet (re-adopted after a restore): due today, not 3 weeks ago.
+  env.ctx.services.automations.madeLike('quote-follow-up', 'quote:'); // (read only)
+  env.db.prepare("DELETE FROM automations_made WHERE automation_id = 'quote-follow-up'").run();
+  env.sync.applyLocal({ actor: 'owner', entity: 'task', op: 'delete', recordId: task.id });
+  env.setNow('2026-11-09 09:00');
+  env.ctx.services.automations.emit('billing.changed', { key: newId() });
+  const again = env.tasks('lead_id = ?', lead);
+  assert.equal(again.length, 1);
+  assert.equal(again[0].due_date, '2026-11-09');
+});
+
+test('review: a restore with kept PDFs — the same draft gets its kept number back, a changed one is refused naming it, Restore from archive puts records back', async (t) => {
+  const env = await setup(t);
+  const dev = env.phone();
+  const { clientId } = env.client('Alpha Bakery');
+  const same = env.draft(dev, 'invoice', { business_id: B.agency, client_id: clientId, to_name: 'Alpha', title: 'Same' });
+  const changed = env.draft(dev, 'invoice', { business_id: B.agency, client_id: clientId, to_name: 'Alpha', title: 'Changed later' });
+  const config = env.ctx.config;
+  const backup = await runBackup({ db: env.db, dir: config.backup.dir, offsiteDir: null, keepDays: 30 });
+  // After the backup: both issued, and a third made and issued.
+  assert.equal(env.approve('invoice', same).number, 'GWND-INV-0001');
+  assert.equal(env.approve('invoice', changed).number, 'GWND-INV-0002');
+  const lost = env.draft(dev, 'invoice', { business_id: B.agency, client_id: clientId, to_name: 'Alpha', title: 'Made after the backup' }, [
+    { description: 'Site', unit_cents: 50000 }, { description: 'Domain', unit_cents: 2500, tax_exempt: true },
+  ]);
+  assert.equal(env.approve('invoice', lost).number, 'GWND-INV-0003');
+  const lostLines = env.billing.lines('invoice', lost).map((l) => [l.id, l.description, l.unit_cents, l.tax_exempt]);
+  await env.close();
+  await restoreBackup({ from: backup.file, dbPath: config.dbPath, backupDir: config.backup.dir });
+  const after = await startApp(t, config, { modules, now: env.clock.now });
+  const { billing, sync } = after.ctx.services;
+  const row = (id) => after.db.prepare('SELECT * FROM billing_invoices WHERE id = ?').get(id);
+  const fp = (id) => documentFingerprint(row(id), billing.lines('invoice', id));
+  // The archive tells the truth: the drafts are drafts again, the third is gone.
+  assert.deepEqual(billing.archive().map((d) => [d.number, d.inDatabase, d.draftAgain]).sort(), [
+    ['GWND-INV-0001', false, true], ['GWND-INV-0002', false, true], ['GWND-INV-0003', false, false]]);
+  // The same draft approved again: its kept number and day, no new number.
+  env.setNow('2026-10-13 10:00');
+  const re = billing.approve('invoice', same, { actor: 'owner', today: '2026-10-13', fingerprint: fp(same) });
+  assert.deepEqual([re.number, re.readopted], ['GWND-INV-0001', true]);
+  assert.deepEqual([row(same).status, row(same).issue_date], ['issued', '2026-10-12']);
+  // The other one, changed since: refused, naming the kept number.
+  const line = after.db.prepare('SELECT id FROM billing_invoice_lines WHERE invoice_id = ?').pluck().get(changed);
+  sync.applyLocal({ actor: 'owner', entity: 'invoice_line', op: 'update', recordId: line, fields: { unit_cents: 1 } });
+  assert.throws(() => billing.approve('invoice', changed, { actor: 'owner', today: '2026-10-13', fingerprint: fp(changed) }),
+    (e) => e.status === 409 && e.code === 'kept_differs' && /GWND-INV-0002 was issued on 2026-10-12/.test(e.message));
+  // Restore from archive: as it was issued (its line put back), and the lost one with its original id, number and lines.
+  assert.equal(billing.restoreFromArchive('invoice', changed, { actor: 'owner' }).number, 'GWND-INV-0002');
+  assert.deepEqual([row(changed).status, row(changed).number, billing.lines('invoice', changed)[0].unit_cents], ['issued', 'GWND-INV-0002', 250000]);
+  assert.equal(billing.restoreFromArchive('invoice', lost, { actor: 'owner' }).number, 'GWND-INV-0003');
+  assert.deepEqual([row(lost).status, row(lost).title, row(lost).total_cents], ['issued', 'Made after the backup', 59000]);
+  assert.deepEqual(billing.lines('invoice', lost).map((l) => [l.id, l.description, l.unit_cents, l.tax_exempt]), lostLines);
+  assert.equal(billing.restoreFromArchive('invoice', lost, { actor: 'owner' }).already, true);
+  assert.ok(billing.archive().every((d) => d.inDatabase));
+  // The counter was kept: the next number is new.
+  assert.equal(billing.settingsFor(B.agency).next.invoice, 'GWND-INV-0004');
 });

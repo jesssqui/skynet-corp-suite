@@ -7,6 +7,7 @@ import {
   DOC_ENTITY, LINE_ENTITY, LINE_PARENT, KIND_LABELS, HST_RATE_BP, PAYMENT_METHOD_LABELS, INVOICE_STATE_LABELS,
   documentTotals, documentFingerprint, documentProblems, invoiceState, sortLines, moneyText, billingAllowed, BILLING_BLOCKED,
 } from '@suite/shared/billing';
+import { addDays } from '@suite/shared/planner';
 import { addressLines, parseDollars, centsToInput, textOrNull, fold } from '../crm/logic.js';
 
 export { KIND_LABELS, PAYMENT_METHOD_LABELS, INVOICE_STATE_LABELS, moneyText, documentTotals, invoiceState, billingAllowed, BILLING_BLOCKED };
@@ -271,13 +272,18 @@ export const DETAIL_FIELDS = Object.freeze({
 /** The next line's position on a document. */
 export const nextPosition = (lines) => (lines?.length ? Math.max(...lines.map((l) => l.position ?? 0)) + 1 : 0);
 
-/** A payment's sheet: amount ($, more than 0), day, method, note. → { fields, problems } */
-export function paymentFields(v, invoiceId) {
+/**
+ * A payment's sheet: amount ($, more than 0), day (not after tomorrow: the server refuses it — review fix), method, note.
+ * → { fields, problems, warning } — `warning` when it was paid before the invoice's issue date (allowed: a deposit).
+ */
+export function paymentFields(v, invoiceId, { today = null, issueDate = null } = {}) {
   const problems = {};
   const cents = parseDollars(v.amount);
   if (!cents || Number.isNaN(cents)) problems.amount = 'Enter the amount received, like 1130 or 565.50';
   if (!v.paid_on) problems.paid_on = 'Pick the day it was paid';
-  return { problems, fields: { invoice_id: invoiceId, amount_cents: Number.isNaN(cents) ? null : cents, paid_on: v.paid_on || null, method: v.method || null, note: textOrNull(v.note) } };
+  else if (today && v.paid_on > addDays(today, 1)) problems.paid_on = 'That day hasn’t come yet';
+  const warning = v.paid_on && issueDate && v.paid_on < issueDate ? `Before the invoice was issued (${issueDate}): fine for a deposit — check the day otherwise` : null;
+  return { problems, warning, fields: { invoice_id: invoiceId, amount_cents: Number.isNaN(cents) ? null : cents, paid_on: v.paid_on || null, method: v.method || null, note: textOrNull(v.note) } };
 }
 
 // ---- approving a draft -------------------------------------------------------------------------------------------

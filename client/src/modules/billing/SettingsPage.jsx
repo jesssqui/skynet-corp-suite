@@ -29,7 +29,7 @@ function BusinessForm({ business, offline, onSaved }) {
       const { prefixSet, ...rest } = v;
       const out = await api.put(`/api/billing/settings/${business.businessId}`, { ...rest, prefix: prefixSet });
       setV(formOf(out.business));
-      setMsg({ tone: 'ok', text: 'Saved.' });
+      setMsg(out.business.warning ? { tone: 'warn', text: `Saved. ${out.business.warning}.` } : { tone: 'ok', text: 'Saved.' });
       onSaved?.();
     } catch (err) {
       setMsg({ tone: 'danger', text: err.message });
@@ -62,7 +62,7 @@ function BusinessForm({ business, offline, onSaved }) {
         </div>
         <TextAreaField id={`bs-qterms-${business.businessId}`} label="Usual terms on quotes" value={v.quote_terms} onChange={set('quote_terms')} rows={2} maxLength={5000} />
         <TextAreaField id={`bs-iterms-${business.businessId}`} label="Usual terms on invoices" value={v.invoice_terms} onChange={set('invoice_terms')} rows={2} maxLength={5000} />
-        {msg ? <Notice tone={msg.tone === 'ok' ? 'info' : 'danger'}>{msg.text}</Notice> : null}
+        {msg ? <Notice tone={msg.tone === 'ok' ? 'info' : msg.tone === 'warn' ? 'warn' : 'danger'}><span data-testid="settings-message">{msg.text}</span></Notice> : null}
         <div><Button variant="primary" type="submit" disabled={busy || offline || !dirty}>Save</Button></div>
       </form>
     </Card>
@@ -79,7 +79,7 @@ export default function SettingsPage() {
       {offline ? <Notice tone="warn">Needs a connection to the suite.</Notice> : null}
       {error && !offline ? <Notice tone="danger">{error.message}</Notice> : null}
       <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
-        {(data?.businesses ?? []).map((b) => <BusinessForm key={`${b.businessId}:${b.updatedAt}`} business={b} offline={offline} onSaved={reload} />)}
+        {(data?.businesses ?? []).map((b) => <BusinessForm key={b.businessId} business={b} offline={offline} onSaved={reload} />)}
       </div>
       <p style={{ ...muted, marginTop: 'var(--space-3)' }}>Wholesale invoices stay in the Order Manager; Save Point Shop sells on eBay; Personal doesn’t bill.</p>
     </>
