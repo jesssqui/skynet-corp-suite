@@ -32,9 +32,17 @@ export function PeriodNav({ onPrev, onNext, onCurrent, isCurrent, prevLabel, nex
   );
 }
 
+/** "3 h · 2 tasks · 1 meeting" (C6b: meetings from Apple Calendar count in the time). */
+function weekDayText(d) {
+  const parts = [formatMinutes(d.minutes)];
+  if (d.count) parts.push(`${d.count} ${d.count === 1 ? 'task' : 'tasks'}`);
+  if (d.meetings) parts.push(`${d.meetings} ${d.meetings === 1 ? 'meeting' : 'meetings'}`);
+  return parts.join(' · ');
+}
+
 /** The week strip: each day's planned time against the day length; overbooked days open their suggestions. */
 function WeekDays({ data, me, today, monday, dayMinutes, open, setOpen }) {
-  const days = useMemo(() => weekLoads(data.tasks, { me, today, monday, dayMinutes }), [data.tasks, me, today, monday, dayMinutes]);
+  const days = useMemo(() => weekLoads(data.tasks, { me, today, monday, dayMinutes, meetings: data.meetings }), [data.tasks, data.meetings, me, today, monday, dayMinutes]);
   return (
     <ul className="planner-week-days" data-testid="week-days">
       {days.map((d) => (
@@ -45,7 +53,7 @@ function WeekDays({ data, me, today, monday, dayMinutes, open, setOpen }) {
               {d.past ? null : <Meter value={d.minutes} max={dayMinutes} over={d.over} label={`${dayShort(d.day)} planned`} />}
             </div>
             <span style={{ ...muted, minWidth: 72, textAlign: 'right', color: d.over ? 'var(--warn)' : undefined, fontWeight: d.over ? 600 : 400 }}>
-              {d.past ? 'Past' : d.count ? `${formatMinutes(d.minutes)} · ${d.count} ${d.count === 1 ? 'task' : 'tasks'}` : 'Free'}
+              {d.past ? 'Past' : d.count || d.meetings ? weekDayText(d) : 'Free'}
             </span>
             {d.over ? (
               <TextButton onClick={() => setOpen(open === d.day ? null : d.day)} aria-expanded={open === d.day} aria-label={`What to push off ${dayShort(d.day)}`}>
@@ -54,7 +62,7 @@ function WeekDays({ data, me, today, monday, dayMinutes, open, setOpen }) {
             ) : null}
           </div>
           {open === d.day ? (
-            <DayLoadPanel tasks={data.tasks} me={me} today={today} day={d.day} dayMinutes={dayMinutes} goalsById={data.goalsById} always testId={`day-load-${d.day}`} />
+            <DayLoadPanel tasks={data.tasks} meetings={data.meetings} me={me} today={today} day={d.day} dayMinutes={dayMinutes} goalsById={data.goalsById} always testId={`day-load-${d.day}`} />
           ) : null}
         </li>
       ))}

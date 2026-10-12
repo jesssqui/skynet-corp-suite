@@ -4,7 +4,8 @@
 // "Plan my day" for the morning plan, the capture field (fixed above the tab bar on phones), the
 // inbox count and the relationships without a next step. C4b: the overbooked warning with what to
 // push, "N to sort" (tasks with no day and no goal) and Focus.
-// Today's calendar (Apple Calendar meetings) is a later package: nothing is shown for it yet.
+// C6b: the day's meetings from Apple Calendar (synced, read-only) in time order beside the tasks, and in
+// the day's load (they are never suggested to push).
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { PageHeader, Card, Button, EmptyState, Icon } from '../../ui/index.js';
@@ -17,7 +18,8 @@ import { buildToday, openInbox, relationshipsWithoutNextStep, TOP_LIMIT } from '
 import { leadsWithoutNextStep } from '@suite/shared/leads';
 import { STAGE_LABELS } from '../crm/leads.js';
 import { unplannedTasks, dayMinutesFor } from './plan.js';
-import { DayLoadPanel } from './planParts.jsx';
+import { DayLoadPanel, MeetingList } from './planParts.jsx';
+import { meetingsOn } from './meetings.js';
 import { PagedTaskList, ShowMore, PAGE, CaptureBar, CaptureSpacer, useToday, muted } from './parts.jsx';
 import { useFinishedThisSession } from './prefs.js';
 import { TaskSheet, newTaskInitial } from './forms.jsx';
@@ -121,6 +123,7 @@ export default function TodayPage() {
     return leadsWithoutNextStep({ leads: live, tasks: data.tasks }).sort((a, b) => String(a.name).localeCompare(String(b.name)) || (a.id < b.id ? -1 : 1));
   }, [data]);
   const inboxCount = useMemo(() => (data ? openInbox(data.inbox).length : 0), [data]);
+  const todaysMeetings = useMemo(() => (data ? meetingsOn(data.meetings, { me, day: today }) : []), [data, me, today]);
   const toSort = useMemo(() => (data ? unplannedTasks(data.tasks, { goalsById: data.goalsById, me, today }).length : 0), [data, me, today]);
   const dayMinutes = data ? dayMinutesFor(data.workdays, me) : 0;
   const navigate = useNavigate();
@@ -171,7 +174,12 @@ export default function TodayPage() {
         ) : (
           <div className="planner-today">
             <div className="planner-col" data-testid="today-tasks">
-              <DayLoadPanel tasks={data.tasks} me={me} today={today} dayMinutes={dayMinutes} goalsById={data.goalsById} framed testId="today-load" />
+              <DayLoadPanel tasks={data.tasks} meetings={data.meetings} me={me} today={today} dayMinutes={dayMinutes} goalsById={data.goalsById} framed testId="today-load" />
+              {todaysMeetings.length ? (
+                <Section title="Calendar" count={todaysMeetings.length} testId="today-meetings">
+                  <MeetingList meetings={todaysMeetings} day={today} testId="today-meetings-list" />
+                </Section>
+              ) : null}
               {view.overdue.length ? (
                 <Section title="Overdue" tone="danger" count={view.overdue.length} testId="overdue">
                   <PagedTaskList tasks={view.overdue} testId="overdue" {...rowProps} />

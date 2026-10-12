@@ -1,7 +1,7 @@
 // Account → Calendar (C6a): this person's task calendar link for Apple Calendar — make it, replace
 // it (the old one stops working at once) or turn it off. The link is shown once, when it is made
 // (only its hash is kept on the server), with how to subscribe on the iPhone and the Mac.
-// Needs a connection (server settings, not synced).
+// Needs a connection (server settings, not synced). C6b: the "Meetings from Apple Calendar" card (AppleCard).
 import { useState } from 'react';
 import { PageHeader, Card, Button, Notice, Badge } from '../../ui/index.js';
 import { formatDateTime } from '../../ui/format.js';
@@ -9,6 +9,7 @@ import { api } from '../../api/client.js';
 import { useServerData } from '../../api/useServerData.js';
 import AccountTabs from '../auth/AccountTabs.jsx';
 import { feedLinks, linkReachProblem } from './links.js';
+import AppleCard from './AppleCard.jsx';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
 const code = {
@@ -136,7 +137,7 @@ export default function CalendarPage() {
 
   return (
     <>
-      <PageHeader title="Account" subtitle="Your tasks in Apple Calendar" actions={<AccountTabs />} />
+      <PageHeader title="Account" subtitle="Apple Calendar: your meetings in the suite, your tasks in Calendar" actions={<AccountTabs />} />
       {offline ? <Notice tone="warn" style={{ marginBottom: 'var(--space-4)' }}>No connection to the suite: the calendar link can’t be changed right now.</Notice> : null}
       {error && !offline && !data ? <Notice tone="danger" style={{ marginBottom: 'var(--space-4)' }}>{error.message}</Notice> : null}
       <div style={{ display: 'grid', gap: 'var(--space-4)', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', alignItems: 'start' }}>
@@ -192,6 +193,7 @@ export default function CalendarPage() {
             </div>
           )}
         </Card>
+        <AppleCard />
         <HowTo />
         <WhatsInIt timeZone={data?.timeZone} />
       </div>

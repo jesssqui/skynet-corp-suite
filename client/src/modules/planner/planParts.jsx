@@ -9,6 +9,7 @@ import { BusinessChip, useAction } from '../crm/parts.jsx';
 import { formatMinutes, shortDay, addDays } from './logic.js';
 import { dayLoad, pushSuggestions, pushChange, goalChange, businessMismatch, quickDays, goalChoices } from './plan.js';
 import { OwnerBadge, ShowMore, PAGE, muted } from './parts.jsx';
+import { meetingTimeText, meetingOver } from './meetings.js';
 
 /** Week / Month / Review: the planning pages' own tabs. */
 export function PlanTabs() {
@@ -48,11 +49,11 @@ const latest = async (task) => (await store.get('task', task.id)) ?? task;
  * listed with Undo. Tasks without an estimate count 0 and are listed as such.
  * Shows nothing when the day fits and nothing was moved, unless `always`.
  */
-export function DayLoadPanel({ tasks, me, today, day = today, dayMinutes, goalsById, always = false, testId = 'day-load', heading = true, framed = false }) {
-  const load = useMemo(() => dayLoad(tasks, { me, today, day, dayMinutes }), [tasks, me, today, day, dayMinutes]);
+export function DayLoadPanel({ tasks, meetings = null, me, today, day = today, dayMinutes, goalsById, always = false, testId = 'day-load', heading = true, framed = false }) {
+  const load = useMemo(() => dayLoad(tasks, { me, today, day, dayMinutes, meetings }), [tasks, meetings, me, today, day, dayMinutes]);
   const suggestions = useMemo(
-    () => (load.over ? pushSuggestions({ tasks, me, today, day, dayMinutes, goalsById }) : []),
-    [load, tasks, me, today, day, dayMinutes, goalsById],
+    () => (load.over ? pushSuggestions({ tasks, me, today, day, dayMinutes, goalsById, meetings }) : []),
+    [load, tasks, meetings, me, today, day, dayMinutes, goalsById],
   );
   const [moved, setMoved] = useState(() => new Map()); // id -> { task, to, undo }
   const { busy, error, run } = useAction();
@@ -87,6 +88,13 @@ export function DayLoadPanel({ tasks, me, today, day = today, dayMinutes, goalsB
         </div>
       ) : null}
       <Meter value={load.minutes} max={dayMinutes} over={load.over} label={`${name}’s planned time`} />
+      {load.meetings.length ? (
+        <span style={muted} data-testid={`${testId}-meetings`}>
+          {load.meetingMinutes
+            ? `Includes ${formatMinutes(load.meetingMinutes)} of meetings from Apple Calendar (${load.meetings.length}) — they stay where they are.`
+            : `${load.meetings.length} all-day or free ${load.meetings.length === 1 ? 'event' : 'events'} in Apple Calendar (not counted).`}
+        </span>
+      ) : null}
       {suggestions.length ? (
         <div style={{ display: 'grid', gap: 4 }}>
           <span style={muted}>To make it fit, move:</span>
@@ -125,6 +133,27 @@ export function DayLoadPanel({ tasks, me, today, day = today, dayMinutes, goalsB
     </div>
   );
   return framed ? <Card>{panel}</Card> : panel;
+}
+
+/**
+ * A day's meetings from Apple Calendar (C6b), in time order: time (or "All day"), title, calendar. Read-only
+ * (they change in Apple Calendar); ones already over are dimmed. `nowMs` from the page's clock.
+ */
+export function MeetingList({ meetings, day, nowMs = Date.now(), testId = 'meetings', compact = false }) {
+  if (!meetings.length) return null;
+  return (
+    <ul className="planner-meetings" data-testid={testId} style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: compact ? 2 : 'var(--space-1)' }}>
+      {meetings.map((m) => (
+        <li key={m.id} data-meeting-id={m.id} data-over={meetingOver(m, nowMs) ? 'true' : 'false'}
+          style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap', minWidth: 0, opacity: meetingOver(m, nowMs) ? 0.6 : 1,
+            borderTop: compact ? 'none' : '1px solid var(--border)', padding: compact ? 0 : 'var(--space-1) 0' }}>
+          <span style={{ ...muted, minWidth: 128, fontVariantNumeric: 'tabular-nums' }} data-testid="meeting-time">{meetingTimeText(m, day)}</span>
+          <span style={{ fontWeight: 600, overflowWrap: 'anywhere', minWidth: 0, flex: '1 1 140px' }}>{m.title}</span>
+          {m.calendar_name ? <span style={muted}>{m.calendar_name}{m.busy || m.all_day ? '' : ' · free'}</span> : null}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 /** One task to sort: quick days (one tap), another day + "Move there" (typed or picked), or a goal (two taps). */
