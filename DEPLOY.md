@@ -362,6 +362,31 @@ Tailscale must be on for the calendar to update; without it the calendar keeps i
 device within an hour lock that device out of every feed for an hour (an old subscription left after *Replace* never
 gets near that); a server restart lifts it.
 
+### Your meetings in the suite (C6b)
+
+The other direction: each of you can have your iCloud meetings on **Today**, in **Plan my day** and in the day's load
+(the overbooked warning). The suite reads them over CalDAV with an **app-specific password** — never your Apple ID's own
+password — and only reads (it can't change or add anything in your calendars).
+
+1. **appleid.apple.com** → sign in → **Sign-In and Security** → **App-Specific Passwords** → **+** → name it *Suite* →
+   copy the password it shows (four groups of four letters, `abcd-efgh-ijkl-mnop`). Two-factor authentication must be
+   on for the Apple ID (it is for every current one).
+2. In the suite: **Account → Calendar → Meetings from Apple Calendar** → your Apple ID (the email you sign in to iCloud
+   with) and the app-specific password → **Connect**. The suite checks it with iCloud first (nothing is saved if Apple
+   refuses it), keeps it encrypted with a key file in the data volume (`calendar-secret.key`, like the other connections'
+   keys — never in the database or the backups in usable form) and never shows it again.
+3. Untick any calendar you don't want counted (a shared family calendar, say). Check: a meeting you add in Calendar on the
+   iPhone or Mac shows on Today within 15 minutes (or at once with **Read now**) and counts in that day's load.
+
+Each person connects their own. Reads every 15 minutes (`CALDAV_PULL_EVERY_MIN`), from a week back to two months ahead.
+What the suite keeps of a meeting: its title, times, calendar and whether it is busy — not its notes, place or who is
+invited; every device holds both people's meetings (like tasks) and each of you sees only your own. **If you revoke the
+app-specific password** at appleid.apple.com the suite stops calling at once (the card says so): make a new one and
+enter it with **New password…**. **Forget…** removes the connection and your meetings from the suite (also delete the
+app-specific password at appleid.apple.com). The **Apple Calendar** card on System → Connections pauses both people's
+reads (meetings stay as last read). After a restore the connection is kept as it is now and the meetings are put right
+by the next read.
+
 ## 8. Renewals and recurring costs (D6)
 
 Nothing to set up. After this version starts:
