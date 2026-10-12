@@ -1,6 +1,6 @@
 // Pieces the playbook screens and the client page share: a run's row (name, client, progress, next task),
-// a step's links (web addresses open in a new tab; a suite file — "file:<id>" — shows as a file until
-// D10's files can open it: the seam is fileHref), and a run's checklist by stage with ticks.
+// a step's links (web addresses open in a new tab; a suite file — "file:<id>" — downloads it: D10's files
+// module sets the seam, fileHref), and a run's checklist by stage with ticks.
 import { Link } from 'react-router-dom';
 import { parseLinks, RUN_STATUS_LABELS, runStatus } from '@suite/shared/playbooks';
 import { Badge } from '../../ui/index.js';
@@ -13,8 +13,9 @@ const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
 const STATUS_TONES = { active: 'accent', done: 'ok', stopped: 'neutral', starting: 'warn' };
 
 /**
- * Where a suite file opens (D10's seam): null until the files module says. D10 can set it with
- * setFileHref((id) => `/files/${id}`) from its own module; nothing here depends on D10's code.
+ * Where a suite file opens (D10's seam): null until the files module says. The files module sets it
+ * (client/src/modules/files/index.jsx → its download address, /api/files/<id>/download); nothing here
+ * depends on D10's code.
  */
 let fileHref = () => null;
 export function setFileHref(fn) {
@@ -37,7 +38,11 @@ export function StepLinks({ text }) {
         if (l.kind === 'file') {
           const href = fileHref(l.id);
           const label = `File: ${l.label ?? l.id}`;
-          return <li key={i} style={{ ...muted, overflowWrap: 'anywhere' }}>{href ? <Link to={href} style={{ color: 'var(--accent)' }}>{label}</Link> : label}</li>;
+          // A server address (a download) is a plain link, not an in-app route.
+          const a = !href ? label : href.startsWith('/api/')
+            ? <a href={href} download style={{ color: 'var(--accent)' }}>{label}</a>
+            : <Link to={href} style={{ color: 'var(--accent)' }}>{label}</Link>;
+          return <li key={i} style={{ ...muted, overflowWrap: 'anywhere' }}>{a}</li>;
         }
         return <li key={i} style={{ ...muted, overflowWrap: 'anywhere' }}>{l.text}</li>;
       })}
