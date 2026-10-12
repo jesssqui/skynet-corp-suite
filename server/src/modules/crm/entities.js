@@ -210,6 +210,32 @@ export const CRM_ENTITIES = [
       won_made: { type: 'text', max: 2000 },
     },
   },
+  {
+    // D8c: a way we reach leads — "Email Outreach", with sub-campaigns ("In Person Visit") under it. Two
+    // levels (checkCampaign). A sub-campaign belongs to its main one, so deleting a main campaign hides its
+    // sub-campaigns (deletes never cascade); archived hides one from pickers.
+    entity: 'campaign',
+    table: 'crm_campaigns',
+    ops: ['create', 'update', 'delete'],
+    fields: {
+      name: { type: 'text', max: 200, required: true },
+      parent_id: { type: 'id', ref: 'campaign', parent: true },
+      notes: NOTES,
+      archived: { type: 'boolean' },
+      position: { type: 'integer' },
+    },
+  },
+  {
+    // D8c: a lead is in a campaign (create/delete only; leaving it deletes the record). A lead can be in
+    // several. The campaign is a plain ref: a deleted campaign just stops counting.
+    entity: 'lead_campaign',
+    table: 'crm_lead_campaigns',
+    ops: ['create', 'delete'],
+    fields: {
+      lead_id: { type: 'id', ref: 'lead', parent: true, required: true },
+      campaign_id: { type: 'id', ref: 'campaign', required: true },
+    },
+  },
 ];
 
 /** entity -> definition */

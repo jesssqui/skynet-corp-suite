@@ -13,6 +13,7 @@ export default {
   // After every service exists (sync has checked the refs): our businesses, once.
   start(_ctx, service) {
     service.seedBusinesses();
+    service.seedCampaigns(); // D8c
     service.imports.markInterrupted(); // an import cut off by a restart
   },
   // The CSV import sends the file's text as JSON (up to 5 MB of text): a larger body limit there.

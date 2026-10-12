@@ -19,6 +19,7 @@ import { KIND_LABELS, actorLabel } from './logic.js';
 import {
   STAGE_LABELS, SOURCE_LABELS, LOST_LABELS, LEAD_ACTIVITY_LABELS, LEAD_STAGE_FIELDS, leadWins, stageClashes, stageChange, saveStageChange, leadValueText, daysInStage, nextStepOf,
 } from './leads.js';
+import { CampaignsCard } from './CampaignsCard.jsx';
 import { LeadForm, LostSheet, WinSheet, LeadActivityForm } from './leadForms.jsx';
 import { WonTwice, StageClash, NeedsLook } from './LeadNotices.jsx';
 import CrmTabs from './CrmTabs.jsx';
@@ -169,6 +170,7 @@ function LeadScreen({ leadId }) {
 
       <div className="lead-grid">
         <div className="crm-col">
+          <CampaignsCard lead={lead} campaigns={data.campaigns} memberships={data.memberships} inIds={data.leadCampaignIds} />
           <Card>
             <div style={sectionHead}>
               <h2 style={h2}>Next step</h2>

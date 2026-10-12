@@ -13,6 +13,8 @@ import { useToday } from '../planner/parts.jsx';
 import { usePipelineData } from './data.js';
 import { BusinessChip, Badges, TextButton } from './parts.jsx';
 import { pickableBusinesses, KIND_LABELS } from './logic.js';
+import { campaignOptions, campaignScope, inCampaign, joinCampaign, leadCampaignList } from './campaigns.js';
+import { store } from '../../sync/index.js';
 import { STAGE_LABELS, LOST_LABELS, filterLeads, pipelineView, valueText, leadValueText, daysInStage, nextStepOf } from './leads.js';
 import { LeadForm } from './leadForms.jsx';
 import CrmTabs from './CrmTabs.jsx';
@@ -29,7 +31,7 @@ function stageAge(days) {
   return days === 1 ? '1 day' : `${days} days`;
 }
 
-function LeadCard({ lead, business, client, next, today }) {
+function LeadCard({ lead, business, client, next, today, campaigns = [] }) {
   const open = isOpenLead(lead);
   const value = leadValueText(lead);
   return (
@@ -59,6 +61,11 @@ function LeadCard({ lead, business, client, next, today }) {
             {lead.closed_at ? ` · ${formatDay(lead.closed_at)}` : ''}
           </span>
         )}
+        {campaigns.length ? (
+          <span style={{ ...muted, display: 'flex', gap: 'var(--space-1) var(--space-2)', flexWrap: 'wrap' }} data-testid="lead-campaigns">
+            {campaigns.map((c) => <Badge key={c.id} tone="neutral">{c.label}</Badge>)}
+          </span>
+        ) : null}
         <Badges record={lead} />
       </Link>
     </li>
@@ -83,6 +90,7 @@ function Column({ stage, leads, active, head, data, today }) {
                 business={data.businessesById.get(l.business_id)}
                 client={data.clientsById.get(l.client_id ?? l.won_client_id)}
                 next={nextStepOf(data.tasksByLead.get(l.id))}
+                campaigns={leadCampaignList(data.campaigns, data.campaignsByLead.get(l.id))}
                 today={today}
               />
             ))}
@@ -109,6 +117,7 @@ export default function PipelinePage() {
   const q = params.get('q') ?? '';
   const stage = STAGES.includes(params.get('stage')) ? params.get('stage') : 'lead';
   const flaggedOnly = params.get('flag') === '1';
+  const campaign = params.get('campaign') ?? ''; // a campaign id (with its sub-campaigns), or 'none'
   const [sheet, setSheet] = useState(null);
   const navigate = useNavigate();
   const setParam = (key, value, fallback = '') => {
@@ -120,12 +129,13 @@ export default function PipelinePage() {
 
   const view = useMemo(() => {
     if (!data) return null;
-    const filtered = filterLeads(data.leads, { business, q, owner });
+    const scope = campaign === 'none' ? 'none' : campaign ? campaignScope(data.campaigns, campaign) : null;
+    const filtered = filterLeads(data.leads, { business, q, owner }).filter((l) => !scope || inCampaign(data.campaignsByLead.get(l.id), scope));
     const hasNext = (l) => Boolean(nextStepOf(data.tasksByLead.get(l.id)));
     const flagged = filtered.filter((l) => isOpenLead(l) && !hasNext(l));
     const shownLeads = flaggedOnly ? flagged : filtered;
     return { ...pipelineView(shownLeads, { today }), flagged: flagged.length, total: filtered.length };
-  }, [data, business, q, owner, flaggedOnly, today]);
+  }, [data, business, q, owner, flaggedOnly, today, campaign]);
 
   const businessOptions = useMemo(() => pickableBusinesses(data?.businesses ?? [], business || null), [data, business]);
   const close = () => setSheet(null);
@@ -177,6 +187,13 @@ export default function PipelinePage() {
             onChange={(v) => setParam('owner', v)}
             options={[{ value: '', label: 'Everyone’s' }, { value: me, label: 'Mine' }, { value: me === 'owner' ? 'partner' : 'owner', label: 'My partner’s' }, { value: 'shared', label: 'Shared' }]}
           />
+          <SelectField
+            id="pipeline-campaign"
+            label="Campaign"
+            value={campaign}
+            onChange={(v) => setParam('campaign', v)}
+            options={[{ value: '', label: 'All campaigns' }, { value: 'none', label: 'In no campaign' }, ...campaignOptions(data?.campaigns ?? [], { keep: campaign })]}
+          />
           <TextField id="pipeline-q" label="Search" type="search" value={q} onChange={(e) => setParam('q', e.target.value)} placeholder="Name, contact, email, phone" />
         </div>
         <div className="pipeline-stage-switch">
@@ -223,7 +240,11 @@ export default function PipelinePage() {
           clientsById={data.clientsById}
           accountsById={data.accountsById}
           onClose={close}
-          onDone={(id) => { close(); if (id) navigate(`/crm/leads/${id}`); }}
+          onDone={async (id) => {
+            close();
+            if (id && campaign && campaign !== 'none') await joinCampaign(store, data.memberships, id, campaign).catch(() => {}); // a new lead starts in the campaign being looked at
+            if (id) navigate(`/crm/leads/${id}`);
+          }}
         />
       ) : null}
     </>

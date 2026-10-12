@@ -8,6 +8,7 @@
 // built once per such change. So saving a note re-reads only activities, and opening a client
 // after the list reuses what the list already read.
 import { useSyncData } from '../../sync/index.js';
+import { campaignsByLead } from '@suite/shared/campaigns';
 import { lastOrderByClient, mergeLastActivity, quietFromByClient } from '../wholesale/logic.js';
 
 // What each CRM type belongs to (its parent chain), for when the engine's definitions aren't here yet.
@@ -38,6 +39,9 @@ const BELONGS_TO = {
   // D8: a lead belongs to one of our businesses (its client/account are plain refs); its timeline to it.
   lead: ['business'],
   lead_activity: ['lead', 'business'],
+  // D8c: a sub-campaign belongs to its main campaign; a lead's membership to the lead (the campaign is a plain ref).
+  campaign: ['campaign'],
+  lead_campaign: ['lead', 'business'],
 };
 
 const caches = new WeakMap(); // engine -> { entries: Map<entity, Promise<Entry>>, off }
@@ -232,13 +236,17 @@ export function useClientPageData(clientId) {
 }
 
 // D8: the pipeline and one lead (the device's copy).
-const PIPELINE_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'lead', 'task'];
+const PIPELINE_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'lead', 'task', 'campaign', 'lead_campaign'];
 
 /** The Pipeline page: every lead, our businesses, the open tasks naming leads (their next steps), and clients/accounts for names. */
 export function usePipelineData() {
   const { data, loading, error } = useSyncData(async (e) => {
-    const [businesses, clients, accounts, contacts, relationships, leads, tasks] = await cachedLists(e, PIPELINE_ENTITIES);
+    const [businesses, clients, accounts, contacts, relationships, leads, tasks, campaigns, memberships] = await cachedLists(e, PIPELINE_ENTITIES);
+    const liveCampaignIds = new Set(campaigns.records.map((c) => c.id));
     return {
+      campaigns: campaigns.records,
+      memberships: memberships.records,
+      campaignsByLead: campaignsByLead(memberships.records, liveCampaignIds),
       businesses: businesses.records,
       businessesById: businesses.byId(),
       clients: clients.records,
@@ -261,10 +269,13 @@ const LEAD_PAGE_ENTITIES = [...PIPELINE_ENTITIES, 'lead_activity'];
 /** One lead with its timeline and tasks, plus what winning reads (clients, accounts, contacts, relationships); { lead: null } when not here. */
 export function useLeadPageData(leadId) {
   const { data, loading, error } = useSyncData(async (e) => {
-    const [businesses, clients, accounts, contacts, relationships, leads, tasks, leadActivities] = await cachedLists(e, LEAD_PAGE_ENTITIES);
+    const [businesses, clients, accounts, contacts, relationships, leads, tasks, campaigns, memberships, leadActivities] = await cachedLists(e, LEAD_PAGE_ENTITIES);
     const lead = leads.byId().get(leadId) ?? null;
     if (!lead) return { lead: null };
     return {
+      campaigns: campaigns.records,
+      memberships: memberships.records,
+      leadCampaignIds: campaignsByLead(memberships.where('lead_id', leadId), new Set(campaigns.records.map((c) => c.id))).get(leadId) ?? new Set(),
       lead,
       businesses: businesses.records,
       businessesById: businesses.byId(),
@@ -321,4 +332,21 @@ export function useBusinesses() {
     return [...entry.records].sort((a, b) => (a.position ?? 1e9) - (b.position ?? 1e9));
   }, [], { entities: ['business'] });
   return { businesses: data ?? [], loading };
+}
+
+// D8c: the Campaigns page — campaigns, the leads and their memberships (the device's copy).
+const CAMPAIGN_ENTITIES = ['business', 'lead', 'campaign', 'lead_campaign'];
+
+export function useCampaignsData() {
+  const { data, loading, error } = useSyncData(async (e) => {
+    const [, leads, campaigns, memberships] = await cachedLists(e, CAMPAIGN_ENTITIES);
+    const live = new Set(campaigns.records.map((c) => c.id));
+    return {
+      campaigns: campaigns.records,
+      leads: leads.records,
+      memberships: memberships.records,
+      campaignsByLead: campaignsByLead(memberships.records, live),
+    };
+  }, [], { entities: CAMPAIGN_ENTITIES });
+  return { data: data ?? null, loading, error };
 }

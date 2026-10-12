@@ -24,6 +24,7 @@ import { nowIso } from '@suite/shared/time';
 import { readTable, CsvError } from '@suite/shared/csv';
 import { buildMatchIndex, findMatch, nameKey } from '@suite/shared/intake';
 import { BUSINESS_IDS } from '@suite/shared/crm';
+import { CAMPAIGN_IDS } from '@suite/shared/campaigns';
 import { LEAD_IMPORT_LIMITS, leadRowsFromTable, cleanLeadRow } from '@suite/shared/leadImport';
 import { HttpError } from '../../lib/httpError.js';
 
@@ -37,6 +38,7 @@ export const LEAD_ROW_STATES = Object.freeze(['new', 'imported', 'exists', 'clie
 
 export function createLeadImportService({ db, sync, log, limits: limitsIn = {} }) {
   const limits = { ...LEAD_IMPORT_LIMITS, ...limitsIn };
+  const campaignLive = () => Boolean(db.prepare('SELECT 1 FROM crm_campaigns WHERE id = ? AND deleted_at IS NULL').get(CAMPAIGN_IDS.email_outreach));
   const q = {
     clients: db.prepare('SELECT id, name FROM crm_clients WHERE deleted_at IS NULL'),
     accounts: db.prepare('SELECT id, client_id, name FROM crm_accounts WHERE deleted_at IS NULL'),
@@ -187,6 +189,9 @@ export function createLeadImportService({ db, sync, log, limits: limitsIn = {} }
         f.stage_changed_at = f.stage_changed_at ?? at;
         if (lost) f.closed_at = at;
         const leadId = apply('lead', f);
+        // D8c: every imported lead goes in Email Outreach (the research and outreach history), unless that
+        // campaign was deleted since.
+        if (campaignLive()) apply('lead_campaign', { lead_id: leadId, campaign_id: CAMPAIGN_IDS.email_outreach });
         for (const a of row.clean.activities) {
           apply('lead_activity', {
             lead_id: leadId, type: a.type, body: a.body, at: a.at ?? at,
