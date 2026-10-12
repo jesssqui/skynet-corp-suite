@@ -11,6 +11,7 @@ export { OWNERS, SHARED };
 export const CRM_ENTITY_NAMES = Object.freeze([
   'business', 'client', 'account', 'contact', 'consent', 'relationship', 'service', 'activity', 'link',
   'lead', 'lead_activity', // D8
+  'campaign', 'lead_campaign', // D8c
 ]);
 
 export const CLIENT_STATUSES = Object.freeze(['active', 'closed']);

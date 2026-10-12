@@ -5,6 +5,7 @@ import { isId } from '@suite/shared/ids';
 import { localDate } from '@suite/shared/time';
 import { normalizePhone } from '@suite/shared/normalize';
 import { OUR_BUSINESSES, consentStatus } from '@suite/shared/crm';
+import { CAMPAIGN_SEEDS } from '@suite/shared/campaigns';
 import { CRM_ENTITIES, CRM_ENTITY } from './entities.js';
 import { createImportService } from './import.js';
 import { createLeadImportService } from './leadImport.js';
@@ -69,7 +70,24 @@ export function createCrmService({ db, services, log }) {
     };
   }
 
-  const checks = { link: checkLink, lead: checkLead };
+  // ---- campaigns (D8c) -----------------------------------------------------------------
+  // Two levels: a campaign's parent must be a main (top-level) campaign, and one that has
+  // sub-campaigns can't become a sub-campaign. Looked at as stored when the step arrives (it can differ
+  // by arrival order across devices; a refused step lands in Needs attention).
+  const campaignRow = db.prepare('SELECT id, parent_id FROM crm_campaigns WHERE id = ? AND deleted_at IS NULL');
+  const campaignKids = db.prepare('SELECT 1 FROM crm_campaigns WHERE parent_id = ? AND deleted_at IS NULL LIMIT 1');
+  function checkCampaign({ op, recordId, fields }) {
+    if (op === 'delete' || !fields || !Object.hasOwn(fields, 'parent_id') || !fields.parent_id) return null;
+    if (fields.parent_id === recordId) return { code: 'invalid_value', reason: 'parent_id: a campaign can’t be under itself' };
+    const parent = campaignRow.get(fields.parent_id);
+    if (parent?.parent_id) return { code: 'invalid_value', reason: 'parent_id: campaigns go two levels deep — pick a main campaign' };
+    if (op === 'update' && campaignKids.get(recordId)) return { code: 'invalid_value', reason: 'parent_id: this campaign has sub-campaigns, so it stays a main campaign' };
+    return null;
+  }
+  // A lead in a campaign twice (two devices adding it offline) is harmless: screens read it once and leaving
+  // removes every copy — so no check refuses it (that would only put a step in Needs attention).
+
+  const checks = { link: checkLink, lead: checkLead, campaign: checkCampaign };
   for (const def of CRM_ENTITIES) sync.registerEntity({ module: 'crm', ...def, ...(checks[def.entity] ? { check: checks[def.entity] } : {}) });
 
   /** A row as the API shows it: synced fields (booleans as true/false), who/when, and its sync state. */
@@ -109,6 +127,27 @@ export function createCrmService({ db, services, log }) {
       made.push(b.id);
     }
     if (made.length) log?.info(`created ${made.length} of our businesses`);
+    return made;
+  }
+
+  /**
+   * D8c: the starter campaigns (Email Outreach and its two sub-campaigns), once each: only an id that has
+   * never existed is created, so one renamed, archived or deleted in the app stays that way. Stamped at the
+   * old fixed time like the businesses. Returns the ids created now.
+   */
+  function seedCampaigns() {
+    const made = [];
+    const idOf = Object.fromEntries(CAMPAIGN_SEEDS.map((c) => [c.key, c.id]));
+    for (const c of CAMPAIGN_SEEDS) {
+      if (sync.recordState('campaign', c.id)) continue;
+      const r = sync.applyLocal({
+        entity: 'campaign', op: 'create', recordId: c.id, stampMs: SEED_STAMP_MS + 100 + c.position,
+        fields: { name: c.name, position: c.position, ...(c.parent ? { parent_id: idOf[c.parent] } : {}) },
+      });
+      if (r.status !== 'applied') throw new Error(`crm: could not create campaign ${c.name}: ${r.code} ${r.reason}`);
+      made.push(c.id);
+    }
+    if (made.length) log?.info(`created ${made.length} starter campaigns`);
     return made;
   }
 
@@ -442,6 +481,13 @@ export function createCrmService({ db, services, log }) {
 
   return {
     seedBusinesses,
+    seedCampaigns,
+    /** D8c: is this campaign live (and not under a deleted one)? */
+    liveCampaign: (id) => {
+      const c = campaignRow.get(id);
+      if (!c) return false;
+      return !c.parent_id || Boolean(campaignRow.get(c.parent_id));
+    },
     // C7: the accounting CSV import (preview, commit in chunks, batches). See import.js.
     imports: createImportService({ db, sync, log }),
     // D8b: leads from a research / outreach export (preview, commit). See leadImport.js.

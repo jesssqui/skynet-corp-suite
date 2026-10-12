@@ -130,6 +130,8 @@ test('the CRM registers its record types with sync (nine, and D8’s lead and le
     link: ['account_id->account', 'contact_id->contact'],
     lead: ['business_id->business'],
     lead_activity: ['lead_id->lead'],
+    campaign: ['parent_id->campaign'],
+    lead_campaign: ['lead_id->lead'],
   });
   assert.deepEqual(by.account.fields.age_restricted, { type: 'boolean' });
   assert.deepEqual(by.business.fields.default_owner.values, ['owner', 'partner', 'shared']);
@@ -270,7 +272,9 @@ test('every record type is created, changed and deleted through device steps, wi
 
   const lead = await a.create('lead', { name: 'Brantford Auto Body', business_id: AGENCY, kind: 'website', stage: 'lead', email: 'pat@bab.ca' });
   const leadActivity = await a.create('lead_activity', { lead_id: lead, type: 'call', body: 'Wants a quote', at: nowIso() });
-  const made = { business: biz, client, account, contact, consent, relationship: rel, service, activity, link: accountLink, lead, lead_activity: leadActivity };
+  const campaign = await a.create('campaign', { name: 'Door hangers' });
+  const leadCampaign = await a.create('lead_campaign', { lead_id: lead, campaign_id: campaign });
+  const made = { business: biz, client, account, contact, consent, relationship: rel, service, activity, link: accountLink, lead, lead_activity: leadActivity, campaign, lead_campaign: leadCampaign };
   for (const e of CRM_ENTITIES) {
     const r = row(db, e.table, made[e.entity]);
     assert.ok(r, e.entity);
@@ -349,6 +353,8 @@ test('nothing writes around the sync steps: direct SQL on any CRM table fails', 
   local('link', { account_id: account, app: 'wom', external_id: '1', matched_by: 'auto' });
   const lead = local('lead', { name: 'Lead', business_id: W, stage: 'lead' });
   local('lead_activity', { lead_id: lead, type: 'note', body: 'x', at: nowIso() });
+  const campaign = local('campaign', { name: 'Door hangers' });
+  local('lead_campaign', { lead_id: lead, campaign_id: campaign });
   for (const table of TABLES) {
     assert.ok(n(db, `SELECT count(*) AS n FROM ${table}`) > 0, table);
     assert.throws(() => db.prepare(`INSERT INTO ${table} (id) VALUES (?)`).run(newId()), /written only through the sync module/, table);

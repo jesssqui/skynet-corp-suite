@@ -2280,6 +2280,30 @@ outreach CSV (the Great White North export: `company_name` is the one required c
 - **Known consequence**: open leads with no dated task show as "No next step" (pipeline, Today, overview, Friday review); the
   real file's ~329 open leads without a follow-up date will all appear there until they get a dated next step.
 
+## Campaigns (crm module, D8c)
+Shared `shared/campaigns.js` (pure: `CAMPAIGN_SEEDS`/`CAMPAIGN_IDS`, `campaignTree`, `campaignScope`, `campaignsByLead`,
+`inCampaign`, `campaignLabel`); records in `server/src/modules/crm/entities.js` + `service.js` (`checkCampaign`,
+`seedCampaigns`), migration `crm/007_campaigns.sql`; client `client/src/modules/crm/` (`campaigns.js` no React,
+`CampaignsPage.jsx` at `/crm/campaigns`, `CampaignsCard.jsx` on the lead page, the Pipeline's Campaign filter and chips on
+its cards). Tests `server/test/campaigns.test.js`, `client/test/campaigns.test.js` (logic + two devices).
+- **Records** (synced): `campaign` (name*, `parent_id` ⇧ optional, notes, archived, position; create/update/delete) and
+  `lead_campaign` (lead_id* ⇧, campaign_id* plain ref; create/delete). **Two levels**: `checkCampaign` refuses a parent that
+  is itself a sub-campaign, a campaign under itself, and moving a campaign that has sub-campaigns under another. A
+  sub-campaign belongs to its main one, so deleting a main campaign hides its sub-campaigns (deletes never cascade).
+- **A lead can be in several campaigns** (owner's decision). Two devices adding the same one leave two membership rows —
+  deliberately not refused (that would only fill Needs attention): readers dedupe (`campaignsByLead`) and
+  `leaveCampaign` removes every copy. A deleted campaign simply stops counting; the membership rows stay.
+- **Starter campaigns**, made once at start with fixed ids (only when an id never existed, so a rename or delete sticks):
+  Email Outreach, with "$595 One Off Website Package" and "In Person Visit" under it.
+- **The leads import** (D8b) puts every new lead in Email Outreach (skipped when that campaign was deleted). Leads imported
+  before this package are in no campaign (Pipeline → Campaign → "In no campaign"; add them from the lead page).
+- **Screens**: Clients · Pipeline · **Campaigns** · Cross-sell tabs. Campaigns page: tree with open/won/lost counts (a main
+  campaign counts its sub-campaigns), New campaign, Sub-campaign, Edit (rename, move, archive, delete), "Pipeline ›".
+  Pipeline `?campaign=<id>` (a main campaign includes its sub-campaigns) or `none`; a lead made while a campaign is
+  filtered starts in it. Lead page: Campaigns card (chips with ✕, "Add to a campaign"). All offline.
+- Not built: picking campaigns in the new-lead sheet itself (the lead page does it), per-campaign targets/costs, campaigns
+  on clients or quotes.
+
 ## Sales totals (sales module, D12)
 Code `server/src/modules/sales/` (`service.js`, `routes.js`, migration `001_create_sales.sql`), shared facts
 `shared/sales.js`, client `client/src/modules/sales/` (+ `costs/MoneyTabs.jsx`); tests `server/test/sales.test.js`,

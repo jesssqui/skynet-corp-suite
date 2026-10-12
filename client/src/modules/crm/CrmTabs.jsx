@@ -6,6 +6,7 @@ import { Segmented, Icon } from '../../ui/index.js';
 const TABS = [
   { value: '/crm', label: 'Clients', icon: 'users' },
   { value: '/crm/pipeline', label: 'Pipeline', icon: 'arrowRight' },
+  { value: '/crm/campaigns', label: 'Campaigns', icon: 'flag' },
   { value: '/crm/cross-sell', label: 'Cross-sell', icon: 'repeat' },
 ];
 
@@ -13,6 +14,7 @@ export default function CrmTabs() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const value = pathname.startsWith('/crm/pipeline') || pathname.startsWith('/crm/leads') ? '/crm/pipeline'
+    : pathname.startsWith('/crm/campaigns') ? '/crm/campaigns'
     : pathname.startsWith('/crm/cross-sell') ? '/crm/cross-sell' : '/crm';
   return (
     <div style={{ marginBottom: 'var(--space-4)', maxWidth: '100%', overflowX: 'auto' }}>
