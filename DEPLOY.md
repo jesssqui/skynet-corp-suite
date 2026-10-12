@@ -166,7 +166,8 @@ shows *A new version of the suite is ready · Reload*.
 
 **Chosen approach: the container's own scheduler.** The server makes the backup itself every night at `BACKUP_TIME`
 (default 03:15, `TZ` America/Toronto), copies it to the off-machine folder, verifies the copy and deletes copies older
-than `BACKUP_KEEP_DAYS` (default 30; the newest is always kept). If the container was down at backup time, it catches
+than `BACKUP_KEEP_DAYS` (default 30; the newest is always kept) there — and local copies older than
+`BACKUP_LOCAL_KEEP_DAYS` (default 7, D10; see step 14). If the container was down at backup time, it catches
 up two minutes after it starts. Nothing to set up on the Mac — no launchd plist, no Node on the Mac, no cron.
 
 The automations (System → Automations: the Friday review list at 8:00 on Fridays, "no next step" at 7:30 daily) run
@@ -594,6 +595,39 @@ Then check once:
 - **After restoring the suite from a backup**: nothing to do — the wholesale days are written again from the holding
   area (kept across restores) at start, and the last unmatched e-Transfer count is kept; sales entered by hand roll back
   with the backup (like the rest of the data).
+
+## 14. Files on clients, accounts and tasks (D10)
+
+Nothing to set up: the Files tab works after the update. Uploads, links and password pointers are on each client's
+page (**Files** card, and **Files (N)** under each account → the Files tab with a tab per account) and in each task's
+sheet. Links and password pointers can be added offline; **uploading and opening uploads need a connection** (the tab
+says so). A password pointer says *where* a password is (the password manager and the item's name), never the password.
+
+**Files and backup size.** Uploaded files are kept **inside the database**, so every nightly backup holds all of them and
+a restore brings them back together with their records (no second folder to back up or keep in step). The price: each
+backup is as big as the database *with* its files. Limits (in `.env`, then `docker compose up -d`): `FILES_MAX_MB` (25)
+per file and `FILES_MAX_TOTAL_MB` (**500**) for all files together. Where that space goes:
+- **Off-machine folder**: `BACKUP_KEEP_DAYS` (30) backups — up to about 15 GB once 500 MB of files is reached.
+- **Local copies, inside the Docker volume**: `BACKUP_LOCAL_KEEP_DAYS` (**7**, never more than `BACKUP_KEEP_DAYS`) backups,
+  plus the live database. The volume lives on Docker Desktop's virtual disk (64 GB by default, **shared with every image
+  and container**): Docker Desktop → Settings → Resources → *Virtual disk limit* shows it. 7 × 500 MB + the database is
+  about 4 GB at the limit.
+- **Backups never shrink by themselves**: deleting files frees space inside the database for later uploads, but the file
+  (and so every backup) stays at its largest size so far.
+- **Each restore leaves a `pre-restore-<time>.db`** (the database it replaced) in `/app/data/backups`, which is not
+  pruned (it is how a restore is undone): delete old ones by hand once you're sure, e.g.
+  `docker compose exec suite sh -c 'ls -lh /app/data/backups; rm /app/data/backups/pre-restore-<time>.db'`.
+Every Files tab shows the space used ("120 MB of 500 MB used"); `ls -lh "<your SUITE_OFFSITE_DIR>"` shows the backups'
+size. Lower `BACKUP_KEEP_DAYS` or the file limit if a folder gets tight. A deleted file's contents are kept
+`FILES_PURGE_DAYS` (30) more days — counted from when the suite received the delete —, then removed. The nightly backup
+runs beside the app without slowing it (it works in the background).
+
+**Restore drill (add to step 5 b):** before the backup, upload a small PDF to a test client's Files tab; after the
+restore, open that client's Files tab and download it: the same file.
+
+**On an iPhone home-screen app**: *Download* saves a file through iOS's download sheet; *View* shows an image inside the
+app; *Open* (a PDF) opens a new browser tab, which on some iOS versions doesn't share the app's sign-in — sign in there
+once, or use *Download*.
 
 ## Troubleshooting
 

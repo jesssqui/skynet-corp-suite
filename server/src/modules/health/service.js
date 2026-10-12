@@ -40,6 +40,7 @@ export function createHealthService({ db, config }) {
       scheduled: config.backup.enabled,
       time: config.backup.time,
       keepDays: config.backup.keepDays,
+      localKeepDays: config.backup.localKeepDays, // D10 review: local copies kept fewer days
       offsiteConfigured: Boolean(config.backup.offsiteDir),
       lastSuccessAt,
       lastFile: s?.lastFile ?? null,

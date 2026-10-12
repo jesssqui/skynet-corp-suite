@@ -16,6 +16,7 @@ import { goalChoices } from './plan.js';
 import { usePlannerData } from './data.js';
 import { getLastBusiness, setLastBusiness } from './prefs.js';
 import { nowIso } from '../../ui/format.js';
+import { TaskFiles } from '../files/TaskFiles.jsx'; // D10: a task's files, in its sheet
 
 const row = { display: 'grid', gap: 'var(--space-3)', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' };
 const byName = (a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }) || (a.id < b.id ? -1 : 1);
@@ -308,6 +309,7 @@ export function TaskSheet({ record = null, initial = {}, onClose, onDone, onDele
       <TextAreaField id="task-notes" label="Notes (optional)" value={v.notes} onChange={set('notes')} rows={3} />
       <CheckboxField id="task-top" label="One of today’s top 3" checked={v.top} onChange={set('top')} />
       {record ? <CheckboxField id="task-done" label="Done" checked={v.done} onChange={set('done')} /> : null}
+      {record ? <TaskFiles task={record} /> : null}
       {record && !record.done_at ? (
         <button type="button" className="crm-link-button" style={{ justifySelf: 'start', minHeight: 'var(--tap)' }} onClick={() => navigate(`/focus?task=${record.id}`)}>
           Focus on this task

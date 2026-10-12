@@ -145,6 +145,28 @@ test('keeps BACKUP_KEEP_DAYS of backups in both folders and never the newest', a
   assert.equal(listBackups(offsite).length, 1);
 });
 
+test('D10 review: the local folder keeps BACKUP_LOCAL_KEEP_DAYS (default 7), the off-machine one BACKUP_KEEP_DAYS', async (t) => {
+  const dir = tmpDir(t);
+  const { db } = await liveDb(dir);
+  t.after(() => db.close());
+  const offsite = prepareOffsite(dir);
+  const backupDir = path.join(dir, 'b');
+  const day = 24 * 60 * 60 * 1000;
+  const now = new Date('2026-10-06T07:15:00.000Z');
+  for (const age of [20, 9, 3]) {
+    await runBackup({ db, dir: backupDir, offsiteDir: offsite, keepDays: 999, now: new Date(now - age * day) });
+  }
+  await runBackup({ db, dir: backupDir, offsiteDir: offsite, keepDays: 30, localKeepDays: 7, now });
+  const ages = (folder) => listBackups(folder).map((b) => Math.round((now - b.time) / day));
+  assert.deepEqual(ages(backupDir), [0, 3]);
+  assert.deepEqual(ages(offsite), [0, 3, 9, 20]);
+  const { loadConfig } = await import('../src/config.js');
+  assert.equal(loadConfig({}).backup.localKeepDays, 7);
+  assert.equal(loadConfig({ BACKUP_KEEP_DAYS: '5' }).backup.localKeepDays, 5, 'never more than BACKUP_KEEP_DAYS');
+  assert.equal(loadConfig({ BACKUP_LOCAL_KEEP_DAYS: '14' }).backup.localKeepDays, 14);
+  assert.equal(loadConfig({}).files.maxTotalBytes, 500 * 1024 * 1024);
+});
+
 test('backup file names round-trip and sort by time', () => {
   const d = new Date('2026-10-06T03:15:00.123Z');
   assert.equal(backupFileName(d), 'suite-2026-10-06T031500.123Z.db');

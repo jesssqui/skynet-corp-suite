@@ -176,6 +176,16 @@ export function loadConfig(env = process.env) {
       // The pull loop: on by default in production; "Pull now" on the card works either way.
       scheduled: bool(env.EBAY_PULL_ENABLED, production),
     },
+    files: {
+      // D10: uploads (their bytes live in the database, so every nightly backup holds them all — see
+      // DEPLOY.md for the backup size this means). Per file, all files together, and how long a deleted
+      // file's bytes are kept (so a delete undone through a sync clash still has them).
+      maxFileBytes: int(env.FILES_MAX_MB, 25, 'FILES_MAX_MB') * 1024 * 1024,
+      maxTotalBytes: int(env.FILES_MAX_TOTAL_MB, 500, 'FILES_MAX_TOTAL_MB') * 1024 * 1024,
+      purgeDays: int(env.FILES_PURGE_DAYS, 30, 'FILES_PURGE_DAYS'),
+      // An upload that sends nothing for this long is answered 408 and dropped (D10 review).
+      uploadIdleMs: 60_000,
+    },
     automations: {
       // The minute scheduler (C8): on by default in production only, like the backup schedule.
       // "Run now" on the Automations page works either way.
@@ -188,6 +198,10 @@ export function loadConfig(env = process.env) {
       dir: path.resolve(env.BACKUP_DIR || path.join(dataDir, 'backups')),
       offsiteDir: env.BACKUP_OFFSITE_DIR ? path.resolve(env.BACKUP_OFFSITE_DIR) : null,
       keepDays: int(env.BACKUP_KEEP_DAYS, 30, 'BACKUP_KEEP_DAYS'),
+      // D10 review: the local copies (inside the Docker volume, which shares the Docker VM's disk with images) are
+      // kept fewer days than the off-machine ones: they are for quick restores, and with files in the database
+      // each is as big as the database. Never more than BACKUP_KEEP_DAYS.
+      localKeepDays: Math.min(int(env.BACKUP_LOCAL_KEEP_DAYS, 7, 'BACKUP_LOCAL_KEEP_DAYS'), int(env.BACKUP_KEEP_DAYS, 30, 'BACKUP_KEEP_DAYS')),
     },
   };
 }
