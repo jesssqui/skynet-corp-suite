@@ -9,6 +9,7 @@
 // after the list reuses what the list already read.
 import { useSyncData } from '../../sync/index.js';
 import { campaignsByLead } from '@suite/shared/campaigns';
+import { lastContactByLead } from './leads.js';
 import { lastOrderByClient, mergeLastActivity, quietFromByClient } from '../wholesale/logic.js';
 
 // What each CRM type belongs to (its parent chain), for when the engine's definitions aren't here yet.
@@ -236,17 +237,18 @@ export function useClientPageData(clientId) {
 }
 
 // D8: the pipeline and one lead (the device's copy).
-const PIPELINE_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'lead', 'task', 'campaign', 'lead_campaign'];
+const PIPELINE_ENTITIES = ['business', 'client', 'account', 'contact', 'relationship', 'lead', 'task', 'campaign', 'lead_campaign', 'lead_activity'];
 
 /** The Pipeline page: every lead, our businesses, the open tasks naming leads (their next steps), and clients/accounts for names. */
 export function usePipelineData() {
   const { data, loading, error } = useSyncData(async (e) => {
-    const [businesses, clients, accounts, contacts, relationships, leads, tasks, campaigns, memberships] = await cachedLists(e, PIPELINE_ENTITIES);
+    const [businesses, clients, accounts, contacts, relationships, leads, tasks, campaigns, memberships, leadActivities] = await cachedLists(e, PIPELINE_ENTITIES);
     const liveCampaignIds = new Set(campaigns.records.map((c) => c.id));
     return {
       campaigns: campaigns.records,
       memberships: memberships.records,
       campaignsByLead: campaignsByLead(memberships.records, liveCampaignIds),
+      lastContact: lastContactByLead(leadActivities.records),
       businesses: businesses.records,
       businessesById: businesses.byId(),
       clients: clients.records,
@@ -264,7 +266,7 @@ export function usePipelineData() {
   return { data: data ?? null, loading, error };
 }
 
-const LEAD_PAGE_ENTITIES = [...PIPELINE_ENTITIES, 'lead_activity'];
+const LEAD_PAGE_ENTITIES = PIPELINE_ENTITIES;
 
 /** One lead with its timeline and tasks, plus what winning reads (clients, accounts, contacts, relationships); { lead: null } when not here. */
 export function useLeadPageData(leadId) {

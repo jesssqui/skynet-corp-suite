@@ -42,7 +42,7 @@ function SelectableCard({ children, className, lead, selected, onToggle }) {
   );
 }
 
-function LeadCard({ lead, business, client, next, today, campaigns = [], selecting = false, selected = false, onToggle = null }) {
+function LeadCard({ lead, business, client, next, today, contactedOn = null, campaigns = [], selecting = false, selected = false, onToggle = null }) {
   const open = isOpenLead(lead);
   const value = leadValueText(lead);
   const Wrap = selecting ? SelectableCard : Link;
@@ -56,6 +56,7 @@ function LeadCard({ lead, business, client, next, today, campaigns = [], selecti
         <span style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
           <BusinessChip business={business} short />
           {lead.kind ? <span style={muted}>{KIND_LABELS[lead.kind]}</span> : null}
+          {contactedOn ? <span data-testid="lead-contacted"><Badge tone="neutral">Contacted {formatDate(contactedOn)}</Badge></span> : null}
           {client ? <span style={muted}>· client {client.name}</span> : null}
         </span>
         {open ? (
@@ -107,6 +108,7 @@ function Column({ stage, leads, active, head, data, today, selecting, selected, 
                 business={data.businessesById.get(l.business_id)}
                 client={data.clientsById.get(l.client_id ?? l.won_client_id)}
                 next={nextStepOf(data.tasksByLead.get(l.id))}
+                contactedOn={data.lastContact.get(l.id) ?? null}
                 campaigns={leadCampaignList(data.campaigns, data.campaignsByLead.get(l.id))}
                 today={today}
                 selecting={selecting}
@@ -137,6 +139,7 @@ export default function PipelinePage() {
   const q = params.get('q') ?? '';
   const stage = STAGES.includes(params.get('stage')) ? params.get('stage') : 'lead';
   const flaggedOnly = params.get('flag') === '1';
+  const contactedFilter = params.get('contacted') ?? ''; // 'yes' | 'no' | ''
   const campaign = params.get('campaign') ?? ''; // a campaign id (with its sub-campaigns), or 'none'
   const [sheet, setSheet] = useState(null);
   const [selecting, setSelecting] = useState(false);
@@ -158,14 +161,15 @@ export default function PipelinePage() {
   const view = useMemo(() => {
     if (!data) return null;
     const scope = campaign === 'none' ? 'none' : campaign ? campaignScope(data.campaigns, campaign) : null;
-    const filtered = filterLeads(data.leads, { business, q, owner }).filter((l) => !scope || inCampaign(data.campaignsByLead.get(l.id), scope));
+    const filtered = filterLeads(data.leads, { business, q, owner }).filter((l) => !scope || inCampaign(data.campaignsByLead.get(l.id), scope))
+      .filter((l) => !contactedFilter || data.lastContact.has(l.id) === (contactedFilter === 'yes'));
     const hasNext = (l) => Boolean(nextStepOf(data.tasksByLead.get(l.id)));
     const flagged = filtered.filter((l) => isOpenLead(l) && !hasNext(l));
     const shownLeads = flaggedOnly ? flagged : filtered;
     const pv = pipelineView(shownLeads, { today });
     const shownIds = [...OPEN_LEAD_STAGES.flatMap((s) => pv.columns[s]), ...pv.won, ...pv.lost].map((l) => l.id);
     return { ...pv, flagged: flagged.length, total: filtered.length, shownIds };
-  }, [data, business, q, owner, flaggedOnly, today, campaign]);
+  }, [data, business, q, owner, flaggedOnly, today, campaign, contactedFilter]);
 
   const businessOptions = useMemo(() => pickableBusinesses(data?.businesses ?? [], business || null), [data, business]);
   const close = () => setSheet(null);
@@ -238,6 +242,13 @@ export default function PipelinePage() {
             value={campaign}
             onChange={(v) => setParam('campaign', v)}
             options={[{ value: '', label: 'All campaigns' }, { value: 'none', label: 'In no campaign' }, ...campaignOptions(data?.campaigns ?? [], { keep: campaign })]}
+          />
+          <SelectField
+            id="pipeline-contacted"
+            label="Contacted"
+            value={contactedFilter}
+            onChange={(v) => setParam('contacted', v)}
+            options={[{ value: '', label: 'Contacted or not' }, { value: 'yes', label: 'Already contacted' }, { value: 'no', label: 'Not contacted yet' }]}
           />
           <TextField id="pipeline-q" label="Search" type="search" value={q} onChange={(e) => setParam('q', e.target.value)} placeholder="Name, contact, email, phone" />
         </div>

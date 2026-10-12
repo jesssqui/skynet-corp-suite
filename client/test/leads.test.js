@@ -566,3 +566,16 @@ test('won twice: a removal the server undoes (edited on the other device meanwhi
   const note = server.db.prepare("SELECT body FROM crm_activities WHERE client_id = ? AND body LIKE 'The lead%'").get(macClient);
   assert.match(note.body, /kept, because it was changed on the other device: Golf Garage/);
 });
+
+test('lastContactByLead: the newest email, call or meeting per lead; notes and stage moves do not count', async () => {
+  const { lastContactByLead } = await import('../src/modules/crm/leads.js');
+  const map = lastContactByLead([
+    { lead_id: 'a', type: 'email', at: '2026-09-01T15:00:00.000Z' },
+    { lead_id: 'a', type: 'call', at: '2026-09-20T15:00:00.000Z' },
+    { lead_id: 'b', type: 'note', at: '2026-09-05T15:00:00.000Z' },
+    { lead_id: 'c', type: 'stage', at: '2026-09-05T15:00:00.000Z' },
+  ]);
+  assert.equal(map.get('a'), '2026-09-20');
+  assert.equal(map.has('b'), false);
+  assert.equal(map.has('c'), false);
+});

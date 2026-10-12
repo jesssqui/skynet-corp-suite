@@ -107,6 +107,18 @@ export async function settleStageClashes(engine, lead, resolution) {
 // ---- the pipeline ---------------------------------------------------------------------------------
 
 /** Leads matching the page's filters (business; a search over name, contact, email, phone). */
+/** When we last reached out to each lead: Map lead id -> day ("YYYY-MM-DD") of its newest email, call or meeting. */
+export const CONTACT_TYPES = ['email', 'call', 'meeting'];
+export function lastContactByLead(activities) {
+  const map = new Map();
+  for (const a of activities ?? []) {
+    if (!CONTACT_TYPES.includes(a.type) || !a.at) continue;
+    const day = localDate(new Date(a.at));
+    if (!map.has(a.lead_id) || map.get(a.lead_id) < day) map.set(a.lead_id, day);
+  }
+  return map;
+}
+
 export function filterLeads(leads, { business = '', q = '', owner = '' } = {}) {
   const words = fold(q).split(/\s+/).filter(Boolean);
   const digits = String(q).replace(/\D/g, '');

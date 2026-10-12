@@ -2306,6 +2306,7 @@ its cards). Tests `server/test/campaigns.test.js`, `client/test/campaigns.test.j
   selected (`bulkJoin`/`bulkLeave`/`bulkSet` in `campaigns.js`, one `store` write per lead, progress and a report; offline).
   A start-time backfill (`backfillEmailOutreach`, once, `crm_backfills`) puts imported leads that are in no campaign into
   Email Outreach (leads imported before D8c).
+- **Contacted (D8f)**: the Pipeline reads `lead_activity` too; a lead with an email, call or meeting entry shows a "Contacted <day>" chip and the Contacted filter (`?contacted=yes|no`) uses it (`lastContactByLead` in `leads.js`). The leads import already writes an "Intro email sent" entry for rows the export says were contacted.
 - Not built: picking campaigns in the new-lead sheet itself (the lead page does it), per-campaign targets/costs, campaigns
   on clients or quotes.
 
