@@ -23,13 +23,14 @@
 //   orders      the ticket's order is looked up live through the woocommerce module (D12's lookup): the order numbers
 //               the customer's emails mention, else their email. Shown, never stored, never logged.
 // It reads and writes only its own tables; tasks through the automations framework (automations.js).
+import crypto from 'node:crypto';
 import { newId } from '@suite/shared/ids';
 import { nowIso, localDate } from '@suite/shared/time';
 import { BUSINESS_IDS } from '@suite/shared/crm';
 import { HttpError } from '../../lib/httpError.js';
 import { loadKey, encryptSecret, decryptSecret } from '../../lib/sealed.js';
 import { openImap, ImapError, cleanHost, isLocalHost, IMAP_PORT } from './imap.js';
-import { parseMessage } from './mime.js';
+import { parseMessage, isAutomaticFor } from './mime.js';
 import { ticketStatus, subjectKey, isFlagged, hoursWaiting, orderNumbers, SUBJECT_MATCH_DAYS } from './threads.js';
 import { SAVED_ANSWER_ENTITY } from './entities.js';
 import { registerHelpdeskAutomations, PULLED_EVENT, CHANGED_EVENT } from './automations.js';
@@ -51,15 +52,60 @@ export const TICKET_KEEP_DAYS = 365;
 export const LOOK_EVERY_MS = MINUTE;
 export const FIRST_LOOK_MS = 25_000;
 export const backoffMs = (failures) => Math.min(2 ** Math.max(1, failures), 60) * MINUTE;
-const SENT_FIELDS = ['MESSAGE-ID', 'IN-REPLY-TO', 'REFERENCES', 'FROM', 'TO', 'CC', 'SUBJECT', 'DATE'];
+const SENT_FIELDS = ['MESSAGE-ID', 'IN-REPLY-TO', 'REFERENCES', 'FROM', 'TO', 'CC', 'SUBJECT', 'DATE', 'REPLY-TO'];
+/** A sent email that answers no ticket yet is held (headers only) for this many more reads, then dropped. */
+export const SENT_HOLD_ROUNDS = 2;
+/** Retention runs at most this often (on the puller's look, whether or not any mailbox is read). */
+const PURGE_EVERY_MS = 60 * MINUTE;
+/** A whole read of one mailbox gives up after this long (the connection is closed; tried again later). */
+export const PULL_DEADLINE_MS = 5 * MINUTE;
 const PAGE_MAX = 200;
 const EMAIL_RE = /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]+$/;
 
-/** "orders@x.com, @wordpress.com" → ['orders@x.com', '@wordpress.com'] (lowercase; anything else dropped). */
+/**
+ * "Never a ticket from" (review fix: contact forms): comma-, semicolon- or line-separated rules —
+ *   an address or @domain        the email's From is that address / in that domain
+ *   subject: <words>             its subject contains those words ("subject: New order")
+ * A From rule looks only at From, never at a Reply-To: a store's contact form comes From wordpress@ with the customer
+ * as Reply-To, and so does WooCommerce's new-order email — tell those apart by subject, not by blocking wordpress@.
+ * → the rules as text, lowercase addresses (anything else dropped).
+ */
 export function parseIgnore(text) {
-  return [...new Set(String(text ?? '').split(/[\s,;]+/).map((s) => s.trim().toLowerCase()).filter((s) => EMAIL_RE.test(s) || /^@[a-z0-9.-]+\.[a-z]{2,}$/.test(s)))].slice(0, 50);
+  const out = [];
+  for (let raw of String(text ?? '').split(/[,;\n]+/)) {
+    raw = raw.trim();
+    if (!raw) continue;
+    const m = /^subject\s*:\s*(.+)$/i.exec(raw);
+    if (m) {
+      const v = m[1].trim().replace(/\s+/g, ' ').slice(0, 100);
+      if (v.length >= 3) out.push(`subject: ${v}`);
+      continue;
+    }
+    const v = raw.replace(/^from\s*:\s*/i, '').toLowerCase();
+    if (EMAIL_RE.test(v) || /^@[a-z0-9.-]+\.[a-z]{2,}$/.test(v)) out.push(v);
+  }
+  return [...new Set(out)].slice(0, 50);
 }
-const ignored = (list, email) => Boolean(email) && list.some((x) => (x.startsWith('@') ? email.endsWith(x) : email === x));
+/** Does one of the rules match this email (From address, subject)? */
+export function isIgnored(rules, { fromEmail = null, subject = '' } = {}) {
+  const subj = String(subject ?? '').toLowerCase();
+  return rules.some((r) => (r.startsWith('subject: ')
+    ? subj.includes(r.slice(9).toLowerCase())
+    : Boolean(fromEmail) && (r.startsWith('@') ? fromEmail.endsWith(r) : fromEmail === r)));
+}
+
+const MICROSOFT_HOST = /(^|\.)(outlook\.office365\.com|outlook\.office\.com|office365\.com|outlook\.com|hotmail\.com|live\.com)$/;
+const MICROSOFT_ADDRESS = /@(outlook|hotmail|live|msn)\.[a-z.]+$/;
+/** Microsoft 365 / Outlook.com refuse password logins over IMAP (OAuth only): said plainly instead of a vague refusal. */
+export function microsoftProblem(host, username) {
+  if (MICROSOFT_HOST.test(String(host ?? '').toLowerCase()) || MICROSOFT_ADDRESS.test(String(username ?? '').toLowerCase())) {
+    return 'Microsoft accounts (Microsoft 365, Outlook.com, Hotmail) can’t be read yet: Microsoft only allows OAuth sign-in for IMAP, which the suite doesn’t do. Nothing was saved.';
+  }
+  return null;
+}
+
+/** An id for an email with no Message-ID: a hash of its own headers (the same wherever and however often it is read). */
+export const fallbackMessageId = (headerKey) => `gen-${crypto.createHash('sha256').update(String(headerKey ?? '')).digest('hex').slice(0, 32)}@suite.invalid`;
 
 export function createHelpdeskService(ctx) {
   const { db, config, log, services } = ctx;
@@ -100,10 +146,13 @@ export function createHelpdeskService(ctx) {
       db.prepare('DELETE FROM helpdesk_messages WHERE mailbox_id = ?'),
       db.prepare('DELETE FROM helpdesk_folders WHERE mailbox_id = ?'),
       db.prepare('DELETE FROM helpdesk_pulls WHERE mailbox_id = ?'),
+      db.prepare('DELETE FROM helpdesk_sent_waiting WHERE mailbox_id = ?'),
     ],
     hasMessage: db.prepare('SELECT ticket_id FROM helpdesk_messages WHERE mailbox_id = ? AND direction = ? AND message_id = ?'),
     ticket: db.prepare('SELECT * FROM helpdesk_tickets WHERE id = ?'),
-    nextNumber: db.prepare('SELECT COALESCE(MAX(number), 0) + 1 AS n FROM helpdesk_tickets'),
+    // Review fix: a counter of its own, so a number is never used twice.
+    nextNumber: db.prepare(`INSERT INTO helpdesk_meta (key, value) VALUES ('ticket_number', (SELECT COALESCE(MAX(number), 0) + 1 FROM helpdesk_tickets))
+      ON CONFLICT (key) DO UPDATE SET value = MAX(value, (SELECT COALESCE(MAX(number), 0) FROM helpdesk_tickets)) + 1 RETURNING value AS n`),
     bySubject: db.prepare(`SELECT * FROM helpdesk_tickets WHERE mailbox_id = ? AND customer_email = ? AND subject_key = ?
       AND COALESCE(last_customer_at, opened_at) >= ? ORDER BY opened_at DESC LIMIT 1`),
     insertTicket: db.prepare(`INSERT INTO helpdesk_tickets (id, number, mailbox_id, subject, subject_key, customer_name, customer_email, state,
@@ -115,7 +164,19 @@ export function createHelpdeskService(ctx) {
       @received_at, @sent_at, @body_text, @body_truncated, @attachments) ON CONFLICT DO NOTHING`),
     times: db.prepare('SELECT direction, received_at FROM helpdesk_messages WHERE ticket_id = ?'),
     setStatus: db.prepare(`UPDATE helpdesk_tickets SET state = @state, waiting_since = @waiting_since, last_customer_at = @last_customer_at,
-      last_reply_at = @last_reply_at, handled_at = @handled_at, episode = @episode, message_count = @message_count, updated_at = @updated_at WHERE id = @id`),
+      last_reply_at = @last_reply_at, handled_at = @handled_at, episode = @episode, wait_reason = @wait_reason, message_count = @message_count,
+      updated_at = @updated_at WHERE id = @id`),
+    setReopened: db.prepare('UPDATE helpdesk_tickets SET reopened_at = ?, reopened_by = ?, reopen_count = reopen_count + 1, wait_reason = ? WHERE id = ?'),
+    newWait: db.prepare("UPDATE helpdesk_tickets SET episode = episode + 1, wait_reason = 'customer' WHERE id = ?"),
+    sentWaiting: db.prepare('SELECT * FROM helpdesk_sent_waiting WHERE mailbox_id = ? ORDER BY received_at'),
+    holdSent: db.prepare(`INSERT INTO helpdesk_sent_waiting (mailbox_id, message_id, refs, to_emails, subject_key, from_email, subject, received_at, sent_at, folder_uid)
+      VALUES (@mailbox_id, @message_id, @refs, @to_emails, @subject_key, @from_email, @subject, @received_at, @sent_at, @folder_uid) ON CONFLICT DO NOTHING`),
+    dropSent: db.prepare('DELETE FROM helpdesk_sent_waiting WHERE mailbox_id = ? AND message_id = ?'),
+    ageSent: db.prepare('UPDATE helpdesk_sent_waiting SET rounds = rounds + 1 WHERE mailbox_id = ?'),
+    expireSent: db.prepare('DELETE FROM helpdesk_sent_waiting WHERE mailbox_id = ? AND rounds > ?'),
+    orphans: ['helpdesk_tickets', 'helpdesk_messages', 'helpdesk_folders', 'helpdesk_pulls', 'helpdesk_sent_waiting']
+      .map((t) => db.prepare(`DELETE FROM ${t} WHERE mailbox_id NOT IN (SELECT id FROM helpdesk_mailboxes)`)),
+    openByMailbox: db.prepare("SELECT mailbox_id, COUNT(*) AS n FROM helpdesk_tickets WHERE state IN ('waiting', 'answered') GROUP BY mailbox_id"),
     setClosed: db.prepare('UPDATE helpdesk_tickets SET closed_at = ?, closed_by = ?, closed_reason = ? WHERE id = ?'),
     messages: db.prepare('SELECT * FROM helpdesk_messages WHERE ticket_id = ? ORDER BY received_at, id'),
     waiting: db.prepare("SELECT * FROM helpdesk_tickets WHERE state = 'waiting' ORDER BY waiting_since, number"),
@@ -147,8 +208,11 @@ export function createHelpdeskService(ctx) {
 
   /** How to reach a server: TLS on 993 — except a server on this machine when the tests allow plain TCP. */
   const plainOk = (host) => cfg.plainLocalhost && isLocalHost(host);
-  const connect = ({ host, port, username, password }) => openImap({
+  const connect = ({ host, port, username, password, signal = null }) => openImap({
+    signal,
     host, port: plainOk(host) ? port : IMAP_PORT, secure: !plainOk(host), allowPlain: plainOk(host), username, password, timeoutMs: cfg.timeoutMs,
+    // A message is fetched up to MAX_FETCH_BYTES: a literal bigger than that (and some slack) means something is wrong.
+    maxLiteral: MAX_FETCH_BYTES + 64 * 1024,
   });
 
   // ---- checking a login ------------------------------------------------------------------------------------------
@@ -225,6 +289,8 @@ export function createHelpdeskService(ctx) {
     const password = String(input.password ?? '');
     if (!username) throw refused(400, 'bad_username', 'Give the mailbox’s username (usually its email address)');
     if (!password || password.length > 500 || /[\r\n]/.test(password)) throw refused(400, 'bad_password', 'Give the mailbox’s app password');
+    const ms = microsoftProblem(host, username);
+    if (ms) throw refused(400, 'microsoft', ms);
     const port = plainOk(host) && Number.isInteger(input.port) ? input.port : IMAP_PORT;
     const settings = settingsFrom({ ...input, address: input.address ?? (EMAIL_RE.test(username.toLowerCase()) ? username : undefined) });
     settings.name ||= username;
@@ -259,6 +325,8 @@ export function createHelpdeskService(ctx) {
     const pass = String(password ?? '');
     if (!user) throw refused(400, 'bad_username', 'Give the mailbox’s username');
     if (!pass || pass.length > 500 || /[\r\n]/.test(pass)) throw refused(400, 'bad_password', 'Give the mailbox’s app password');
+    const ms = microsoftProblem(row.host, user);
+    if (ms) throw refused(400, 'microsoft', ms);
     try {
       await verify({ host: row.host, port: row.port, username: user, password: pass, inboxFolder: row.inbox_folder, sentFolder: row.sent_folder });
     } catch (err) {
@@ -321,20 +389,25 @@ export function createHelpdeskService(ctx) {
   }
 
   // ---- tickets from messages --------------------------------------------------------------------------------------
-  function recompute(ticketId) {
+  /**
+   * Work a ticket's state out again from its messages and close. Moving from answered/closed back to waiting is a new
+   * episode (a new task) — `reason` says why ('customer': a new email); `keepEpisode` for a person undoing a close.
+   */
+  function recompute(ticketId, { keepEpisode = false, reason = 'customer' } = {}) {
     const t = q.ticket.get(ticketId);
-    if (!t) return;
+    if (!t) return null;
     const rows = q.times.all(ticketId);
     const st = ticketStatus({
       inTimes: rows.filter((r) => r.direction === 'in').map((r) => r.received_at),
       outTimes: rows.filter((r) => r.direction === 'out').map((r) => r.received_at),
       closedAt: t.closed_at,
     });
-    const episode = t.state !== 'waiting' && st.state === 'waiting' ? t.episode + 1 : t.episode;
+    const bump = !keepEpisode && t.state !== 'waiting' && st.state === 'waiting';
     q.setStatus.run({
       id: ticketId, state: st.state, waiting_since: st.waitingSince, last_customer_at: st.lastCustomerAt, last_reply_at: st.lastReplyAt,
-      handled_at: st.handledAt, episode, message_count: rows.length, updated_at: at(),
+      handled_at: st.handledAt, episode: bump ? t.episode + 1 : t.episode, wait_reason: bump ? reason : t.wait_reason, message_count: rows.length, updated_at: at(),
     });
+    return q.ticket.get(ticketId);
   }
 
   function ticketByRefs(mailboxId, refs) {
@@ -345,14 +418,13 @@ export function createHelpdeskService(ctx) {
     return row ? q.ticket.get(row.ticket_id) : null;
   }
 
-  /** A customer's email (from the inbox). → 'kept' | 'skipped' | 'duplicate' */
-  function applyIncoming(mb, folder, m, ownAddress, ignoreList) {
-    const p = parseMessage(m.body ?? Buffer.alloc(0), { cut: Number.isFinite(m.size) && m.size > (m.body?.length ?? 0) });
-    const reply = p.replyTo && p.replyTo.email !== ownAddress ? p.replyTo : null;
+  /** A customer's email (from the inbox), already parsed. → 'kept' | 'skipped' | 'duplicate' */
+  function applyIncoming(mb, folder, m, p, ownAddress, rules) {
+    // A Reply-To other than the sender and us is the customer (contact forms, a store's form through a mail relay).
+    const reply = p.replyTo && p.replyTo.email !== ownAddress && p.replyTo.email !== p.from.email ? p.replyTo : null;
     const customer = reply ?? p.from;
-    if (!customer?.email || p.auto || customer.email === ownAddress || p.from.email === ownAddress
-      || ignored(ignoreList, customer.email) || ignored(ignoreList, p.from.email)) return 'skipped';
-    const messageId = p.messageId ?? `uid-${folder.uidValidity}-${m.uid}@${mb.id}`;
+    if (!customer?.email || customer.email === ownAddress || isAutomaticFor(p, ownAddress) || isIgnored(rules, { fromEmail: p.from.email, subject: p.subject })) return 'skipped';
+    const messageId = p.messageId ?? fallbackMessageId(p.headerKey);
     if (q.hasMessage.get(mb.id, 'in', messageId)) return 'duplicate';
     const receivedAt = m.internalDate ?? p.date ?? at();
     const key = subjectKey(p.subject);
@@ -376,34 +448,71 @@ export function createHelpdeskService(ctx) {
     return 'kept';
   }
 
-  /** One of our sent emails (headers only): kept — without its body — when it replies to a ticket. */
-  function applyOutgoing(mb, folder, m) {
-    const p = parseMessage(m.body ?? Buffer.alloc(0));
-    const messageId = p.messageId ?? `uid-${folder.uidValidity}-${m.uid}@${mb.id}`;
-    if (q.hasMessage.get(mb.id, 'out', messageId)) return 'duplicate';
-    const receivedAt = m.internalDate ?? p.date ?? at();
-    let ticket = ticketByRefs(mb.id, [...p.inReplyTo, ...p.references]);
-    let to = ticket ? (p.to.includes(ticket.customer_email) ? ticket.customer_email : p.to[0] ?? null) : null;
-    const key = subjectKey(p.subject);
-    if (!ticket && key) {
-      // A reply without thread headers (a mailto: link, a new email): the same customer and subject, recently.
-      const since = new Date(Date.parse(receivedAt) - SUBJECT_MATCH_DAYS * DAY).toISOString();
-      for (const email of p.to) {
-        ticket = q.bySubject.get(mb.id, email, key, since) ?? null;
-        if (ticket) {
-          to = email;
-          break;
-        }
-      }
+  /** The ticket a sent email answers: by its thread headers, else (a mailto reply, a new email) the same address and
+   * subject recently. → { ticket, to } or null */
+  function ticketForSent(mailboxId, { refs, to, key, receivedAt }) {
+    let ticket = ticketByRefs(mailboxId, refs);
+    if (ticket) return { ticket, to: to.includes(ticket.customer_email) ? ticket.customer_email : to[0] ?? null };
+    if (!key) return null;
+    const since = new Date(Date.parse(receivedAt) - SUBJECT_MATCH_DAYS * DAY).toISOString();
+    for (const email of to) {
+      ticket = q.bySubject.get(mailboxId, email, key, since) ?? null;
+      if (ticket) return { ticket, to: email };
     }
-    if (!ticket) return 'skipped'; // not a reply to a ticket: nothing about it is kept
+    return null;
+  }
+  function insertOut(mb, ticket, out) {
     q.insertMessage.run({
-      id: newId(), ticket_id: ticket.id, mailbox_id: mb.id, direction: 'out', folder_uid: `${folder.uidValidity}:${m.uid}`, message_id: messageId,
-      in_reply_to: p.inReplyTo[0] ?? null, refs: JSON.stringify(p.references), from_name: null, from_email: p.from.email ?? null, to_email: to,
-      subject: p.subject || null, received_at: receivedAt, sent_at: p.date, body_text: null, body_truncated: 0, attachments: null,
+      id: newId(), ticket_id: ticket.id, mailbox_id: mb.id, direction: 'out', folder_uid: out.folder_uid, message_id: out.message_id,
+      in_reply_to: out.refs[0] ?? null, refs: JSON.stringify(out.refs), from_name: null, from_email: out.from_email, to_email: out.to,
+      subject: out.subject, received_at: out.received_at, sent_at: out.sent_at, body_text: null, body_truncated: 0, attachments: null,
     });
     recompute(ticket.id);
+  }
+
+  /**
+   * One of our sent emails (headers only, already parsed): kept — without its body — when it replies to a ticket. One
+   * that answers no ticket yet is held for SENT_HOLD_ROUNDS more reads (review fix: its customer's email may come in
+   * late), then dropped: nothing about other sent mail is kept.
+   */
+  function applyOutgoing(mb, folder, m, p) {
+    const messageId = p.messageId ?? fallbackMessageId(p.headerKey);
+    if (q.hasMessage.get(mb.id, 'out', messageId)) return 'duplicate';
+    const receivedAt = m.internalDate ?? p.date ?? at();
+    const refs = [...p.inReplyTo, ...p.references];
+    const out = {
+      message_id: messageId, refs, folder_uid: `${folder.uidValidity}:${m.uid}`, from_email: p.from.email ?? null, subject: p.subject || null,
+      received_at: receivedAt, sent_at: p.date,
+    };
+    const found = ticketForSent(mb.id, { refs, to: p.to, key: subjectKey(p.subject), receivedAt });
+    if (!found) {
+      q.holdSent.run({ mailbox_id: mb.id, message_id: messageId, refs: JSON.stringify(refs.slice(-30)), to_emails: JSON.stringify(p.to.slice(0, 20)),
+        subject_key: subjectKey(p.subject) || null, from_email: out.from_email, subject: out.subject, received_at: receivedAt, sent_at: p.date, folder_uid: out.folder_uid });
+      return 'held';
+    }
+    insertOut(mb, found.ticket, { ...out, to: found.to });
     return 'kept';
+  }
+
+  /** Try the held sent emails again (after the inbox was read); drop those held too long. → how many found their ticket */
+  function retryHeldSent(mb) {
+    let found = 0;
+    db.transaction(() => {
+      for (const h of q.sentWaiting.all(mb.id)) {
+        const refs = JSON.parse(h.refs);
+        const to = JSON.parse(h.to_emails);
+        const hit = ticketForSent(mb.id, { refs, to, key: h.subject_key, receivedAt: h.received_at });
+        if (!hit) continue;
+        if (!q.hasMessage.get(mb.id, 'out', h.message_id)) {
+          insertOut(mb, hit.ticket, { message_id: h.message_id, refs, folder_uid: h.folder_uid, from_email: h.from_email, subject: h.subject, received_at: h.received_at, sent_at: h.sent_at, to: hit.to });
+          found += 1;
+        }
+        q.dropSent.run(mb.id, h.message_id);
+      }
+      q.ageSent.run(mb.id);
+      q.expireSent.run(mb.id, SENT_HOLD_ROUNDS);
+    })();
+    return found;
   }
 
   // ---- pulls -------------------------------------------------------------------------------------------------------
@@ -421,22 +530,33 @@ export function createHelpdeskService(ctx) {
     uids = uids.filter((u) => u > last);
     const take = uids.slice(0, MAX_PER_ROUND);
     const own = (mb.address ?? mb.username).toLowerCase();
-    const ignore = parseIgnore(mb.ignore_from);
+    const rules = parseIgnore(mb.ignore_from);
     let kept = 0;
     let skipped = 0;
     for (let i = 0; i < take.length; i += FETCH_BATCH) {
       const batch = take.slice(i, i + FETCH_BATCH);
       const got = role === 'inbox' ? await session.fetchMessages(batch, MAX_FETCH_BYTES) : await session.fetchHeaders(batch, SENT_FIELDS);
       if (!q.mailbox.get(mb.id)) return { kept, skipped, more: false }; // removed meanwhile
+      // Parsed before the transaction (review fix): reading an email takes the most time and holds no lock.
+      const parsed = got.map((m) => {
+        try {
+          return { m, p: parseMessage(m.body ?? Buffer.alloc(0), { cut: role === 'inbox' && Number.isFinite(m.size) && m.size > (m.body?.length ?? 0) }) };
+        } catch (err) {
+          // One unreadable message never stops the rest (skipped; the log says which uid — no content).
+          log?.warn?.(`helpdesk: message ${m.uid} in ${role} of mailbox ${mb.id} couldn’t be read: ${err.message}`);
+          return { m, p: null };
+        }
+      });
       db.transaction(() => {
-        for (const m of got) {
-          let r;
-          try {
-            r = role === 'inbox' ? applyIncoming(mb, info, m, own, ignore) : applyOutgoing(mb, info, m);
-          } catch (err) {
-            // One unreadable message never stops the rest (it is skipped, and the log says which uid — no content).
-            log?.warn?.(`helpdesk: message ${m.uid} in ${role} of mailbox ${mb.id} couldn’t be read: ${err.message}`);
-            r = 'skipped';
+        for (const { m, p } of parsed) {
+          let r = 'skipped';
+          if (p) {
+            try {
+              // Each message in its own savepoint: one that fails leaves nothing half-written.
+              r = db.transaction(() => (role === 'inbox' ? applyIncoming(mb, info, m, p, own, rules) : applyOutgoing(mb, info, m, p)))();
+            } catch (err) {
+              log?.warn?.(`helpdesk: message ${m.uid} in ${role} of mailbox ${mb.id} couldn’t be filed: ${err.message}`);
+            }
           }
           if (r === 'kept') kept += 1;
           else if (r === 'skipped' && role === 'inbox') skipped += 1;
@@ -478,22 +598,40 @@ export function createHelpdeskService(ctx) {
       return { failed: true };
     }
     let session = null;
+    let overdue = false;
+    // Review fix: the whole read has a deadline — past it the connection is closed, which ends every wait at once.
+    const stop = new AbortController();
+    const deadline = setTimeout(() => {
+      overdue = true;
+      stop.abort();
+    }, cfg.pullDeadlineMs ?? PULL_DEADLINE_MS);
+    deadline.unref?.();
     try {
-      session = await connect({ host: mb.host, port: mb.port, username: mb.username, password });
+      session = await connect({ host: mb.host, port: mb.port, username: mb.username, password, signal: stop.signal });
       const inbox = await readFolder(session, mb, 'inbox');
-      // The Sent folder only once the inbox is caught up: a reply is never read before the email it answers.
-      const sent = inbox.more ? { kept: 0, more: true } : await readFolder(session, mb, 'sent');
+      // The Sent folder only once the inbox is caught up: a reply is never read before the email it answers. The sent
+      // emails held from earlier reads are tried again first.
+      let sent = { kept: 0, more: true };
+      if (!inbox.more) {
+        const late = retryHeldSent(mb);
+        sent = await readFolder(session, mb, 'sent');
+        sent.kept += late;
+      }
       await session.logout();
       session = null;
       if (!q.mailbox.get(id)) return { skipped: 'gone' };
       q.pullOk.run({ id, at: at() });
       return { ok: true, inbox: inbox.kept, sent: sent.kept, skipped: inbox.skipped, more: inbox.more || sent.more };
-    } catch (err) {
+    } catch (caught) {
       session?.close();
+      const mins = Math.max(1, Math.round((cfg.pullDeadlineMs ?? PULL_DEADLINE_MS) / MINUTE));
+      const err = overdue ? new ImapError('timeout', `Reading the mailbox took too long (over ${mins} minute${mins === 1 ? '' : 's'}): stopped, tried again later`) : caught;
       if (!(err instanceof ImapError)) log?.error?.(`helpdesk mailbox ${id}: unexpected error`, err);
       else log?.warn?.(`helpdesk mailbox ${id} (${mb.host}): ${err.message}`);
       recordFailure(id, err);
       return { failed: true, error: err.message };
+    } finally {
+      clearTimeout(deadline);
     }
   }
 
@@ -508,13 +646,12 @@ export function createHelpdeskService(ctx) {
 
   /** Every mailbox that is due, side by side; then retention, then the automations look (tasks). */
   async function pullRound({ force = false } = {}) {
+    // Retention on every look (review fix), read or not: paused or failing mailboxes' old emails go on time too.
+    purgeIfDue();
     const boxes = q.mailboxes.all();
     const results = await Promise.allSettled(boxes.map((m) => pullMailbox(m.id, { force })));
     const out = Object.fromEntries(boxes.map((m, i) => [m.id, results[i].status === 'fulfilled' ? results[i].value : { failed: true }]));
-    if (Object.values(out).some((r) => r.ok)) {
-      purge();
-      emitPulled();
-    }
+    if (Object.values(out).some((r) => r.ok)) emitPulled();
     return out;
   }
   const emitPulled = () => {
@@ -556,6 +693,17 @@ export function createHelpdeskService(ctx) {
   }
 
   // ---- retention ---------------------------------------------------------------------------------------------------
+  let lastPurge = -Infinity;
+  function purgeIfDue(nowMs = clock()) {
+    if (nowMs - lastPurge < PURGE_EVERY_MS) return null;
+    lastPurge = nowMs;
+    try {
+      return purge(nowMs);
+    } catch (err) {
+      log?.error?.('helpdesk retention failed (tried again later):', err);
+      return null;
+    }
+  }
   /** Bodies go BODY_KEEP_DAYS after a ticket was answered or closed; whole tickets TICKET_KEEP_DAYS after. */
   function purge(nowMs = clock()) {
     const bodies = q.purgeBodies.run({ at: nowIso(new Date(nowMs)), before: new Date(nowMs - BODY_KEEP_DAYS * DAY).toISOString() }).changes;
@@ -574,23 +722,51 @@ export function createHelpdeskService(ctx) {
   function closeTicket(id, { actor, reason = 'no_reply_needed' }, { emit = true } = {}) {
     const t = mustTicket(id);
     if (t.state === 'closed') return ticketView(t);
+    // Closed now — and never before the customer's last email as the mail server timed it (a server clock ahead of ours
+    // would otherwise leave the ticket waiting after a close).
+    const closedAt = [at(), t.last_customer_at].filter(Boolean).sort().at(-1);
     db.transaction(() => {
-      q.setClosed.run(at(), actor, reason, id);
+      q.setClosed.run(closedAt, actor, reason, id);
       recompute(id);
     })();
     if (emit) changed();
     return ticketView(q.ticket.get(id));
   }
-  /** Reopen a closed ticket: it waits on us again when the customer's last email has no reply. */
-  function reopenTicket(id) {
+  /**
+   * Reopen a closed ticket (a person, on the Support page): it waits on us again when the customer's last email has no
+   * reply. Not a new episode — the customer didn't write again (review fix) — but its own task: who and when are kept
+   * and `reopen_count` goes up (the task's key).
+   */
+  function reopenTicket(id, { actor = null } = {}) {
     const t = mustTicket(id);
     if (t.state !== 'closed') return ticketView(t);
     db.transaction(() => {
       q.setClosed.run(null, null, null, id);
-      recompute(id);
+      const after = recompute(id, { keepEpisode: true });
+      if (after.state === 'waiting') q.setReopened.run(at(), actor, 'reopened', id);
     })();
     changed();
     return ticketView(q.ticket.get(id));
+  }
+  /**
+   * The automation closing a ticket whose task a person ticked off or deleted (review fix): closed at the moment they
+   * did it — the task's done time, or for a deleted one the time it was deleted (it was open until then) — by them.
+   * An email that came after that is a new wait (a new episode, a new task), never swallowed. → the ticket
+   */
+  function closeFromTask(id, { closedAt, by, reason }) {
+    const t = q.ticket.get(id);
+    if (!t || t.state !== 'waiting') return t ?? null;
+    q.setClosed.run(closedAt, by ?? 'system', reason, id);
+    const after = recompute(id);
+    if (after.state === 'waiting') q.newWait.run(id);
+    return q.ticket.get(id);
+  }
+  /** A person reopened the task the suite closed a ticket for: the ticket waits again, same episode, same task. */
+  function uncloseFromTask(id) {
+    const t = q.ticket.get(id);
+    if (!t || t.state !== 'closed' || !['task_done', 'task_deleted'].includes(t.closed_reason)) return t ?? null;
+    q.setClosed.run(null, null, null, id);
+    return recompute(id, { keepEpisode: true });
   }
 
   // ---- the order (live, never stored) -----------------------------------------------------------------------------
@@ -608,14 +784,16 @@ export function createHelpdeskService(ctx) {
     const found = new Map();
     let more = false;
     for (const n of numbers) {
-      const r = await woo.lookup(mb.store_id, { number: n });
+      // Review fix: an order number in an email could be anyone's. The store says whether the order's billing email is
+      // the ticket's customer's (worked out there; only that yes/no comes back, never the email).
+      const r = await woo.lookup(mb.store_id, { number: n, matchEmail: t.customer_email });
       for (const o of r.orders) found.set(o.id, o);
       more ||= r.more;
     }
     if (found.size) return { by: 'number', numbers, orders: [...found.values()], more };
     if (!t.customer_email) return { by: null, numbers, orders: [], more: false };
     const r = await woo.lookup(mb.store_id, { email: t.customer_email });
-    return { by: 'email', numbers, orders: r.orders, more: r.more };
+    return { by: 'email', numbers, orders: r.orders.map((o) => ({ ...o, senderMatches: true })), more: r.more };
   }
 
   // ---- reads ---------------------------------------------------------------------------------------------------------
@@ -627,6 +805,7 @@ export function createHelpdeskService(ctx) {
       customerEmail: t.customer_email, state: t.state, waitingSince: t.waiting_since, lastCustomerAt: t.last_customer_at, lastReplyAt: t.last_reply_at,
       closedAt: t.closed_at, closedBy: t.closed_by, closedReason: t.closed_reason, episode: t.episode, messageCount: t.message_count,
       openedAt: t.opened_at, updatedAt: t.updated_at, flagged: isFlagged(t, nowMs), hoursWaiting: hoursWaiting(t, nowMs),
+      reopenedAt: t.reopened_at, reopenedBy: t.reopened_by, waitReason: t.wait_reason,
     };
   }
   /** Tickets for the list (no bodies): waiting first (longest waiting first), then the newest. */
@@ -756,15 +935,41 @@ export function createHelpdeskService(ctx) {
     addMailbox, replacePassword, updateMailbox, removeMailbox, listMailboxes, mailbox: (id) => mailboxInfo(mustMailbox(id)),
     pullMailbox, pullRound, pullNow, startPuller, purge, verify,
     listTickets, ticket, closeTicket, reopenTicket, lookupOrder, waitingTickets, ticketRow: (id) => q.ticket.get(id) ?? null, supportSection,
-    recomputeTicket: recompute,
+    recomputeTicket: recompute, closeFromTask, uncloseFromTask, purgeIfDue, retryHeldSent,
     /** At start: retention, and the tasks brought in line with the tickets (a restore, a run that failed). */
     start() {
+      // Review fix: a restore keeps the current mailboxes but rolls tickets back — a mailbox removed since the backup
+      // would come back through its old tickets and messages: those are deleted here.
       try {
-        purge();
+        db.transaction(() => {
+          for (const st of q.orphans) st.run();
+        })();
       } catch (err) {
-        log?.error?.('helpdesk retention failed:', err);
+        log?.error?.('helpdesk: removing a removed mailbox’s tickets failed:', err);
       }
+      purgeIfDue();
       changed();
+    },
+    /**
+     * For D15: open tickets (waiting for a reply or answered — not closed) per sales store, keyed like the sales module
+     * (`woocommerce` store's `storeKey`, e.g. "tinsxpress.com"); mailboxes with no store, or a store no longer connected,
+     * are left out. → { [storeKey]: count }. Read-only; call it guarded.
+     */
+    openTicketsByStore() {
+      const out = {};
+      const woo = services.woocommerce;
+      for (const { mailbox_id: mid, n } of q.openByMailbox.all()) {
+        const mb = q.mailbox.get(mid);
+        if (!mb?.store_id || !woo?.store) continue;
+        let key = null;
+        try {
+          key = woo.store(mb.store_id)?.storeKey ?? null;
+        } catch {
+          key = null;
+        }
+        if (key) out[key] = (out[key] ?? 0) + n;
+      }
+      return out;
     },
   };
   if (automations && planner) registerHelpdeskAutomations({ automations, planner, helpdesk: service, db, clock });

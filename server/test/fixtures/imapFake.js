@@ -127,6 +127,11 @@ export async function startFakeImap({ users = {}, folders = ['INBOX', 'Sent'], t
     hang: false,
     byeOnLogin: false,
     capabilities: 'IMAP4rev1 AUTH=PLAIN',
+    // Misbehaving on UID FETCH (D14 review tests): announce a literal of this many bytes (and send them), send this many
+    // useless untagged lines first, or trickle the answer a byte every `trickleMs`.
+    oversize: 0,
+    flood: 0,
+    trickleMs: 0,
     specialUse: {}, // folder → '\\Sent'
   };
 
@@ -201,6 +206,31 @@ export async function startFakeImap({ users = {}, folders = ['INBOX', 'Sent'], t
             return ok();
           }
           if (sub === 'FETCH') {
+            if (state.flood) {
+              const line = '* OK still here\r\n';
+              send(line.repeat(state.flood));
+              return ok();
+            }
+            if (state.oversize) {
+              send(`* 1 FETCH (UID 1 BODY[]<0> {${state.oversize}}\r\n`);
+              send(Buffer.alloc(state.oversize, 'a'));
+              send(')\r\n');
+              return ok();
+            }
+            if (state.trickleMs) {
+              const text = '* 1 FETCH (UID 1 INTERNALDATE "01-Oct-2026 00:00:00 +0000")\r\n'.repeat(100);
+              let i = 0;
+              const timer = setInterval(() => {
+                if (socket.destroyed || i >= text.length) {
+                  clearInterval(timer);
+                  if (!socket.destroyed) ok();
+                  return;
+                }
+                send(text[i]);
+                i += 1;
+              }, state.trickleMs);
+              return undefined;
+            }
             const uids = new Set();
             for (const r of String(args[1]).split(',')) {
               const [a, b] = r.split(':');

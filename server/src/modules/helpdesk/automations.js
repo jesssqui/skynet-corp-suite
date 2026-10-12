@@ -24,15 +24,18 @@ export const AUTOMATION_ID = 'helpdesk-tickets';
 /** New tasks a run (runs follow every read, every few minutes): the rest come with the next runs, oldest first. */
 export const TASK_CAP = 25;
 const PREFIX = 'ticket:';
-export const taskKey = (t) => `${PREFIX}${t.id}:${t.episode}`;
+/** One task per wait: `ticket:<id>:<episode>`, and `.r<n>` after the n-th reopen on the Support page (review fix). */
+export const taskKey = (t) => `${PREFIX}${t.id}:${t.episode}${t.reopen_count ? `.r${t.reopen_count}` : ''}`;
 const keyTicketId = (key) => key.slice(PREFIX.length).split(':')[0];
 
 /** A waiting ticket as a task: title, notes (no customer data), due the day it started waiting (the server's day). */
 export function ticketItem(t) {
   const day = localDate(new Date(t.waiting_since));
-  const title = `Answer support email #${t.number} (${t.mailbox_name})${t.episode > 1 ? ': the customer wrote again' : ''}`;
+  // Review fix: "wrote again" only when the customer did; a person's reopen says so instead.
+  const again = t.wait_reason === 'reopened' ? ': reopened' : t.episode > 1 ? ': the customer wrote again' : '';
+  const title = `Answer support email #${t.number} (${t.mailbox_name})${again}`;
   const notes = [
-    `A customer wrote to ${t.mailbox_name} on ${dayText(day)}${t.episode > 1 ? ' (again, after an earlier reply)' : ''}.`,
+    `A customer wrote to ${t.mailbox_name} on ${dayText(day)}${again === ': reopened' ? ' (reopened on the Support page)' : t.episode > 1 ? ' (again, after an earlier reply)' : ''}.`,
     `Read it, and the order it’s about, on the Support page: /helpdesk/tickets/${t.id}`,
     'The email isn’t copied here: customer emails stay on the Support page.',
     '',
@@ -69,12 +72,16 @@ function openByKey(madeLike, planner) {
  * What to do, from the waiting tickets and what the automation made before — pure over its inputs, so `accept` and
  * `run` decide the same way. → [{ action: create | update | reopen | finish | close, … }]
  */
-export function ticketPlan({ waiting, ticketById, made, madeLike, planner }) {
+export function ticketPlan({ waiting, closedByTask = [], ticketById, made, madeLike, planner }) {
   const io = { planner, made };
   const open = openByKey(madeLike, planner);
-  const items = waiting.map(ticketItem);
-  const listed = new Set(items.map((i) => i.key));
   const plan = [];
+  // Review fix (mistaken ticks): a person reopened the task the suite closed a ticket for → the ticket waits again.
+  for (const t of closedByTask) {
+    if ((open.get(taskKey(t)) ?? []).length) plan.push({ action: 'unclose', key: taskKey(t), ticketId: t.id, title: `#${t.number}` });
+  }
+  const items = waiting.map(ticketItem);
+  const listed = new Set([...items.map((i) => i.key), ...plan.map((p) => p.key)]);
   for (const item of items) {
     const tasks = open.get(item.key) ?? [];
     if (tasks.length) {
@@ -100,9 +107,15 @@ export function ticketPlan({ waiting, ticketById, made, madeLike, planner }) {
       plan.push({ action: 'reopen', key: item.key, taskId: id, ownNotes: suiteWrote(io, id, 'notes', st.notes), notes: st.notes, title: st.title });
       continue;
     }
-    // A person ticked it off (or deleted it) while the ticket still waits: they dealt with it — close the ticket.
+    // A person ticked it off (or deleted it) while the ticket still waits: they dealt with it — close the ticket, at the
+    // moment they did it (review fix: an email that came after that is a new wait, not swallowed), by them.
+    const last = rows.at(-1);
     const deleted = rows.every((r) => !r.state?.live);
-    plan.push({ action: 'close', key: item.key, ticketId: item.ticketId, reason: deleted ? 'task_deleted' : 'task_done', title: item.title });
+    const closedAt = (deleted ? last.state?.doneAt ?? last.state?.deletedAt : rows.find((r) => r.state?.live && r.state.doneAt)?.state.doneAt) ?? null;
+    plan.push({
+      action: 'close', key: item.key, ticketId: item.ticketId, reason: deleted ? 'task_deleted' : 'task_done', title: item.title,
+      closedAt, by: last.state?.updatedBy ?? null, taskId: deleted ? null : rows.find((r) => r.state?.live)?.id ?? null,
+    });
   }
   for (const [key, tasks] of open) {
     if (listed.has(key)) continue;
@@ -113,8 +126,8 @@ export function ticketPlan({ waiting, ticketById, made, madeLike, planner }) {
 export const actionable = (plan) => plan.length > 0;
 
 export function registerHelpdeskAutomations({ automations, planner, helpdesk, db }) {
-  const setClosed = db.prepare("UPDATE helpdesk_tickets SET closed_at = ?, closed_by = 'system', closed_reason = ? WHERE id = ? AND state = 'waiting'");
-  const inputs = (made, madeLike) => ({ waiting: helpdesk.waitingTickets(), ticketById: helpdesk.ticketRow, made, madeLike, planner });
+  const closedByTask = db.prepare("SELECT * FROM helpdesk_tickets WHERE state = 'closed' AND closed_reason IN ('task_done', 'task_deleted')");
+  const inputs = (made, madeLike) => ({ waiting: helpdesk.waitingTickets(), closedByTask: closedByTask.all(), ticketById: helpdesk.ticketRow, made, madeLike, planner });
 
   automations.register({
     id: AUTOMATION_ID,
@@ -133,7 +146,7 @@ export function registerHelpdeskAutomations({ automations, planner, helpdesk, db
     run(_ctx, run) {
       const plan = ticketPlan(inputs(run.made, run.madeLike));
       const io = { planner, made: run.made, madeLike: run.madeLike, remember: run.remember, update: run.update };
-      const out = { made: [], finished: 0, reopened: 0, updated: 0, closed: 0, rest: 0 };
+      const out = { made: [], finished: 0, reopened: 0, updated: 0, closed: 0, unclosed: 0, rest: 0 };
       for (const p of plan) {
         if (p.action === 'finish') {
           for (const id of p.taskIds) if (finishTask(io, id, p.why, run.now)) out.finished += 1;
@@ -148,12 +161,23 @@ export function registerHelpdeskAutomations({ automations, planner, helpdesk, db
           if (p.ownNotes) markWrote(io, p.taskId, 'notes', notes);
           out.reopened += 1;
         } else if (p.action === 'close') {
-          setClosed.run(run.now.toISOString(), p.reason, p.ticketId);
-          helpdesk.recomputeTicket?.(p.ticketId);
+          const t = helpdesk.closeFromTask(p.ticketId, { closedAt: p.closedAt ?? run.now.toISOString(), by: p.by, reason: p.reason });
+          // One line on the task says what that did (a deleted task has no notes to add to).
+          if (p.taskId) {
+            const st = planner.taskState(p.taskId);
+            const line = t?.state === 'waiting'
+              ? `Ticket #${t.number} was closed when this was ticked off, but the customer wrote again afterwards: see the newer task.`
+              : `Ticket #${t?.number ?? '?'} was closed when this was ticked off (no reply needed). Reopen this task to reopen the ticket.`;
+            if (st?.live) run.update('task', p.taskId, { notes: st.notes ? `${st.notes}\n\n${line}` : line });
+          }
           out.closed += 1;
+        } else if (p.action === 'unclose') {
+          helpdesk.uncloseFromTask(p.ticketId);
+          out.unclosed += 1;
         }
       }
-      const creates = plan.filter((p) => p.action === 'create').sort((a, b) => String(a.order).localeCompare(String(b.order)));
+      // Planned again for the new tasks: closing a ticket above may have started a new wait (an email after the tick).
+      const creates = ticketPlan(inputs(run.made, run.madeLike)).filter((p) => p.action === 'create').sort((a, b) => String(a.order).localeCompare(String(b.order)));
       for (const p of creates.slice(0, TASK_CAP)) {
         const id = run.create('task', p.fields, { key: p.key });
         for (const f of ['title', 'notes', 'due_date']) markWrote(io, id, f, p.fields[f]);
@@ -167,6 +191,7 @@ export function registerHelpdeskAutomations({ automations, planner, helpdesk, db
         out.updated ? `brought ${out.updated} up to date` : null,
         out.finished ? `finished ${out.finished}` : null,
         out.closed ? `closed ${out.closed} ticket${out.closed === 1 ? '' : 's'} whose task a person ticked off` : null,
+        out.unclosed ? `reopened ${out.unclosed} ticket${out.unclosed === 1 ? '' : 's'} whose task a person reopened` : null,
       ].filter(Boolean);
       const summary = parts.length ? parts.join('; ').replace(/^./, (c) => c.toUpperCase()) : 'Every waiting ticket has its task';
       if (!out.made.length) return { summary };

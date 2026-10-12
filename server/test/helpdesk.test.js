@@ -274,19 +274,23 @@ test('ticking the task off closes the ticket (a person handled it); closing on t
   let [k1, k2] = s.tickets();
   assert.equal(k1.state, 'closed');
   assert.equal(k1.closed_reason, 'task_done');
+  assert.equal(k1.closed_at, at(START + 10 * MINUTE), 'closed when it was ticked, not when the suite noticed (review fix)');
+  assert.equal(k1.closed_by, 'partner', 'by who ticked it');
   assert.equal(s.tasks().length, 2, 'no second task');
+  assert.match(s.tasks()[0].notes, /Ticket #1 was closed when this was ticked off \(no reply needed\)\. Reopen this task to reopen the ticket\./);
   // Ticket 2 closed on the Support page: its task is finished by the suite.
   const r = await s.call('POST', `/api/helpdesk/tickets/${k2.id}/close`, { body: {} });
   assert.equal(r.body.ticket.state, 'closed');
   const t2after = s.tasks().find((x) => x.id === t2.id);
   assert.ok(t2after.done_at);
   assert.match(t2after.notes, /Closed on the Support page \(no reply needed\)/);
-  // Reopened: it waits again — a new task for the new wait.
+  // Reopened on the page: it waits again — the same episode (the customer didn't write), its own task (review fix).
   await s.call('POST', `/api/helpdesk/tickets/${k2.id}/reopen`, { body: {} });
   [k1, k2] = s.tickets();
   assert.equal(k2.state, 'waiting');
-  assert.equal(k2.episode, 2);
-  assert.equal(s.tasks().filter((x) => !x.done_at).length, 1);
+  assert.equal(k2.episode, 1);
+  assert.deepEqual([k2.reopen_count, k2.reopened_by, k2.wait_reason], [1, 'owner', 'reopened']);
+  assert.deepEqual(s.tasks().filter((x) => !x.done_at).map((x) => x.title), ['Answer support email #2 (TinsXpress): reopened']);
   // The customer of ticket 1 writes again: waiting again, a new task.
   s.imap.add('INBOX', email({ id: 'p3@x', subject: 'Re: Question one', inReplyTo: 'p1@x' }), { at: at(START + HOUR) });
   s.setNow(START + HOUR + MINUTE);
@@ -298,11 +302,43 @@ test('ticking the task off closes the ticket (a person handled it); closing on t
   s.sync.applyLocal({ actor: 'owner', entity: 'task', op: 'delete', recordId: open1.id });
   await s.pull();
   assert.equal(s.tickets()[0].closed_reason, 'task_deleted');
+  assert.equal(s.tickets()[0].closed_by, 'owner');
   // Re-running changes nothing.
   const runs = s.db.prepare('SELECT COUNT(*) AS n FROM automations_runs WHERE automation_id = ?').get(AUTOMATION_ID).n;
   await s.pull();
   await s.pull();
   assert.equal(s.db.prepare('SELECT COUNT(*) AS n FROM automations_runs WHERE automation_id = ?').get(AUTOMATION_ID).n, runs, 'nothing to do: no run rows');
+});
+
+test('review fixes: an email after the tick is a new wait, never swallowed; a mistaken tick undone reopens the ticket', async (t) => {
+  const s = await setup(t);
+  await s.add();
+  s.imap.add('INBOX', email({ id: 'm1@x', subject: 'Help' }), { at: at(START + MINUTE) });
+  await s.pull();
+  const [task] = s.tasks();
+  // Ticked at 10:10; the customer writes again at 10:20; the suite only notices at 10:30.
+  s.sync.applyLocal({ actor: 'owner', entity: 'task', op: 'update', recordId: task.id, fields: { done_at: at(START + 10 * MINUTE) } });
+  s.imap.add('INBOX', email({ id: 'm2@x', subject: 'Re: Help', inReplyTo: 'm1@x', text: 'Still waiting!' }), { at: at(START + 20 * MINUTE) });
+  s.setNow(START + 30 * MINUTE);
+  await s.pull();
+  let [k] = s.tickets();
+  assert.equal(k.state, 'waiting', 'the newer email keeps it waiting');
+  assert.equal(k.episode, 2);
+  assert.equal(k.waiting_since, at(START + 20 * MINUTE));
+  const open = s.tasks().filter((x) => !x.done_at);
+  assert.deepEqual(open.map((x) => x.title), ['Answer support email #1 (TinsXpress): the customer wrote again']);
+  assert.match(s.tasks()[0].notes, /the customer wrote again afterwards: see the newer task/);
+  // A mistaken tick: the person reopens the task → the ticket waits again (same episode, same task).
+  s.sync.applyLocal({ actor: 'owner', entity: 'task', op: 'update', recordId: open[0].id, fields: { done_at: at(START + 40 * MINUTE) } });
+  s.setNow(START + 45 * MINUTE);
+  await s.pull();
+  assert.equal(s.tickets()[0].state, 'closed');
+  s.sync.applyLocal({ actor: 'owner', entity: 'task', op: 'update', recordId: open[0].id, fields: { done_at: null } });
+  s.setNow(START + 50 * MINUTE);
+  await s.pull();
+  [k] = s.tickets();
+  assert.deepEqual([k.state, k.episode, k.closed_at], ['waiting', 2, null]);
+  assert.equal(s.tasks().filter((x) => !x.done_at).length, 1, 'still the one task');
 });
 
 test('the 24-hour flag, and the overview’s support line', async (t) => {
@@ -484,4 +520,114 @@ test('restores: the mailboxes are the current ones; tickets roll back and the ma
   await second.pull();
   assert.deepEqual(second.tickets().map((x) => x.subject), ['Before', 'After'], 'read again, nothing twice');
   assert.equal(second.db.prepare("SELECT COUNT(*) AS n FROM helpdesk_messages WHERE direction = 'in'").get().n, 2);
+});
+
+// ---- review fixes -----------------------------------------------------------------------------------------------------
+test('review fix: a contact form (noreply From, the customer as Reply-To, a relay’s List-Unsubscribe) is a ticket; "never a ticket from" is From or subject', async (t) => {
+  const s = await setup(t);
+  await s.add({ ignoreFrom: 'subject: New order, orders@tinsxpress.com' });
+  s.imap.add('INBOX', email({
+    id: 'cf@x', from: 'TinsXpress <noreply@tinsxpress.com>', subject: 'Contact form: Where is my order?',
+    headers: { 'Reply-To': 'Kim Lee <kim@example.com>', 'List-Unsubscribe': '<https://u.sendgrid.example/x>', Precedence: 'bulk' },
+  }), { at: at(START + MINUTE) });
+  // WooCommerce's new-order email also has the customer as Reply-To: the subject rule leaves it out.
+  s.imap.add('INBOX', email({ id: 'no@x', from: 'TinsXpress <wordpress@tinsxpress.com>', subject: '[TinsXpress]: New order #1200', headers: { 'Reply-To': 'kim@example.com' } }), { at: at(START + MINUTE) });
+  s.imap.add('INBOX', email({ id: 'or@x', from: 'orders@tinsxpress.com', subject: 'Daily digest' }), { at: at(START + MINUTE) });
+  await s.pull();
+  const tks = s.tickets();
+  assert.deepEqual(tks.map((x) => [x.customer_email, x.customer_name, x.subject]), [['kim@example.com', 'Kim Lee', 'Contact form: Where is my order?']]);
+  assert.equal(s.svc.listMailboxes()[0].ignoreFrom, 'subject: New order, orders@tinsxpress.com');
+});
+
+test('review fix: Microsoft accounts are refused plainly (OAuth only); nothing is tried', async (t) => {
+  const s = await setup(t);
+  for (const body of [{ host: 'outlook.office365.com', username: 'help@tins.ca' }, { host: 'imap.example.com', username: 'shop@hotmail.com' }]) {
+    const r = await s.call('POST', '/api/helpdesk/mailboxes', { body: { ...body, password: 'x', inboxFolder: 'INBOX', sentFolder: 'Sent' } });
+    assert.equal(r.status, 400);
+    assert.equal(r.body.code, 'microsoft');
+    assert.match(r.body.error, /Microsoft accounts .* can’t be read yet: Microsoft only allows OAuth/);
+  }
+});
+
+test('review fix: an order number in an email is checked against the sender — only a yes/no comes back', async (t) => {
+  const s = await setup(t);
+  const woo = await startFakeWoo(t);
+  woo.state.orders = [
+    order({ id: 1042, created: '2026-10-10T09:00:00', email: 'pat@example.com' }),
+    order({ id: 1043, created: '2026-10-10T09:00:00', email: 'someone.else@example.com' }),
+  ];
+  const store = await s.call('POST', '/api/woocommerce/stores', { body: { url: woo.url, key: STORE_KEY, secret: STORE_SECRET, readOnlyConfirmed: true } });
+  await s.add({ storeId: store.body.store.id });
+  s.imap.add('INBOX', email({ id: 'o1@x', from: 'Pat <pat@example.com>', subject: 'Orders #1042 and #1043' }), { at: at(START + MINUTE) });
+  await s.pull();
+  const r = await s.call('POST', `/api/helpdesk/tickets/${s.tickets()[0].id}/order`, { body: {} });
+  assert.deepEqual(r.body.orders.map((o) => [o.number, o.senderMatches]), [['1042', true], ['1043', false]]);
+  assert.ok(!r.text.includes('someone.else'), 'the other email never comes back');
+  // For D15: open tickets per sales store.
+  assert.deepEqual(s.svc.openTicketsByStore(), { [store.body.store.storeKey]: 1 });
+});
+
+test('review fix: a reply read before the email it answers is held for two reads, then dropped', async (t) => {
+  const s = await setup(t);
+  await s.add();
+  s.imap.add('Sent', email({ id: 'early@tins.ca', from: USER, to: 'pat@example.com', subject: 'Re: Late one', inReplyTo: 'late@x' }), { at: at(START + 2 * MINUTE) });
+  s.imap.add('Sent', email({ id: 'other@tins.ca', from: USER, to: 'friend@example.net', subject: 'Lunch?' }), { at: at(START + 2 * MINUTE) });
+  await s.pull();
+  assert.equal(s.db.prepare('SELECT COUNT(*) AS n FROM helpdesk_sent_waiting').get().n, 2, 'held, headers only');
+  s.imap.add('INBOX', email({ id: 'late@x', from: 'Pat <pat@example.com>', subject: 'Late one' }), { at: at(START + MINUTE) });
+  await s.pull();
+  assert.equal(s.tickets()[0].state, 'answered', 'the held reply found it');
+  await s.pull();
+  await s.pull();
+  assert.equal(s.db.prepare('SELECT COUNT(*) AS n FROM helpdesk_sent_waiting').get().n, 0, 'the unrelated one dropped');
+  assert.ok(!JSON.stringify(s.db.prepare('SELECT * FROM helpdesk_messages').all()).includes('friend@example.net'));
+});
+
+test('review fix: no Message-ID → an id from its headers (read again, never twice); ticket numbers are never reused', async (t) => {
+  const s = await setup(t);
+  await s.add();
+  const noId = email({ id: 'x', subject: 'No id here' }).replace('Message-ID: <x>\r\n', '');
+  s.imap.add('INBOX', noId, { at: at(START + MINUTE) });
+  await s.pull();
+  s.imap.setUidValidity('INBOX', 99);
+  await s.pull();
+  assert.equal(s.db.prepare('SELECT COUNT(*) AS n FROM helpdesk_messages').get().n, 1);
+  assert.match(s.db.prepare('SELECT message_id FROM helpdesk_messages').get().message_id, /^gen-[0-9a-f]{32}@suite\.invalid$/);
+  // The newest ticket goes (retention); the next one doesn't take its number.
+  s.db.prepare('DELETE FROM helpdesk_tickets').run();
+  s.imap.add('INBOX', email({ id: 'n2@x', subject: 'Second' }), { at: at(START + 2 * MINUTE) });
+  await s.pull();
+  assert.equal(s.tickets()[0].number, 2);
+});
+
+test('review fix: retention runs on the puller’s look even when every mailbox is paused; a removed mailbox’s tickets don’t come back at start', async (t) => {
+  const s = await setup(t);
+  const mb = await s.add();
+  s.imap.add('INBOX', email({ id: 'r1@x', text: 'private words' }), { at: at(START + MINUTE) });
+  await s.pull();
+  const closed = await s.call('POST', `/api/helpdesk/tickets/${s.tickets()[0].id}/close`, { body: {} });
+  assert.equal(closed.status, 200, closed.text);
+  await s.call('PUT', `/api/connections/${connectionId(mb.id)}`, { body: { paused: true } });
+  s.setNow(START + (BODY_KEEP_DAYS + 1) * DAY);
+  await s.svc.pullRound();
+  assert.ok(!JSON.stringify(s.db.prepare('SELECT * FROM helpdesk_messages').all()).includes('private words'), 'purged while paused');
+  // Tickets of a mailbox that isn't there (a restore of a backup from before it was removed).
+  s.db.prepare("INSERT INTO helpdesk_tickets (id, number, mailbox_id, state, opened_at, updated_at) VALUES ('t-x', 99, 'gone-mailbox', 'waiting', ?, ?)").run(at(START), at(START));
+  s.db.prepare("INSERT INTO helpdesk_messages (id, ticket_id, mailbox_id, direction, message_id, received_at, body_text) VALUES ('m-x', 't-x', 'gone-mailbox', 'in', 'x@x', ?, 'old words')").run(at(START));
+  await s.close();
+  const s2 = await setup(t, { config: s.config, clock: s.clock, start: null });
+  assert.equal(s2.db.prepare("SELECT COUNT(*) AS n FROM helpdesk_tickets WHERE mailbox_id = 'gone-mailbox'").get().n, 0);
+  assert.equal(s2.db.prepare("SELECT COUNT(*) AS n FROM helpdesk_messages WHERE mailbox_id = 'gone-mailbox'").get().n, 0);
+});
+
+test('review fix: a whole read has a deadline — a server that stops answering is cut off and tried again later', async (t) => {
+  const s = await setup(t, { config: testConfig(tmpDir(t), { HELPDESK_TEST_PLAIN_LOCALHOST: '1', HELPDESK_TIMEOUT_MS: '5000', HELPDESK_PULL_DEADLINE_MS: '600' }) });
+  const mb = await s.add();
+  s.imap.add('INBOX', email({ id: 'd@x' }), { at: at(START + MINUTE) });
+  s.imap.hang = true;
+  const t0 = Date.now();
+  const r = await s.svc.pullMailbox(mb.id, { force: true });
+  assert.ok(r.failed, JSON.stringify(r));
+  assert.match(r.error, /took too long \(over 1 minute\): stopped, tried again later/);
+  assert.ok(Date.now() - t0 < 3000);
 });

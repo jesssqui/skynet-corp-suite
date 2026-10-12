@@ -9,6 +9,16 @@
 export const MAX_BODY_CHARS = 20_000;
 const MAX_ATTACHMENTS = 30;
 const MAX_DEPTH = 8;
+// Review fix (D14): every input is capped before any regex or loop sees it, and every step below is linear, so a hostile
+// email (256 KB of "<a", a million spaces, thousands of header lines) can't hold the server up.
+/** A text part is read up to this many characters (plain) — HTML gets more room, being wordier. */
+export const MAX_PART_CHARS = 64 * 1024;
+export const MAX_HTML_CHARS = 256 * 1024;
+/** Headers: at most this many lines and bytes; one (unfolded) value at most VALUE_MAX characters. */
+export const MAX_HEADER_LINES = 400;
+export const MAX_HEADER_BYTES = 64 * 1024;
+const VALUE_MAX = 8 * 1024;
+const MAX_PARTS = 100;
 
 // ---- bytes and charsets ----------------------------------------------------------------------------------------
 const CHARSET_ALIASES = { 'us-ascii': 'utf-8', ascii: 'utf-8', utf8: 'utf-8', latin1: 'iso-8859-1', 'x-unknown': 'utf-8', unknown: 'utf-8' };
@@ -96,21 +106,28 @@ export function splitMessage(bin) {
   if (a >= 0 && (b < 0 || a <= b)) return { head: bin.slice(0, a), body: bin.slice(a + 4) };
   return { head: bin.slice(0, b), body: bin.slice(b + 2) };
 }
-/** Header block → Map(lowercase name → [values]) (unfolded, raw). */
+/** Header block → Map(lowercase name → [values]) (unfolded, raw; capped: MAX_HEADER_LINES lines, VALUE_MAX per value). */
 export function parseHeaders(head) {
   const map = new Map();
   let cur = null;
-  for (const line of head.replace(/\r\n/g, '\n').split('\n')) {
-    if (/^[ \t]/.test(line) && cur) cur.value += ` ${line.trim()}`;
-    else {
-      const i = line.indexOf(':');
-      if (i <= 0) {
-        cur = null;
-        continue;
-      }
-      cur = { name: line.slice(0, i).trim().toLowerCase(), value: line.slice(i + 1).trim() };
-      map.set(cur.name, [...(map.get(cur.name) ?? []), cur]);
+  const lines = String(head).slice(0, MAX_HEADER_BYTES).split('\n', MAX_HEADER_LINES);
+  for (let line of lines) {
+    if (line.endsWith('\r')) line = line.slice(0, -1);
+    const c = line.charCodeAt(0);
+    if ((c === 32 || c === 9) && cur) {
+      if (cur.value.length < VALUE_MAX) cur.value = `${cur.value} ${line.trim()}`.slice(0, VALUE_MAX);
+      continue;
     }
+    const i = line.indexOf(':');
+    if (i <= 0) {
+      cur = null;
+      continue;
+    }
+    cur = { value: line.slice(i + 1).trim().slice(0, VALUE_MAX) };
+    const name = line.slice(0, i).trim().toLowerCase();
+    const list = map.get(name);
+    if (list) list.push(cur);
+    else map.set(name, [cur]);
   }
   const out = new Map();
   for (const [k, list] of map) out.set(k, list.map((x) => x.value));
@@ -241,51 +258,115 @@ export function decodeEntities(s) {
     return Object.hasOwn(ENTITIES, e) ? ENTITIES[e] : m;
   });
 }
-/** HTML → plain text: no tags, no scripts or styles, no images; links as their words; blocks on their own lines. */
+const SKIP_TAGS = new Set(['script', 'style', 'head', 'title', 'template', 'noscript', 'svg', 'object']);
+const BLOCK_TAGS = new Set(['p', 'div', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'blockquote', 'ul', 'ol', 'section', 'article', 'header', 'footer', 'hr']);
+/**
+ * HTML → plain text: no tags, no scripts or styles, no images; links as their words; blocks on their own lines.
+ * One pass, linear (review fix: the regex version was quadratic on "<a<a<a…"): a "<" with no ">" after it is text,
+ * and once no ">" is left, nothing more is looked for.
+ */
 export function htmlToText(html) {
-  const s = String(html)
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<(script|style|head|title|template|noscript|svg|object)\b[\s\S]*?<\/\1\s*>/gi, '')
-    .replace(/<br\b[^>]*>/gi, '\n')
-    .replace(/<li\b[^>]*>/gi, '\n• ')
-    .replace(/<\/?(p|div|tr|h[1-6]|table|blockquote|ul|ol|section|article|header|footer|hr)\b[^>]*>/gi, '\n')
-    .replace(/<\/t[dh]\s*>/gi, ' ')
-    .replace(/<[^>]*>/g, '');
-  return decodeEntities(s);
+  const s = String(html).slice(0, MAX_HTML_CHARS);
+  const lower = s.toLowerCase();
+  let out = '';
+  let i = 0;
+  let noClose = false;
+  while (i < s.length) {
+    const lt = noClose ? -1 : s.indexOf('<', i);
+    if (lt < 0) {
+      out += s.slice(i);
+      break;
+    }
+    out += s.slice(i, lt);
+    if (s.startsWith('<!--', lt)) {
+      const end = s.indexOf('-->', lt + 4);
+      if (end < 0) break; // an unclosed comment hides the rest
+      i = end + 3;
+      continue;
+    }
+    const gt = s.indexOf('>', lt + 1);
+    if (gt < 0) {
+      noClose = true; // no tag can close any more: the rest is text
+      out += s.slice(lt);
+      break;
+    }
+    let j = lt + 1;
+    const closing = s[j] === '/';
+    if (closing) j += 1;
+    let k = j;
+    while (k < gt && /[a-zA-Z0-9]/.test(s[k])) k += 1;
+    const name = lower.slice(j, k);
+    i = gt + 1;
+    if (!closing && SKIP_TAGS.has(name)) {
+      const end = lower.indexOf(`</${name}`, i);
+      if (end < 0) break; // the rest is inside it
+      const endGt = s.indexOf('>', end);
+      i = endGt < 0 ? s.length : endGt + 1;
+      continue;
+    }
+    if (name === 'br') out += '\n';
+    else if (name === 'li' && !closing) out += '\n• ';
+    else if ((name === 'td' || name === 'th') && closing) out += ' ';
+    else if (BLOCK_TAGS.has(name)) out += '\n';
+  }
+  return decodeEntities(out);
 }
 
-/** Text as kept: line ends \n, no control characters (bar tabs), no trailing spaces, no runs of blank lines. */
+/**
+ * Text as kept: line ends \n, no control characters (bar tabs), no trailing spaces, runs of spaces as one, at most one
+ * blank line in a row. Line by line (review fix: no regex that rescans a long run of spaces).
+ */
 export function cleanText(s) {
-  return String(s)
+  const lines = String(s)
     .replace(/\r\n?/g, '\n')
-    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]/g, '')
-    .replace(/[ \t ]+\n/g, '\n')
-    .replace(/[ \t ]{2,}/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '')
+    .split('\n');
+  const out = [];
+  let blank = 0;
+  for (const raw of lines) {
+    const line = raw.replace(/[ \t\u00a0]+/g, ' ').trimEnd();
+    if (!line.trim()) {
+      blank += 1;
+      if (blank > 1) continue;
+    } else blank = 0;
+    out.push(line);
+  }
+  return out.join('\n').trim();
 }
 
 /**
  * Leave out the earlier messages a reply quotes below it ("On … wrote:" and the "> " lines after it, or Outlook's
  * "-----Original Message-----" / "From: … Sent: …" block): the thread already has them, and keeping less is better.
+ * One pass (review fix): counts of what follows each line are worked out once, from the end.
  */
 export function trimQuoted(text) {
   const lines = text.split('\n');
-  for (let i = 1; i < lines.length; i += 1) {
-    const l = lines[i].trim();
+  const n = lines.length;
+  // After line i: how many non-blank lines, and how many of them quoted ("> ").
+  const filled = new Int32Array(n + 1);
+  const quoted = new Int32Array(n + 1);
+  for (let i = n - 1; i >= 0; i -= 1) {
+    const t = lines[i].trim();
+    filled[i] = filled[i + 1] + (t ? 1 : 0);
+    quoted[i] = quoted[i + 1] + (t.startsWith('>') ? 1 : 0);
+  }
+  const head = (i) => (lines[i] ?? '').trim().slice(0, 400);
+  for (let i = 1; i < n; i += 1) {
+    const l = head(i);
+    if (!l) continue;
     const wrote = /^(On|Le|Am|El) .{4,300}(wrote|a écrit|schrieb|escribió) ?:$/i.test(l)
-      || (/^(On|Le) /i.test(l) && /(wrote|a écrit) ?:$/i.test(`${l} ${lines[i + 1]?.trim() ?? ''}`) && /^>/.test(lines[i + 2]?.trim() ?? ''));
+      || (/^(On|Le) /i.test(l) && /(wrote|a écrit) ?:$/i.test(`${l} ${head(i + 1)}`) && head(i + 2).startsWith('>'));
     const outlook = /^-{2,}\s*(Original Message|Message d’origine|Message d'origine)\s*-{2,}$/i.test(l)
-      || (/^(From|De) ?:/i.test(l) && /^(Sent|Envoyé|Date) ?:/i.test(lines[i + 1]?.trim() ?? '') && i > 0 && !lines[i - 1].trim());
+      || (/^(From|De) ?:/i.test(l) && /^(Sent|Envoyé|Date) ?:/i.test(head(i + 1)) && !lines[i - 1].trim());
     if (wrote || outlook) {
-      const rest = lines.slice(i + 1).filter((x) => x.trim());
-      if (outlook || !rest.length || rest.filter((x) => /^>/.test(x.trim())).length / rest.length >= 0.5) return lines.slice(0, i).join('\n').trimEnd();
+      const rest = filled[i + 1];
+      if (outlook || !rest || quoted[i + 1] / rest >= 0.5) return lines.slice(0, i).join('\n').trimEnd();
     }
   }
   // A trailing block of "> " lines alone.
-  let end = lines.length;
+  let end = n;
   while (end > 0 && (/^\s*>/.test(lines[end - 1]) || !lines[end - 1].trim())) end -= 1;
-  return end > 0 && end < lines.length && lines.slice(end).some((x) => /^\s*>/.test(x)) ? lines.slice(0, end).join('\n').trimEnd() : text;
+  return end > 0 && end < n && quoted[end] > 0 ? lines.slice(0, end).join('\n').trimEnd() : text;
 }
 
 // ---- bodies ------------------------------------------------------------------------------------------------------
@@ -307,6 +388,7 @@ function splitMultipart(bin, boundary) {
     const next = bin.indexOf(`\n${delim}`, lineEnd);
     const end = next < 0 ? bin.length : next;
     parts.push(bin.slice(lineEnd + 1, end).replace(/\r$/, ''));
+    if (parts.length >= MAX_PARTS) break;
     pos = next < 0 ? -1 : next + 1;
   }
   return parts;
@@ -348,7 +430,9 @@ function walk(bin, headers, depth, acc, inAlternative = false) {
     return;
   }
   if (isText) {
-    const text = decodeBytes(decodePart(bin, headers), ct.params.charset);
+    const max = type === 'text/plain' ? MAX_PART_CHARS : MAX_HTML_CHARS;
+    // Bytes first cut to a few times the characters kept (a character is at most 4 bytes; base64/QP at most ~3×).
+    const text = decodeBytes(decodePart(bin.slice(0, max * 4), headers), ct.params.charset).slice(0, max);
     (type === 'text/plain' ? acc.plain : acc.html).push(text);
     return;
   }
@@ -356,15 +440,32 @@ function walk(bin, headers, depth, acc, inAlternative = false) {
   if (!(type.startsWith('image/') && (disp.value === 'inline' || first(headers, 'content-id')))) acc.attachments.push(fileName ?? `Unnamed ${type} file`);
 }
 
-/** Is it an auto-reply, a bounce or a mailing list's mail (never a ticket)? */
-export function isAutomatic(headers, fromEmail) {
+const NOREPLY_RE = /^(mailer-daemon|postmaster|no-?reply|do-?not-?reply|donotreply|bounces?)([+.-].*)?@/i;
+/** What says an email was sent by a machine: { autoSubmitted, autoreply, bulk (Precedence / list headers) }. */
+export function automaticSignals(headers) {
   const auto = String(first(headers, 'auto-submitted') ?? '').trim().toLowerCase();
-  if (auto && auto !== 'no') return true;
-  if (/^(bulk|junk|list|auto_reply)$/i.test(String(first(headers, 'precedence') ?? '').trim())) return true;
-  if (first(headers, 'list-id') || first(headers, 'list-unsubscribe')) return true;
-  if (first(headers, 'x-autoreply') || first(headers, 'x-autorespond')) return true;
-  if (/^(mailer-daemon|postmaster|no-?reply|do-?not-?reply|donotreply|bounces?)([+.-].*)?@/i.test(fromEmail ?? '')) return true;
-  return false;
+  return {
+    autoSubmitted: Boolean(auto && auto !== 'no'),
+    autoreply: Boolean(first(headers, 'x-autoreply') || first(headers, 'x-autorespond') || /^auto_reply$/i.test(String(first(headers, 'precedence') ?? '').trim())),
+    bulk: /^(bulk|junk|list)$/i.test(String(first(headers, 'precedence') ?? '').trim()) || Boolean(first(headers, 'list-id') || first(headers, 'list-unsubscribe')),
+  };
+}
+/** Is it an auto-reply, a bounce or a mailing list's mail (never a ticket)? — for an email with no Reply-To of its own. */
+export function isAutomatic(headers, fromEmail) {
+  const s = automaticSignals(headers);
+  return s.autoSubmitted || s.autoreply || s.bulk || NOREPLY_RE.test(fromEmail ?? '');
+}
+/**
+ * The same, for a parsed email and our own address (review fix: contact forms). When a Reply-To names someone other
+ * than the sender and us — a contact form, or a store's form sent through SendGrid / Mailgun — the email is judged by
+ * that Reply-To: a noreply@ From and a relay's List-Unsubscribe / Precedence don't make it a machine's mail; an
+ * Auto-Submitted header, an auto-reply header or a noreply Reply-To still do.
+ */
+export function isAutomaticFor(p, ownAddress = null) {
+  const s = p.signals ?? {};
+  const reply = p.replyTo && p.replyTo.email !== p.from?.email && p.replyTo.email !== ownAddress ? p.replyTo : null;
+  if (reply) return Boolean(s.autoSubmitted || s.autoreply || NOREPLY_RE.test(reply.email));
+  return Boolean(s.autoSubmitted || s.autoreply || s.bulk || NOREPLY_RE.test(p.from?.email ?? ''));
 }
 
 /**
@@ -384,14 +485,14 @@ export function parseMessage(raw, { maxChars = MAX_BODY_CHARS, cut = false } = {
   const to = parseAddresses([first(headers, 'to'), first(headers, 'cc')].filter(Boolean).join(', ')).map((a) => a.email);
   const acc = { plain: [], html: [], attachments: [] };
   walk(body, headers, 0, acc);
-  let text = acc.plain.length ? acc.plain.join('\n\n') : acc.html.map(htmlToText).join('\n\n');
+  let text = (acc.plain.length ? acc.plain.join('\n\n') : acc.html.map(htmlToText).join('\n\n')).slice(0, MAX_HTML_CHARS);
   text = trimQuoted(cleanText(text));
   let truncated = cut;
   if (text.length > maxChars) {
     text = `${text.slice(0, maxChars).trimEnd()}…`;
     truncated = true;
   }
-  const date = Date.parse(String(first(headers, 'date') ?? '').replace(/\s*\([^)]*\)\s*$/, ''));
+  const date = Date.parse(String(first(headers, 'date') ?? '').slice(0, 200).replace(/\s*\([^)]*\)\s*$/, ''));
   const attachments = [...new Set(acc.attachments.map((a) => decodeWords(a)))];
   return {
     messageId: messageIds(first(headers, 'message-id'))[0] ?? null,
@@ -402,7 +503,10 @@ export function parseMessage(raw, { maxChars = MAX_BODY_CHARS, cut = false } = {
     replyTo,
     to,
     date: Number.isFinite(date) ? new Date(date).toISOString() : null,
+    signals: automaticSignals(headers),
     auto: isAutomatic(headers, from.email),
+    /** Review fix (D14): an id for an email with no Message-ID, from its own headers (never from where it was read). */
+    headerKey: [first(headers, 'from'), first(headers, 'to'), first(headers, 'date'), first(headers, 'subject'), first(headers, 'reply-to')].map((v) => v ?? '').join('\n'),
     text,
     truncated,
     attachments: attachments.slice(0, MAX_ATTACHMENTS),

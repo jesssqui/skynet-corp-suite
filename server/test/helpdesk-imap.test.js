@@ -7,8 +7,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { openImap, checkCommand, COMMANDS, ImapError, encodeFolder, decodeFolder, parseInternalDate, takeResponse, tokenize, nest, cleanHost } from '../src/modules/helpdesk/imap.js';
-import { parseMessage, htmlToText, decodeWords, parseAddresses, parseParams, trimQuoted, isAutomatic, parseHeaders } from '../src/modules/helpdesk/mime.js';
+import { openImap, checkCommand, COMMANDS, ImapError, encodeFolder, decodeFolder, parseInternalDate, ResponseReader, MAX_LINE, MAX_UNTAGGED, tokenize, nest, cleanHost } from '../src/modules/helpdesk/imap.js';
+import { parseMessage, htmlToText, cleanText, decodeWords, parseAddresses, parseParams, trimQuoted, isAutomatic, isAutomaticFor, parseHeaders, MAX_HEADER_LINES } from '../src/modules/helpdesk/mime.js';
 import { ticketStatus, isFlagged, subjectKey, orderNumbers, firstName, FLAG_AFTER_MS } from '../src/modules/helpdesk/threads.js';
 import { startFakeImap, email, TEST_CERT } from './fixtures/imapFake.js';
 
@@ -91,7 +91,7 @@ test('TLS: the real path (certificate checked), and plain TCP only to this machi
   // Not trusted → refused.
   await assert.rejects(openImap({ host: '127.0.0.1', port: imap.port, username: USER, password: PASS, timeoutMs: 2000 }), (e) => e.code === 'tls' && !e.message.includes(PASS));
   // Trusted (the test certificate) → works.
-  const s = await openImap({ host: 'localhost', port: imap.port, username: USER, password: PASS, timeoutMs: 2000, tlsOptions: { ca: fs.readFileSync(TEST_CERT) } });
+  const s = await openImap({ host: 'localhost', port: imap.port, username: USER, password: PASS, timeoutMs: 2000, ca: fs.readFileSync(TEST_CERT) });
   assert.equal((await s.examine('INBOX')).exists, 1);
   await s.logout();
   await assert.rejects(openImap({ host: 'imap.example.com', port: 143, secure: false, allowPlain: true, username: USER, password: PASS }), (e) => e.code === 'tls');
@@ -124,14 +124,20 @@ test('a wrong password, a refused connection, a silent server and a password wit
 });
 
 test('protocol pieces: literals, tokens, dates, folder names', () => {
-  const buf = Buffer.from('* 1 FETCH (UID 5 BODY[HEADER.FIELDS (A B)] {4}\r\nab\r\n)\r\n* 2 EXISTS\r\n');
-  const r = takeResponse(buf);
-  const t = nest(tokenize(r.parts));
+  const reader = new ResponseReader({ maxLiteral: 100 });
+  const whole = Buffer.from('* 1 FETCH (UID 5 BODY[HEADER.FIELDS (A B)] {4}\r\nab\r\n)\r\n* 2 EXISTS\r\n');
+  // Fed a byte at a time, it still finds both responses (and waits for the whole literal).
+  const got = [];
+  for (const b of whole) got.push(...reader.push(Buffer.from([b])));
+  assert.equal(got.length, 2);
+  const t = nest(tokenize(got[0]));
   assert.equal(t[2].atom, 'FETCH');
   assert.equal(t[3][2].atom, 'BODY[HEADER.FIELDS (A B)]');
   assert.equal(t[3][3].str.toString(), 'ab\r\n');
-  assert.equal(takeResponse(buf, r.end).parts[0].text, '* 2 EXISTS');
-  assert.equal(takeResponse(Buffer.from('* 1 FETCH (BODY[] {10}\r\nabc')), null, 'waits for the whole literal');
+  assert.equal(got[1][0].text, '* 2 EXISTS');
+  assert.deepEqual(new ResponseReader().push(Buffer.from('* 1 FETCH (BODY[] {10}\r\nabc')), [], 'waits for the whole literal');
+  assert.throws(() => new ResponseReader({ maxLiteral: 100 }).push(Buffer.from('* 1 FETCH (BODY[] {101}\r\n')), /at most 100 were asked for/);
+  assert.throws(() => new ResponseReader().push(Buffer.alloc(MAX_LINE + 10, 'a')), /never ends/);
   assert.equal(parseInternalDate('17-Jul-1996 02:44:25 -0700'), '1996-07-17T09:44:25.000Z');
   assert.equal(parseInternalDate(' 7-Oct-2026 23:00:00 +0000'), '2026-10-07T23:00:00.000Z');
   assert.equal(encodeFolder('Envoyés'), 'Envoy&AOk-s');
@@ -209,4 +215,95 @@ test('ticket rules: state, waiting since, the 24-hour flag, subjects, order numb
   assert.deepEqual(orderNumbers('my order is late, call 519'), [], 'no digits in "is"; 519 needs a # or the word order');
   assert.equal(firstName('Renée Tremblay'), 'Renée');
   assert.equal(firstName(null), null);
+});
+
+// ---- review fixes -----------------------------------------------------------------------------------------------------
+const timed = (fn) => {
+  const t0 = performance.now();
+  const out = fn();
+  return { out, ms: performance.now() - t0 };
+};
+
+test('review fix: hostile emails are read in linear time (time budgets)', () => {
+  const budget = 1500; // generous for a loaded machine; the quadratic versions took 80+ seconds
+  const big = 256 * 1024;
+  const cases = {
+    'html of "<a" with no ">"': () => htmlToText('<a'.repeat(big / 2)),
+    'html of "<a>" tags': () => htmlToText('<a>'.repeat(big / 3)),
+    'html with an unclosed <script': () => htmlToText(`x<script>${'<a'.repeat(big / 2)}`),
+    'html with an unclosed comment': () => htmlToText(`x<!--${'a'.repeat(big)}`),
+    'a long run of spaces': () => cleanText(`${' '.repeat(big)}x`),
+    'spaces before many newlines': () => cleanText(' \n'.repeat(big / 2)),
+    'many "On … wrote:" lines': () => trimQuoted('On Mon, Oct 5, 2026 Pat <p@x.co> wrote:\n'.repeat(5000)),
+    'many quoted lines': () => trimQuoted('> quoted\n'.repeat(big / 9)),
+    'thousands of header lines': () => parseHeaders('X-A: b\r\n'.repeat(50_000)),
+    'a header folded thousands of times': () => parseHeaders(`Subject: a\r\n${' b\r\n'.repeat(50_000)}`),
+    'a whole email of "<a" as HTML': () => parseMessage(Buffer.from(`From: a@b.co\r\nContent-Type: text/html\r\n\r\n${'<a'.repeat(big / 2)}`)),
+    'a whole email of spaces': () => parseMessage(Buffer.from(`From: a@b.co\r\n\r\n${' '.repeat(big)}x`)),
+    'a Date header of spaces': () => parseMessage(Buffer.from(`From: a@b.co\r\nDate: ${' '.repeat(big)}\r\n\r\nx`)),
+  };
+  for (const [name, fn] of Object.entries(cases)) {
+    const { ms } = timed(fn);
+    assert.ok(ms < budget, `${name}: ${Math.round(ms)} ms`);
+  }
+  assert.ok(htmlToText('<a'.repeat(10)).startsWith('<a<a'), 'a "<" with no ">" is text');
+  assert.equal(parseHeaders('X-A: b\r\n'.repeat(5000)).get('x-a').length, MAX_HEADER_LINES);
+  assert.ok(parseHeaders(`Subject: a\r\n${' b\r\n'.repeat(50_000)}`).get('subject')[0].length <= 8 * 1024);
+});
+
+test('review fix: the reader takes a big literal in small chunks in linear time', () => {
+  const size = 4 * 1024 * 1024;
+  const reader = new ResponseReader({ maxLiteral: size });
+  const head = Buffer.from(`* 1 FETCH (UID 1 BODY[]<0> {${size}}\r\n`);
+  const body = Buffer.alloc(size, 'x');
+  const { out, ms } = timed(() => {
+    const got = [...reader.push(head)];
+    for (let i = 0; i < body.length; i += 1024) got.push(...reader.push(body.subarray(i, i + 1024)));
+    got.push(...reader.push(Buffer.from(')\r\n')));
+    return got;
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0][1].literal.length, size);
+  assert.ok(ms < 1500, `${Math.round(ms)} ms`);
+});
+
+test('review fix: a server that sends too much, too big or too slowly is cut off', async (t) => {
+  const imap = await fake(t);
+  imap.add('INBOX', email({ id: 'x@x' }));
+  // A literal far over what was asked for.
+  imap.oversize = 300 * 1024;
+  let s = await open(imap, { maxLiteral: 100 * 1024 });
+  await s.examine('INBOX');
+  await assert.rejects(s.fetchMessages([1], 1000), (e) => e.code === 'protocol' && /at most 102400 were asked for/.test(e.message));
+  imap.oversize = 0;
+  // Endless untagged answers.
+  imap.flood = MAX_UNTAGGED + 10;
+  s = await open(imap);
+  await s.examine('INBOX');
+  await assert.rejects(s.fetchMessages([1], 1000), (e) => e.code === 'protocol' && /far more than was asked for/.test(e.message));
+  imap.flood = 0;
+  // A trickle that never stops being "almost done": the command's own deadline ends it.
+  imap.trickleMs = 5;
+  s = await open(imap, { timeoutMs: 1000, commandMs: 400 });
+  await s.examine('INBOX');
+  const t0 = Date.now();
+  await assert.rejects(s.fetchHeaders([1], ['SUBJECT']), (e) => e.code === 'timeout');
+  assert.ok(Date.now() - t0 < 3000);
+  imap.trickleMs = 0;
+});
+
+test('review fix: contact forms — judged by a Reply-To that isn’t us', () => {
+  const form = parseMessage(Buffer.from(email({
+    id: 'f@x', from: 'Tins <noreply@tinsxpress.com>', headers: { 'Reply-To': 'Kim <kim@example.com>', 'List-Unsubscribe': '<https://sendgrid.example/u>', Precedence: 'bulk' },
+  })));
+  assert.equal(form.auto, true, 'by its From alone it looks like a machine’s');
+  assert.equal(isAutomaticFor(form, 'support@tins.ca'), false, 'judged by the Reply-To: a customer');
+  const autoReply = parseMessage(Buffer.from(email({ id: 'g@x', from: 'noreply@x.com', headers: { 'Reply-To': 'kim@example.com', 'Auto-Submitted': 'auto-replied' } })));
+  assert.equal(isAutomaticFor(autoReply, 'support@tins.ca'), true, 'an auto-reply stays one');
+  const toNoreply = parseMessage(Buffer.from(email({ id: 'h@x', from: 'a@x.com', headers: { 'Reply-To': 'no-reply@x.com' } })));
+  assert.equal(isAutomaticFor(toNoreply, 'support@tins.ca'), true);
+  const newsletter = parseMessage(Buffer.from(email({ id: 'i@x', from: 'News <news@brand.example>', headers: { 'List-Unsubscribe': '<mailto:u@x>' } })));
+  assert.equal(isAutomaticFor(newsletter, 'support@tins.ca'), true, 'no Reply-To: list mail is still never a ticket');
+  const ownReplyTo = parseMessage(Buffer.from(email({ id: 'j@x', from: 'noreply@x.com', headers: { 'Reply-To': 'support@tins.ca' } })));
+  assert.equal(isAutomaticFor(ownReplyTo, 'support@tins.ca'), true, 'a Reply-To that is us doesn’t count');
 });

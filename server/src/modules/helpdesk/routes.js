@@ -53,7 +53,7 @@ export function createHelpdeskRouter(ctx, service) {
   });
   router.get('/tickets/:id', (req, res) => res.json(service.ticket(req.params.id)));
   router.post('/tickets/:id/close', (req, res) => res.json({ ticket: service.closeTicket(req.params.id, { actor: req.auth.user.actor, reason: 'no_reply_needed' }) }));
-  router.post('/tickets/:id/reopen', (req, res) => res.json({ ticket: service.reopenTicket(req.params.id) }));
+  router.post('/tickets/:id/reopen', (req, res) => res.json({ ticket: service.reopenTicket(req.params.id, { actor: req.auth.user.actor }) }));
   router.post('/tickets/:id/order', async (req, res) => {
     try {
       res.json(await service.lookupOrder(req.params.id));

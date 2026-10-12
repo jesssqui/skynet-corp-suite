@@ -184,6 +184,8 @@ export function loadConfig(env = process.env) {
       timeoutMs: int(env.HELPDESK_TIMEOUT_MS, 30_000, 'HELPDESK_TIMEOUT_MS'),
       // How often each mailbox is read for new mail.
       everyMinutes: int(env.HELPDESK_PULL_EVERY_MIN, 5, 'HELPDESK_PULL_EVERY_MIN'),
+      // A whole read of one mailbox gives up after this long (the connection is closed; tried again later).
+      pullDeadlineMs: int(env.HELPDESK_PULL_DEADLINE_MS, 5 * 60_000, 'HELPDESK_PULL_DEADLINE_MS'),
       // The pull loop: on by default in production; "Pull now" on a mailbox's card works either way.
       scheduled: bool(env.HELPDESK_PULL_ENABLED, production),
       // Tests only: a mail server on this machine may be reached over plain TCP on any port. Never in production —

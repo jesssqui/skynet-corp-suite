@@ -18,7 +18,13 @@ export const COMMANDS = Object.freeze(['CAPABILITY', 'LOGIN', 'LIST', 'EXAMINE',
 /** The FETCH data items this client asks for: UID, INTERNALDATE, RFC822.SIZE and BODY.PEEK[…] (never BODY[…]). */
 const FETCH_ITEM = /^(UID|INTERNALDATE|RFC822\.SIZE|BODY\.PEEK\[(HEADER\.FIELDS \([A-Z0-9 -]+\))?\](<0\.\d{1,9}>)?)$/;
 export const IMAP_PORT = 993;
-const MAX_BUFFER = 64 * 1024 * 1024;
+/** Review fix (D14) — what one server may send: a literal at most `maxLiteral` bytes (what was asked for + slack), one
+ * line at most MAX_LINE, one command's answers at most MAX_UNTAGGED responses and MAX_COMMAND_BYTES bytes. Past any of
+ * these the connection is closed: a broken or hostile server can't fill the memory or keep a pull going for ever. */
+export const MAX_LINE = 1024 * 1024;
+export const MAX_UNTAGGED = 20_000;
+export const MAX_COMMAND_BYTES = 48 * 1024 * 1024;
+const DEFAULT_MAX_LITERAL = 1024 * 1024;
 
 /** A plain-English problem with a mailbox or a call; `code` for the code. Never carries the password. */
 export class ImapError extends Error {
@@ -88,27 +94,61 @@ export function parseInternalDate(s) {
 
 // ---- reading responses -------------------------------------------------------------------------------------
 /**
- * One whole response from `buf` at `start`: its lines' text (as latin1, byte for byte) and literals ({n} … n bytes),
- * or null when it hasn't all arrived. → { end, parts: [{ text } | { literal: Buffer }] }
+ * Responses from a stream of chunks, linear in the bytes received (review fix: no re-concatenating and re-scanning
+ * the whole buffer for every chunk). A literal's bytes are joined once, when they have all arrived. Throws ImapError
+ * 'protocol' for a literal over `maxLiteral` or a line over MAX_LINE.
  */
-export function takeResponse(buf, start = 0) {
-  let pos = start;
-  const parts = [];
-  for (;;) {
-    const nl = buf.indexOf('\r\n', pos, 'latin1');
-    if (nl < 0) return null;
-    const line = buf.toString('latin1', pos, nl);
-    const m = /\{(\d{1,10})\+?\}$/.exec(line);
-    if (m) {
-      const n = Number(m[1]);
-      const from = nl + 2;
-      if (buf.length < from + n) return null;
-      parts.push({ text: line.slice(0, m.index) }, { literal: buf.subarray(from, from + n) });
-      pos = from + n;
-      continue;
+export class ResponseReader {
+  constructor({ maxLiteral = DEFAULT_MAX_LITERAL } = {}) {
+    this.maxLiteral = maxLiteral;
+    this.buf = Buffer.alloc(0); // unconsumed bytes
+    this.pending = []; // chunks not joined yet
+    this.pendingLen = 0;
+    this.need = 0; // bytes needed in buf before trying again
+    this.scan = 0; // where to look for the next CRLF in buf
+    this.parts = []; // the response being read
+  }
+
+  /** Feed a chunk; → the whole responses it completed (each a list of parts). */
+  push(chunk) {
+    this.pending.push(chunk);
+    this.pendingLen += chunk.length;
+    if (this.buf.length + this.pendingLen < this.need) return [];
+    this.buf = this.pending.length === 1 && !this.buf.length ? this.pending[0] : Buffer.concat([this.buf, ...this.pending]);
+    this.pending = [];
+    this.pendingLen = 0;
+    const out = [];
+    for (;;) {
+      const nl = this.buf.indexOf('\r\n', this.scan, 'latin1');
+      if (nl < 0) {
+        if (this.buf.length > MAX_LINE) throw new ImapError('protocol', 'The mail server sent a line that never ends');
+        this.scan = Math.max(0, this.buf.length - 1);
+        this.need = this.buf.length + 1;
+        return out;
+      }
+      const line = this.buf.toString('latin1', 0, nl);
+      const m = /\{(\d{1,10})\+?\}$/.exec(line);
+      if (m) {
+        const n = Number(m[1]);
+        if (n > this.maxLiteral) throw new ImapError('protocol', `The mail server sent a ${n}-byte piece where at most ${this.maxLiteral} were asked for`);
+        if (this.buf.length < nl + 2 + n) {
+          this.scan = nl; // the line is known; wait for the literal's bytes
+          this.need = nl + 2 + n;
+          return out;
+        }
+        this.parts.push({ text: line.slice(0, m.index) }, { literal: Buffer.from(this.buf.subarray(nl + 2, nl + 2 + n)) });
+        this.buf = this.buf.subarray(nl + 2 + n);
+        this.scan = 0;
+        this.need = 0;
+        continue;
+      }
+      this.parts.push({ text: line });
+      out.push(this.parts);
+      this.parts = [];
+      this.buf = this.buf.subarray(nl + 2);
+      this.scan = 0;
+      this.need = 0;
     }
-    parts.push({ text: line });
-    return { end: nl + 2, parts };
   }
 }
 
@@ -219,14 +259,15 @@ const oneLine = (s) => String(s ?? '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g
  * bad_host, network, timeout, tls, protocol, login_disabled, auth.
  *   secure  true = TLS from the first byte (port 993). false only for this machine (tests), and only with allowPlain.
  */
-export async function openImap({ host, port = IMAP_PORT, secure = true, allowPlain = false, username, password, timeoutMs = 20_000, tlsOptions = {}, onCommand = null }) {
+export async function openImap({ host, port = IMAP_PORT, secure = true, allowPlain = false, username, password, timeoutMs = 20_000, commandMs = null, maxLiteral = DEFAULT_MAX_LITERAL, ca = null, onCommand = null, signal = null }) {
   const h = cleanHost(host);
   if (!secure && !(allowPlain && isLocalHost(h))) throw new ImapError('tls', 'The suite only connects to mail servers over TLS (port 993)');
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ImapError('bad_host', 'Port: 993');
 
   const socket = await new Promise((resolve, reject) => {
     const s = secure
-      ? tls.connect({ host: h, port, servername: net.isIP(h) ? undefined : h, minVersion: 'TLSv1.2', rejectUnauthorized: true, ...tlsOptions })
+      // Only a CA can be added (tests' own certificate); certificate checking can't be turned off from here.
+      ? tls.connect({ host: h, port, servername: net.isIP(h) ? undefined : h, minVersion: 'TLSv1.2', ...(ca ? { ca } : {}), rejectUnauthorized: true })
       : net.connect({ host: h, port });
     const timer = setTimeout(() => {
       s.destroy();
@@ -245,7 +286,12 @@ export async function openImap({ host, port = IMAP_PORT, secure = true, allowPla
     });
   });
 
-  let buf = Buffer.alloc(0);
+  // The caller's deadline (a whole pull): aborting closes the connection, which ends every wait at once.
+  if (signal) {
+    if (signal.aborted) socket.destroy();
+    else signal.addEventListener('abort', () => socket.destroy(), { once: true });
+  }
+  const reader = new ResponseReader({ maxLiteral });
   const queue = [];
   let waiter = null;
   let failure = null;
@@ -258,18 +304,15 @@ export async function openImap({ host, port = IMAP_PORT, secure = true, allowPla
     }
   };
   socket.on('data', (chunk) => {
-    buf = buf.length ? Buffer.concat([buf, chunk]) : chunk;
-    if (buf.length > MAX_BUFFER) {
+    let got;
+    try {
+      got = reader.push(chunk);
+    } catch (err) {
       socket.destroy();
-      fail(new ImapError('protocol', 'The mail server sent too much at once'));
+      fail(err);
       return;
     }
-    for (;;) {
-      const r = takeResponse(buf);
-      if (!r) break;
-      buf = buf.subarray(r.end);
-      queue.push(r.parts);
-    }
+    for (const parts of got) queue.push(parts);
     if (waiter && queue.length) {
       const w = waiter;
       waiter = null;
@@ -324,8 +367,20 @@ export async function openImap({ host, port = IMAP_PORT, secure = true, allowPla
     }
     await write(`${line}\r\n`);
     const untagged = [];
+    let bytes = 0;
+    // Each command has its own deadline too (review fix): a server trickling answers can't keep it going for ever.
+    const deadline = Date.now() + (commandMs ?? timeoutMs * 3);
     for (;;) {
+      if (Date.now() > deadline) {
+        socket.destroy();
+        throw new ImapError('timeout', `${h} took too long to answer`);
+      }
       const r = await next();
+      for (const p of r) bytes += p.literal ? p.literal.length : p.text.length;
+      if (untagged.length >= MAX_UNTAGGED || bytes > MAX_COMMAND_BYTES) {
+        socket.destroy();
+        throw new ImapError('protocol', `${h} sent far more than was asked for`);
+      }
       const t = r[0]?.text ?? '';
       if (t.startsWith(`${tag} `)) {
         const m = /^\S+ (OK|NO|BAD)\b ?(.*)$/i.exec(t);
