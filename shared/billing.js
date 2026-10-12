@@ -246,7 +246,8 @@ export const dueDateOf = (issueDate, dueDays = DEFAULT_INVOICE_DUE_DAYS) => addD
  * invoices: issued/void ones { id, business_id, status, subtotal_cents, tax_cents, total_cents };
  * payments: live { invoice_id, amount_cents, paid_on }; creditNotes: issued { invoice_id, issue_date, total_cents }.
  * → Map<business_id, Map<day, { orders, items, gross, discounts, refunds, net, tax, shipping, total }>>
- *   orders = invoices that brought money in that day; refunds = before-tax money given back (credit notes on what was paid).
+ *   orders = invoices whose first money came in that day (an invoice counts once, however many payments: D15's orders
+ *   target adds `orders` up over a month); refunds = before-tax money given back (credit notes on what was paid).
  */
 export function invoiceSalesDays(invoices, payments, creditNotes) {
   const payBy = new Map();
@@ -277,6 +278,7 @@ export function invoiceSalesDays(invoices, payments, creditNotes) {
     const days = [...new Set([...ps.map((p) => p.paid_on), ...cs.map((c) => c.issue_date)])].filter(Boolean).sort();
     let keptNet = 0;
     let keptTax = 0;
+    let counted = false;
     for (const day of days) {
       const paid = ps.filter((p) => p.paid_on <= day).reduce((a, p) => a + (p.amount_cents ?? 0), 0);
       const credited = cs.filter((c) => c.issue_date <= day).reduce((a, c) => a + (c.total_cents ?? 0), 0);
@@ -291,7 +293,10 @@ export function invoiceSalesDays(invoices, payments, creditNotes) {
       const r = row(inv.business_id, day);
       if (dn > 0) r.gross += dn;
       else r.refunds += -dn;
-      if (dn + dt > 0) r.orders += 1;
+      if (dn + dt > 0 && !counted) {
+        r.orders += 1;
+        counted = true;
+      }
       r.net += dn;
       r.tax += dt;
       r.total += dn + dt;

@@ -117,7 +117,7 @@ test('invoices in sales: money in and kept, on its day; credit notes take back o
   assert.deepEqual(agency.get('2026-10-05'), { orders: 1, items: 0, gross: 44248, discounts: 0, refunds: 0, net: 44248, tax: 5752, shipping: 0, total: 50000 });
   const d9 = agency.get('2026-10-09');
   assert.equal(d9.total, 63000 + 45200);
-  assert.equal(d9.orders, 2);
+  assert.equal(d9.orders, 1, 'i2 only: i1 counted once, on the day its first money came in (the 5th)');
   const d12 = agency.get('2026-10-12');
   assert.equal(d12.total, -22600);
   assert.equal(d12.refunds, 20000);

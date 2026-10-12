@@ -271,7 +271,7 @@ test('sales: an invoice counts as it is paid, on the payment’s day; a credit n
   env.setNow('2026-10-14 09:00');
   assert.equal(dev.create('invoice_payment', { invoice_id: inv, amount_cents: 63000, paid_on: '2026-10-14', method: 'cheque' }).status, 'applied');
   let rows = salesRows(env, B.agency);
-  assert.deepEqual(rows.map((r) => [r.day, r.total, r.net, r.tax, r.orders]), [['2026-10-12', 50000, 44248, 5752, 1], ['2026-10-14', 63000, 55752, 7248, 1]]);
+  assert.deepEqual(rows.map((r) => [r.day, r.total, r.net, r.tax, r.orders]), [['2026-10-12', 50000, 44248, 5752, 1], ['2026-10-14', 63000, 55752, 7248, 0]], 'one invoice is one order, on its first payment’s day');
   // Counted in the overview's sales for the business (the "done when"), not as a total-only hand entry.
   env.setNow('2026-10-14 16:00');
   const strip = env.ctx.services.overview.overview({ today: '2026-10-14' }).sales;
