@@ -448,6 +448,8 @@ Design (code in `server/src/backup/`, tests in `server/test/backup.test.js`):
 - Snapshot with better-sqlite3's **backup API** (consistent: committed data only, WAL included; safe while running),
   converted to a single self-contained file (`journal_mode=DELETE`), `integrity_check` must pass, then fsync + rename.
 - Local copy in `BACKUP_DIR` (`data/backups`), then copied to `BACKUP_OFFSITE_DIR`, SHA-256 verified, renamed into place.
+  (D10 review: the snapshot and its check run in a worker thread, the copies are async; local copies are kept
+  `BACKUP_LOCAL_KEEP_DAYS` — default 7 — see "Files".)
   The off-machine folder must contain a `.suite-backup-target` marker file, so an unmounted drive/share (an empty stand-in
   folder) fails loudly instead of silently "backing up" to the same disk.
 - Names `suite-YYYY-MM-DDTHHMMSS.mmmZ.db` (UTC). Retention `BACKUP_KEEP_DAYS` in both folders; the newest is always
@@ -2732,10 +2734,17 @@ routes 503). The plan's "done when": an uploaded file survives a backup restore 
   the nightly backup is one SQLite snapshot (backup API), so the bytes and their records are always consistent, the
   off-machine copy is SHA-256 checked as one file, and `restore.js` brings both back with no change (no second folder to
   copy, prune or keep in step, no orphans either way). The price: every backup holds every file (see DEPLOY.md step 14:
-  up to `FILES_MAX_TOTAL_MB` × `BACKUP_KEEP_DAYS` per backup folder). Not `keepOnRestore` (data). Space freed by a purge is
-  reused, the database file doesn't shrink (no VACUUM).
-- **Limits** (`config.files`): `FILES_MAX_MB` 25 per file, `FILES_MAX_TOTAL_MB` 1024 in all (Σ blob sizes, purge first),
-  `FILES_PURGE_DAYS` 30. **Types by extension only** (`FILE_TYPES`; the browser's claimed type is ignored): images (png,
+  up to `FILES_MAX_TOTAL_MB` × `BACKUP_KEEP_DAYS` off-machine, × `BACKUP_LOCAL_KEEP_DAYS` locally). Not `keepOnRestore`
+  (data). Space freed by a purge is reused, the database file doesn't shrink (no VACUUM): backups stay at its high-water size.
+  **Review fixes to the backup itself** (`backup.js`, `checkWorker.js`): the snapshot (the backup API from a worker
+  thread's own read connection — its last step writes and syncs the whole copy at once), the switch to one file and
+  `integrity_check` all run in a **worker thread**, and the fsyncs and the off-machine copy are async, so the server keeps
+  answering (test: a ~220 MB database with 300,000 rows backed up while `/api/health` is polled — longest freeze ~25 ms,
+  ~470 ms before). `integrity_check` was kept (not `quick_check`): off the main thread its cost doesn't matter. The local
+  folder keeps `BACKUP_LOCAL_KEEP_DAYS` (default **7**, never more than `BACKUP_KEEP_DAYS`): it lives in the Docker VM's
+  disk, shared with images.
+- **Limits** (`config.files`): `FILES_MAX_MB` 25 per file, `FILES_MAX_TOTAL_MB` **500** in all (Σ blob sizes, purge first;
+  lowered from 1 GB in review: backups), `FILES_PURGE_DAYS` 30, `uploadIdleMs` 60 s (no env). **Types by extension only** (`FILE_TYPES`; the browser's claimed type is ignored): images (png,
   jpg, gif, webp, heic, svg, psd, ai, eps), PDF, text/csv/md/rtf, Word/Excel/PowerPoint/OpenDocument/iWork, zip. Never:
   HTML, XML, scripts, programs (415 `type_not_allowed`). The types that may be shown (png, jpeg, gif, webp, pdf) must start
   with their magic bytes (422 `type_mismatch`), so a page renamed .png is never shown.
@@ -2757,11 +2766,17 @@ routes 503). The plan's "done when": an uploaded file survives a backup restore 
   ≤ 8 KB) — never in the path, so nothing personal can reach a log. **Refused from the headers, before any of the body is
   read**: wrong type, no `Content-Length` (411), empty, over the per-file limit (413 `too_big`), owner not live (404),
   no room (413 `no_space`), three uploads already going (503); a refused body is drained when it is of a sensible size,
-  else the connection is closed. Then the body is read (exactly Content-Length), the blob and the record (via
-  `sync.applyLocal` as the person) are written **in one transaction**; 201 `{ file }`. **Idempotent**: the device makes the
+  else the connection is closed. Then the body is read (exactly Content-Length, hashed as it comes; nothing for 60 s →
+  408 `idle` and the connection dropped). The pieces are written in transactions of 8 MB (`PIECES_PER_WRITE`) with a
+  yield between them, the blob marked `complete = 0` (migration 002); the **last transaction checks the space again**
+  (every blob stored or under way counts, so two uploads at once can't both take the last room → 413 `no_space`, the
+  pieces removed), marks the blob complete and makes the record (`sync.applyLocal` as the person). A file is listed only
+  once all its bytes are in; a crash mid-upload leaves pieces with no record, purged after an hour. 201 `{ file }`. **Idempotent**: the device makes the
   record id once per picked file (`uploadIdFor`, a WeakMap) — the same id with the same bytes again → 200 with that file
-  (a retry after a lost answer), other bytes → 409 `exists`. Names are cleaned (`cleanFileName`: last part of a path,
-  no control/bidi/zero-width/reserved characters, NFC, ≤ 150 keeping the extension). Logs say only "file uploaded <id>
+  (a retry after a lost answer), other bytes → 409 `exists`, deleted meanwhile → 409 `deleted`. Names are cleaned (`cleanFileName`: last part of a path,
+  no control/bidi/zero-width/reserved characters, NFC, ≤ 150 keeping the extension); a device's rename of an upload is
+  cleaned the same way before it is sent, other names lose control/bidi/invisible characters (`safeName`), and
+  `checkFile` refuses any name holding them (`hasUnsafeNameChars`). Logs say only "file uploaded <id>
   (<size> bytes, <type>)" — tested: no name, no owner.
 - **Downloads** — `GET /api/files/:id/download` (session; the other person too): 404 when deleted, not an upload, or its
   client/account/task is gone (`crm.liveRecord`, `crm.liveAccount`, `planner.taskState`); 410 `purged`. Sent piece by
@@ -2771,10 +2786,13 @@ routes 503). The plan's "done when": an uploaded file survives a backup restore 
   on an image or PDF. **Nothing renders in the app's origin**: every download except an inline PDF gets `Content-Security-
   Policy: default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox` (no scripts, opaque origin); an inline
   PDF keeps the app's CSP (browsers won't show a PDF in a sandboxed document — PDF viewers run apart from the page). SVG
-  is never inline. The service worker never answers `/api`, so downloads are never cached on devices.
+  is never inline. Firefox shows PDFs with pdf.js, which runs as privileged browser code and doesn't run a PDF's own
+  scripts, so an inline PDF there can't act in the app's origin either (Chrome/Safari: their own viewers, apart too). The service worker never answers `/api`, so downloads are never cached on devices.
 - **Deletes (decision): soft, no bin.** A delete is a sync tombstone like any record (offline, both devices); the bytes are
   kept `FILES_PURGE_DAYS` (30) after the delete — so a delete undone through a delete-vs-edit clash still has them — then
-  `purge()` (at start and before each upload) removes them. No "bin" screen: sync has no undelete step for devices, and
+  `purge()` (at start, hourly and before each upload) removes them. The 30 days count from the **later** of the record's
+  `deleted_at` (the device's clock: an offline delete can arrive weeks later) and when the server first saw it deleted
+  (`files_purge_marks`, noted by each purge pass; taken back when the record is live again). No "bin" screen: sync has no undelete step for devices, and
   backups (which hold the bytes) are the way back after that. A record revived after its purge answers 410.
 - **Task files** belong to the task (`task_id`) and are **listed on the Files tab of the task's client — and of its
   account** — worked out on the device (`filesForClient`: tasks naming the client or one of its accounts), so a task
@@ -2788,7 +2806,8 @@ routes 503). The plan's "done when": an uploaded file survives a backup restore 
   task sheet's form: Enter saves the panel's entry, buttons are `type="button"`); each row: name (a download link),
   kind · size or site · where · who and when, notes, **View** (images, in an in-app viewer — an `<img>` on the same
   origin), **Open** (PDFs, a new tab), **Edit** (rename, notes, address; sends only what changed) and Delete… behind a
-  confirm. Offline: Upload is off and the panel says why; links and pointers still save; the space used shows when online
+  confirm. While a panel is shown, a file dropped beside it does nothing (window-level dragover/drop prevented), so the
+  browser never leaves the app to open it. Offline: Upload is off and the panel says why; links and pointers still save; the space used shows when online
   (`GET /api/files/usage`). No nav entry (eight phone tabs).
 - **Not exercised / open**: a real iPhone (the download sheet; whether *Open* in a new tab shares the home-screen app's
   sign-in — DEPLOY.md says to use Download or View there); HEIC previews (download only); Range requests (no video);
@@ -2908,7 +2927,7 @@ routes 503). The plan's "done when": an uploaded file survives a backup restore 
   unmatched e-Transfers (`payments.unmatched`) and lasting credit balances. D7 (consulting invoices) skipped; support
   emails wait for D14. Next: D15's cards.
 - **D10 (files)**: done — see "Files". The bytes live in the database (own tables, 512 KB pieces) so backups and restores
-  carry them with their synced records; uploads are the one raw (`application/octet-stream`) body, on one exact path,
+  carry them with their synced records (backups now run off the main thread; local copies kept 7 days; 500 MB of files by default); uploads are the one raw (`application/octet-stream`) body, on one exact path,
   checked from the headers before reading; downloads are attachments (images/PDFs shown on request), nosniff, sandboxed,
   no-store; deletes are soft with the bytes purged 30 days later (no bin); password pointers hold no secrets; task files
   list on their client's and account's tab.
