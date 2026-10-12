@@ -44,6 +44,10 @@ connected), and from **D11** sales entries and the overview (module `wholesale`:
 the shared totals, matching its own P&L; module `sales`: sales entered by hand — invoices, anything not connected,
 refunds and credit notes as negatives; module `overview`: the home screen of the business — sales per business for
 today, this week and this month with the combined total, and one list of what needs dealing with — "To deal with").
+From **D17/D18**: quotes, invoices and credit notes (module `billing`: drafts written offline, approved on the server
+with a gap-free number and a stored PDF, sent by the person themselves; a lead's quote moves the lead to Quoted and
+accepting it wins the lead; a follow-up task 7 days after sending; paid invoices in the sales totals, credit notes
+taking money back; invoices past due on the overview).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -88,7 +92,8 @@ shared/                    @suite/shared — ids.js (UUIDv7), time.js, hlc.js (s
                            effectiveAnchor, costTotals, costState, wantsCostReminder, moneyText/costAmountText, the
                            reminder lead days); D8: leads.js (LEAD_STAGES, LEAD_SOURCES, LOST_REASONS,
                            LEAD_STAGE_FIELDS, leadNeedsLook, leadsWithoutNextStep, firstYearValue, pipelineTotals,
-                           CROSS_SELL_PAIRS, crossSellList);
+                           CROSS_SELL_PAIRS, crossSellList); D17/D18: billing.js (statuses, BILLING_BLOCKED, numbers,
+                           documentTotals — HST on the document —, documentFingerprint, invoiceState, invoiceSalesDays);
                            tests in shared/test
 server/src/
   index.js                 start: open db, createApp, listen, heartbeat, backup schedule, shutdown
@@ -162,6 +167,12 @@ server/src/
                            shipView, shipEndedWhy), service.js (keyset, sign-in with state, tokens, pulls + backfill +
                            backoff + startPuller, the 'ebay' Connections row, the sales source), plans.js + automations.js
                            (ebay-orders-to-ship, ebay-sign-in), routes.js (/api/ebay…), migrations/001_create_ebay.sql
+  modules/billing/         D17/D18: entities.js (quote, invoice, credit_note + their lines, invoice_payment; SERVER_FIELDS,
+                           CONTENT_FIELDS), service.js (checks, business details, approve = number + PDF + record in one
+                           transaction, the lead to Quoted, void, the archive), document.js (what a document looks like)
+                           + pdf.js (the PDF writer, no dependency: Helvetica, WinAnsi, deterministic), money.js (D18:
+                           invoices in sales, past due), automations.js (quote-follow-up), routes.js (/api/billing),
+                           migrations/001_create_billing.sql
   backup/                  backup.js, restore.js (D5: runs this version's migrations on the restored copy, then
                            carryKeptTables: modules' keepOnRestore), schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file), redact.js (C6a), sealed.js (D16: AES-GCM
@@ -226,6 +237,11 @@ client/src/
   modules/ebay/            D13: ConnectionPanel.jsx (the eBay card: keyset, Sign in to eBay, the pasted address, zone,
                            Pull now, Forget), AcceptedPage (/ebay/accepted: where eBay sends the browser back), logic.js
                            (client/test/ebay.test.js); the sales module's EbayPage (/costs/sales/ebay: months + entry by hand)
+  modules/billing/         D17/D18: BillingPage (/costs/billing: Quotes · Invoices · Credit notes, New quote / invoice),
+                           DocumentPage (/costs/billing/quotes|invoices|credit-notes/:id), SettingsPage (/costs/billing/
+                           settings: business details, online), forms.jsx (the sheets: new, line, details, approve, email,
+                           accept — D8's WinSheet —, decline, payment, void), cards.jsx (LeadQuotesCard on the lead page,
+                           ClientBillingCard on the client page), data.js, logic.js (no React; client/test/billing.test.js)
   modules/wholesale/       D1: WholesalePage (/wholesale: waiting for a client / linked; lazy), ConnectionPanel.jsx (the
                            wom card's address + secret, via connections/panels.js; lazy), parts.jsx (timeline rows,
                            account and client figures on the client page; D3: QuietRegularBadge; D5: note rows, the
@@ -2261,8 +2277,9 @@ Code `server/src/modules/sales/` (`service.js`, `routes.js`, migration `001_crea
 `client/test/sales.test.js`, `test/e2e/sales.e2e.test.js`. Registered after stockroom, before `woocommerce`.
 **Decision: one shared module** owns the daily totals so every sales source writes the same rows and every reader reads
 one table — D12's WooCommerce stores now, **D13's eBay next** (source `ebay`), D11/D15 read them.
-- **`sales_daily`** (PK source + store + day, WITHOUT ROWID): `source` (`woo|ebay|wholesale|manual` — `SALES_SOURCES`;
-  D11: `wholesale` = the Order Manager, `manual` = sales entered by hand, total only), `store`
+- **`sales_daily`** (PK source + store + day, WITHOUT ROWID): `source` (`woo|ebay|wholesale|manual|invoices` — `SALES_SOURCES`;
+  D11: `wholesale` = the Order Manager, `manual` = sales entered by hand, total only; D18: `invoices` = the suite's own
+  invoices, every figure known), `store`
   (the source's own key: for woo the store's address without the scheme or a leading `www.`, e.g. `tinsxpress.com` — so
   a store re-added under its other host continues its totals), `day` (the **store's
   own calendar day**, "YYYY-MM-DD"), `business_id` (one of ours), `currency`, and the figures (`SALES_FIGURES`): `orders`,
@@ -2711,6 +2728,8 @@ Server `server/src/modules/overview/` (no tables), client `client/src/modules/ov
      lead page.
   8. `quiet` — active clients quiet for 60 days (the Friday review's rule incl. Order Manager orders and notes:
      `planner.quietClients`) → client page.
+  D18 added `invoices` after `balances` (urgent): our own issued invoices still owing after their due date
+  (`billing.overdueInvoices`), oldest due first → the invoice's page.
 - **Placement (decision)**: route `/overview`, a **sidebar entry at the top** (order 5) on the Mac; the phone's tab bar
   keeps its eight (nav entries may say `phone: false`; AppShell's tab bar skips them) and the overview is reached from
   **Today** (a phone-only link row under the header) and **Money → Sales** ("Overview ›"). Today stays the home page: it
@@ -2718,6 +2737,116 @@ Server `server/src/modules/overview/` (no tables), client `client/src/modules/ov
   320 px (e2e). **Room for D15**: the page is a stack of cards — D15's cards (wholesale, stock, web/social, consulting,
   Save Point Shop, clients, all businesses, retail, goals) go below "To deal with", reading `sales.monthly()`,
   `costs.monthlyTotals()` and the services above.
+
+## Quotes, invoices and credit notes (billing module, D17/D18)
+Server `server/src/modules/billing/`, shared `shared/billing.js`, client `client/src/modules/billing/` (+ the lead page's
+Quotes card, the client page's Quotes and invoices card, D8's WinSheet); tests `shared/test/billing.test.js`,
+`server/test/billing.test.js` (TZ Toronto), `client/test/billing.test.js` (logic + two devices), `test/e2e/billing.e2e.test.js`
+(iPhone and Mac). Registered after crm, planner, automations and sales, before the overview. **Working documents**: they
+are what the client receives; the accountant keeps the books (no ledger, no tax filing here). Owner's decision (12 Oct):
+D17 and D18 built together; D7 (consulting engagements) is skipped, so "engagements" are the CRM's services.
+- **Records** (synced, UUIDv7, `created_*`/`updated_*`, `flagged`; ⇧ parent, → plain ref): `quote` (`billing_quotes`:
+  business_id*⇧, client_id→, account_id→, relationship_id→, lead_id→, status* `draft|sent|accepted|declined`, to_name,
+  to_lines, title, notes, terms, valid_until, tax_rate_bp; server: number, sent_on, sent_at, sent_by, subtotal/tax/total
+  cents; a decision: decided_on, declined_reason (`LOST_REASONS`), decided_note), `invoice` (`billing_invoices`:
+  business_id*⇧, client_id*→, account_id→, relationship_id→, service_id→, quote_id→, status* `draft|issued|void`,
+  to_name, to_lines, title, notes, terms, due_days, tax_rate_bp; server: number, issue_date, issued_at, issued_by, due_date,
+  totals, void_on, void_reason), `credit_note` (`billing_credit_notes`: invoice_id*⇧ — an issued invoice —, business_id*→
+  (the invoice's), status* `draft|issued`, reason, to_name, to_lines, notes, tax_rate_bp; server: number, issue dates,
+  totals), `quote_line` / `invoice_line` / `credit_note_line` (one table per kind, same columns: <doc>_id*⇧, position,
+  description*, quantity (number, null = 1), unit_cents* (negative = a discount line), tax_exempt), and `invoice_payment`
+  (`billing_payments`, create/delete — a correction is a delete and a new one: invoice_id*⇧, amount_cents* > 0, paid_on*,
+  method (`PAYMENT_METHODS`), note). Drafts, lines, decisions and payments are written on devices, **offline too**.
+- **The module's checks** (device steps only; the server's own pass): fields only the server writes are refused
+  (`SERVER_FIELDS`); a new document is a draft; what it says (`CONTENT_FIELDS`) and its lines change **only while it is a
+  draft** (`locked` after: an offline edit that arrives after the approval lands in Needs attention, and the PDF never
+  disagrees with the record); only a sent quote may become accepted or declined (no other status from a device: issuing
+  and voiding are the server's); a sent or issued document is never deleted; payments only on an issued invoice; a credit
+  note only for an issued invoice, from its business; tax 0–50 %, terms 0–365 days. **Wholesale (the Order Manager),
+  Save Point Shop (eBay — its sales would count twice) and Personal never bill here** (`BILLING_BLOCKED`, refused).
+- **Money**: CAD only. A line = round(quantity × unit price); **HST at the document's rate (13 % by default; the sheet
+  offers GST 5 % for a client outside the HST provinces and 0 % outside Canada) on the non-exempt lines, rounded once on
+  the document** (`documentTotals`); a total of $0 or more. A lead's value from its quote is the subtotal **before HST**
+  (HST isn't ours), one-off.
+- **Numbers** (decision: **given by the server when a person approves the draft**, never on a device — drafts made offline
+  on two devices can't collide): `<prefix>-Q-0007` / `-INV-0012` / `-CN-0002`, counted **per business and kind**
+  (`billing_counters`), the prefix from the business details (default GWND, BC, RS, else initials). **Gap-free**: the
+  counter moves only in the transaction that also stores the PDF and writes the record; a refused approval (not ready, the
+  fingerprint differs) uses no number; a retried request answers the same number (`already`). Void keeps its number.
+- **Approving** (`POST /api/billing/quotes/:id/send`, `/invoices/:id/issue`, `/credit-notes/:id/issue` `{ today,
+  fingerprint }`, online): "sent only after you approve the draft" — the device syncs first, refuses while its changes
+  haven't reached the server (`pending`), and sends `documentFingerprint` (FNV-1a over every printed value and line) of
+  what the person saw; the server refuses another (409 `changed`: edited on the other device meanwhile). Then, in **one
+  SQLite transaction**: the number, the PDF (rendered synchronously), the record's number / day (the device's `today`,
+  within a day of the server's) / totals (+ `valid_until` = sent + the business's valid days, `due_date` = issued + its
+  terms, the business's usual terms when the draft had none) through `applyLocal`, and for a quote's lead the stage (below).
+  A credit note can't credit more than is left on its invoice (409 `too_much`). Void (`POST /invoices/:id/void { reason }`)
+  only with no payment and no issued credit note.
+- **PDFs** (decision: **hand-rolled, no dependency** — `pdf.js`: the standard Helvetica fonts every reader has, WinAnsi
+  text with Adobe's widths, text/lines/boxes; pdfkit would bring fontkit and half a dozen packages, and writes through an
+  async stream, while issuing is one synchronous transaction). **Deterministic** (no dates, no ids: the same document →
+  the same bytes, tested). The business's colour (`business.color`, else the CRM's fixed one) on the top band and table
+  header; its details from **the business details** (`billing_settings`: name, address, HST number "123456789 RT0001",
+  email, phone, website, how to pay, prefix, quotes valid for, invoices due in, usual terms — **server settings, edited on
+  Money → Billing → Business details, online**; kept across restores). Multi-page with "Page n of m". A draft's preview
+  (`GET /api/billing/pdf/<kind>/<id>?today=`) says DRAFT across the page and has no number. **The issued PDF is stored for
+  good** (`billing_pdfs`, a trigger refuses any UPDATE) with its SHA-256; GET serves it as stored (inline, or `download=1`),
+  signed in, `no-store`, **without the app's CSP header** (browsers' built-in PDF viewers can refuse a PDF that carries
+  `object-src 'none'`; these PDFs are the suite's own — text and boxes, no scripts, links or forms; nosniff stays).
+- **Sending** (decision: **the person sends it** — no SMTP: no outbound connection, no mail secret, nothing sent
+  automatically, and it goes from their own mailbox): after approving, the Email sheet offers **Share the PDF…** (the
+  phone's share sheet with the file — straight into Mail on an iPhone), **Download the PDF** and **Open a drafted email**
+  (mailto: to the contact's email, subject and body; the person attaches the PDF). **Consent**: a quote or an invoice is a
+  transactional message the client expects (CASL covers commercial electronic messages), so no email consent is needed —
+  the sheet says so; marketing rules (consent, the age-restricted rule) are untouched.
+- **Lead stages** (D8's seam): sending a quote for a lead in **Lead or Talking** moves it to **Quoted** — D8's whole
+  `LEAD_STAGE_FIELDS` set in one step, so a stage move on a device at the same time settles as one — with a `stage` row
+  ("Quote GWND-Q-0001 sent: $2,825.00 ($2,500.00 before HST)") and the value; a lead already Quoted gets the new value and a
+  note; a won or lost lead only the note. **Accepted…** on a lead's quote is **D8's Won… sheet** (`WinSheet` with
+  `afterWin`): planWin/applyWin with ids kept until saved — a retry or a double tap never makes a second client — then the
+  quote is marked accepted with the client, account and relationship the win made, in the same save, offline. A lead won
+  meanwhile (the other device): just accepted, with its client. **Declined…**: the quote with its reason, and the lead
+  **lost** with the same reason (a checkbox, on by default).
+- **The follow-up** — automation `quote-follow-up` (event: `billing.quote_sent` after each send, `billing.changed` after a
+  device's push touches quotes and at start; **on, silent**): one task per sent quote, "Follow up on quote … for …", due
+  **7 days after sending**, for the business's default owner, with the lead (so it **is** the lead's dated next step), client,
+  account and relationship. Finished by the suite when the quote is accepted, declined or deleted ("Quote … was accepted on
+  …"). Key `quote:<id>`: a task a person finished or deleted is never made again. `accept` runs it only when there is
+  something to do (no run rows otherwise).
+- **Invoices**: from an accepted quote (**Make the invoice**: its client — the win's —, account, relationship, lines,
+  `quote_id`; printed "For quote …"), or new for a client (optionally a relationship and **a service**: its price as the
+  first line — flat amount, or hours × rate). Where it stands is worked out (`invoiceState`): unpaid, partly paid, paid,
+  credited in full, overdue (owing after its due date), void; overpaid says how much to give back or keep as credit.
+  Payments are recorded on any device (offline too). **Credit notes** (agency and consulting work, any billing business):
+  from an issued invoice (**Credit note…**, "Copy the invoice's lines" then change them), issued like an invoice.
+- **In sales** (D18 decision — **as money comes in, on the day it was paid**, like every other source counts a sale only
+  once it is paid; `money.js`, `invoiceSalesDays`): source `invoices`, one store per business (`invoices:<business id>`,
+  CAD, "Invoices · <business>"), **not total-only** (net, HST and total are all known). Per invoice, on each day a payment
+  arrived or a credit note was issued, kept = min(paid so far, total − credited so far); the day counts the change. So a
+  payment counts on its day; a credit note on a paid invoice takes its amount off on its own day (money given back); a
+  credit note before payment only lowers what is owed (never counted twice); an overpayment beyond the total isn't a sale;
+  void counts nothing. Each change is split into before-tax and HST in the invoice's proportion. Written again (only days
+  that differ, zeros for days with nothing left) after every change that reaches the server — a device's push (the sync
+  module's additive `onChange` hook: listeners told which record types a push or a settled clash changed) or an issue /
+  void — and at start (`sales_daily` isn't kept across restores; the billing records are data and roll back with it). They
+  show on Money → Sales and in **the overview's sales for the business** (the "done when").
+- **To deal with**: the overview's `invoices` section (after balances, urgent): invoices past due, oldest first, with what
+  is owing (`billing.overdueInvoices`).
+- **Screens** (Money → **Billing**, a third tab: no ninth phone tab): `/costs/billing` (Quotes · Invoices · Credit notes;
+  show open / accepted / declined / overdue / paid / all, business and words in the URL; `?new=quote&lead=…` /
+  `?new=invoice&client=…&relationship=…&service=…` open the new sheet), a document's page (`/costs/billing/quotes/:id`,
+  `/invoices/:id`, `/credit-notes/:id`: details, lines and live totals for a draft — offline —, Approve and send / issue…,
+  Email it…, Accepted… / Declined…, Make the invoice, Record a payment…, Credit note…, Void…; RecordSync and sync badges),
+  `/costs/billing/settings` (online). The lead page's **Quotes** card (New quote) and the client page's **Quotes and
+  invoices** card (what is owed, New quote / New invoice). Phones from 320 px: nothing scrolls sideways (e2e).
+- **Restores**: `billing_settings`, `billing_counters` and `billing_pdfs` are **keepOnRestore** — a number is never given
+  twice and a document a client has stays findable; Money → Billing lists the kept PDFs whose record isn't in the restored
+  database ("Issued, but not in the database any more", `GET /api/billing/archive`, `/pdf-archive/:kind/:id`) to enter
+  again if they still count. (Gaps in the restored database's own documents are exactly those.)
+- **Not built / open**: emailing from the suite (SMTP); recurring invoices (retainers billed monthly by hand for now);
+  currencies other than CAD; a refund paid back as its own record (an overpayment or a credit note on a paid invoice is
+  shown, the accountant settles it); deposits on quotes; a quote's own expiry (valid until is printed, not enforced);
+  per-line tax rates other than exempt.
 
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
@@ -2831,6 +2960,14 @@ Server `server/src/modules/overview/` (no tables), client `client/src/modules/ov
   count as one line; the headline counts only urgent sections); payments with no matching order = the Order Manager's
   unmatched e-Transfers (`payments.unmatched`) and lasting credit balances. D7 (consulting invoices) skipped; support
   emails wait for D14. Next: D15's cards.
+- **D17/D18 (quotes, invoices and credit notes)**: done — see "Quotes, invoices and credit notes". One module `billing`;
+  drafts are synced (offline), numbers are given by the server when a person approves a draft (per business and kind,
+  gap-free, kept across restores with the issued PDFs), PDFs are hand-rolled (no dependency, deterministic) and stored for
+  good; the person sends them (share / download / mailto — no SMTP; transactional, no consent needed); a lead's quote moves
+  it to Quoted (D8's whole stage set) and accepting it is D8's win; a 7-day follow-up task; invoices count in sales as money
+  comes in (source `invoices`, payments on their day, credit notes on paid invoices taking it back); invoices past due on the
+  overview. Wholesale, Save Point Shop and Personal never bill here. Next: D15's cards can read `sales.monthly()` (source
+  `invoices` is in it) and `billing.overdueInvoices`.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -2846,7 +2983,7 @@ works with `--force`: carrying the switches is best effort (a warning, then the 
 copy must pass `integrity_check`. Tests that depend on local time set
 `process.env.TZ = 'America/Toronto'` at the top (automations.test.js, wholesale-automations.test.js, wholesale-notes.test.js,
 costs.test.js, stockroom.test.js, leads.test.js, sales.test.js, woocommerce.test.js, ebay.test.js, wholesale-sales.test.js,
-sales-entries.test.js, overview.test.js). automations.test.js
+sales-entries.test.js, overview.test.js, billing.test.js). automations.test.js
 switches D3's two scheduled wholesale automations, D6's two renewal reminders, D8's cross-sell list and D13's eBay sign-in reminder off in its setup (they're on by default)
 so its ticks stay about C8; costs.test.js switches every other scheduled automation off. The e2e `startServer(t, { extraModules })` adds
 test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager checkout>` (D1) runs the real Order
