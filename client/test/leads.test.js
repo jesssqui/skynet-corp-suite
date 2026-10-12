@@ -598,3 +598,12 @@ test('parseLeadNotes: the import lines become labelled rows; what a person typed
   assert.deepEqual(n.loose, ['Called her on Monday']);
   assert.deepEqual(parseLeadNotes(null), { rows: [], loose: [], imported: null });
 });
+
+test('email bounced: a one-tap loss with the bounced reason and its stage row', () => {
+  const lead = { id: 'l1', stage: 'lead', name: 'BAB' };
+  const c = stageChange(lead, 'lost', { reason: 'bounced', now: NOW });
+  assert.ok(!c.problem);
+  assert.equal(c.fields.stage, 'lost');
+  assert.equal(c.fields.lost_reason, 'bounced');
+  assert.match(c.activity.body, /bounced/i);
+});

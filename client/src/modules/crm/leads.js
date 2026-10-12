@@ -15,7 +15,7 @@ export const SOURCE_LABELS = Object.freeze({
   cross_sell: 'Cross-sell (current client)', other: 'Other',
 });
 export const LOST_LABELS = Object.freeze({
-  price: 'Price', timing: 'Timing — not now', went_elsewhere: 'Went with someone else', no_reply: 'Stopped replying',
+  price: 'Price', timing: 'Timing — not now', went_elsewhere: 'Went with someone else', no_reply: 'Stopped replying', bounced: 'Email bounced — undeliverable',
   not_a_fit: 'Not a fit for us', other: 'Other',
 });
 export const LEAD_ACTIVITY_LABELS = Object.freeze({ note: 'Note', call: 'Call', email: 'Email', meeting: 'Meeting', stage: 'Stage' });
