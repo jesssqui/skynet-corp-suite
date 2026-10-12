@@ -49,6 +49,7 @@ export const stepForm = {
   defaults: {
     title: '', stage: '', action: 'task', offset_amount: '0', offset_unit: 'days', owner: 'runner', estimate_minutes: '', notes: '', links: '',
     service_name: '', service_period: 'yearly', service_amount: '', offer: false, only_if_lacks_business: '', only_if_lacks_kind: '',
+    position: '',
   },
   fromRecord: (v, record) => ({
     ...v,
@@ -81,7 +82,7 @@ export const stepForm = {
     return {
       problems,
       fields: {
-        title, stage: textOrNull(v.stage), action: renewal ? 'renewal' : 'task', offset_amount: Number.isInteger(offset) ? offset : 0,
+        position: intOrNull(v.position), title, stage: textOrNull(v.stage), action: renewal ? 'renewal' : 'task', offset_amount: Number.isInteger(offset) ? offset : 0,
         offset_unit: unit, owner: renewal ? null : (STEP_OWNERS.includes(v.owner) ? v.owner : 'runner'),
         estimate_minutes: renewal ? null : est, notes: textOrNull(v.notes), links: textOrNull(v.links),
         service_name: renewal ? textOrNull(v.service_name) : null, service_period: renewal ? (v.service_period || 'yearly') : null,
