@@ -274,7 +274,7 @@ test('switches: off skips the scheduler but Run now still works; who changed it 
   assert.deepEqual(list.body.automations.map((a) => a.id),
     ['friday-review', 'no-next-step', 'lead-no-next-step', 'cross-sell', 'wholesale-check-in', 'wholesale-balances', 'wholesale-ready-to-ship', 'wholesale-follow-ups', 'wholesale-auto-link',
       'service-renewals', 'cost-renewals',
-      'stockroom-reorders', 'stockroom-spot-check', 'stockroom-deliveries', 'stockroom-differences', 'ebay-orders-to-ship', 'ebay-sign-in', 'playbook-months', 'quote-follow-up', 'probe-off']);
+      'stockroom-reorders', 'stockroom-spot-check', 'stockroom-deliveries', 'stockroom-differences', 'ebay-orders-to-ship', 'ebay-sign-in', 'playbook-months', 'quote-follow-up', 'helpdesk-tickets', 'probe-off']);
   assert.equal(list.body.timeZone, 'America/Toronto');
 });
 

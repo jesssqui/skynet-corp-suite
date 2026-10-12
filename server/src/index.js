@@ -87,6 +87,14 @@ if (config.calendar.apple.scheduled) {
   log.info('Apple Calendar reads are off (CALDAV_PULL_ENABLED); Pull now on Account → Calendar still works');
 }
 
+// Helpdesk (D14): each support mailbox read every few minutes (one look a minute; a mailbox is read when due).
+let stopHelpdesk = () => {};
+if (config.helpdesk.scheduled) {
+  stopHelpdesk = ctx.services.helpdesk.startPuller();
+} else {
+  log.info('Support mailbox pulls are off (HELPDESK_PULL_ENABLED); Pull now on a mailbox’s card still works');
+}
+
 let shuttingDown = false;
 function shutdown(signal) {
   if (shuttingDown) return;
@@ -99,6 +107,7 @@ function shutdown(signal) {
   stopWoo();
   stopEbay();
   stopCalendar();
+  stopHelpdesk();
   server.close(() => {
     db.close(); // checkpoints the WAL into the main file
     stopHeartbeat();

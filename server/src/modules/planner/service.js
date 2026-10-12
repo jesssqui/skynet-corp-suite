@@ -108,7 +108,7 @@ export function createPlannerService({ db, services, log }) {
       ORDER BY due_date, due_time IS NULL, due_time, id LIMIT ?`),
     relTasks: db.prepare(`SELECT id, relationship_id, due_date, done_at FROM planner_tasks
       WHERE deleted_at IS NULL AND done_at IS NULL AND relationship_id IS NOT NULL`),
-    task: db.prepare('SELECT id, deleted_at, done_at, relationship_id, client_id, account_id, lead_id, title, due_date, notes FROM planner_tasks WHERE id = ?'),
+    task: db.prepare('SELECT id, deleted_at, done_at, relationship_id, client_id, account_id, lead_id, title, due_date, notes, updated_by FROM planner_tasks WHERE id = ?'),
     // D8: open tasks naming a lead (its "no next step" rule).
     leadTasks: db.prepare(`SELECT id, lead_id, due_date, done_at FROM planner_tasks
       WHERE deleted_at IS NULL AND done_at IS NULL AND lead_id IS NOT NULL`),
@@ -208,6 +208,8 @@ export function createPlannerService({ db, services, log }) {
       return {
         live, open: live && t.done_at === null, relationshipId: t.relationship_id, title: t.title, dueDate: t.due_date,
         notes: t.notes, doneAt: t.done_at, clientId: t.client_id, accountId: t.account_id, leadId: t.lead_id,
+        // D14 review: when it was deleted, and who changed it last (who ticked it off, for a task the suite watches).
+        deletedAt: t.deleted_at, updatedBy: t.updated_by,
       };
     },
   };

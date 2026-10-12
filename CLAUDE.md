@@ -166,6 +166,10 @@ server/src/
                            window + backfill + backoff + startPuller; lookups + orderView; the 'woocommerce' and 'woo-<id>'
                            Connections rows; the sales source), routes.js (/api/woocommerce/stores…), migrations/001
                            (D13 in sales: migrations/002_manual_months.sql, putManualMonth/deleteManualMonth/months/monthly)
+  modules/helpdesk/        D14: imap.js (the read-only IMAP client: COMMANDS allowlist, EXAMINE + BODY.PEEK), mime.js (an email
+                           → plain text, pure), threads.js (ticket state, the 24-hour flag, subjects, order numbers; pure),
+                           service.js (mailboxes, pulls, tickets, retention, order lookups, the 'helpdesk' / 'mail-*'
+                           Connections rows), automations.js (helpdesk-tickets), entities.js (saved_answer), routes.js
   modules/ebay/            D13: client.js (getOrders GETs + the token endpoint's POST only; parseKeyset, consentUrl,
                            codeFromUrl, SCOPES), figures.js (pure: orderFigures, refundFigures, dayRows, zoneMidnightUtc,
                            shipView, shipEndedWhy), service.js (keyset, sign-in with state, tokens, pulls + backfill +
@@ -383,6 +387,12 @@ One folder per module on each side, same name on both (`server/src/modules/healt
     PROPFIND and REPORT only (they only read; their XML bodies are fixed templates), redirects followed only to another
     iCloud host. Key file `calendar-secret.key`. Kept: meeting titles, times, calendar names, free/busy — no notes,
     places or attendees.
+  - **Support mailboxes** (D14): each store's IMAP server, **TLS on port 993 only** (implicit TLS, certificate checked;
+    plain TCP only to this machine, in tests), logged in with that mailbox's **app password**. Not HTTP: the module's one
+    connection is `helpdesk/imap.js`, which can send only CAPABILITY, LOGIN, LIST, EXAMINE (never SELECT), UID SEARCH,
+    UID FETCH with BODY.PEEK (never BODY[…]: nothing marked read), NOOP and LOGOUT — anything else is refused before a
+    byte is written (proved by tests against a fake server). No STORE, COPY, MOVE, EXPUNGE, APPEND, no SMTP: the suite
+    never sends an email. Key file `helpdesk-secret.key`.
   Nothing else in the suite calls out.
 - **No HSTS** (helmet's is off): browsers apply it to the whole ts.net hostname on every port, which would force the
   Order Manager's plain-http port on the same Mac to https. Tailscale Serve already makes the suite HTTPS-only.
@@ -2820,7 +2830,8 @@ Server `server/src/modules/overview/` (no tables), client `client/src/modules/ov
      and our active costs (`costs.renewingBetween`), as the Friday review → client page / `/costs?open=`.
   4. `lowStock` — Stockroom's last order-soon answer, products with a suggested quantity above 0 (the reorder tasks'
      list), most urgent first (`stockroom.lowStock()`); states `not_connected`, `revoked`, `not_read`, `paused`.
-  5. `support` — always `not_connected`: "Not connected yet · comes with the helpdesk (D14)".
+  5. `support` — D14: tickets waiting on us for 24 hours or more (`helpdesk.supportSection()`; `not_connected` until a
+     mailbox is added, `paused` when every mailbox is) → `/helpdesk/tickets/:id`; see "Helpdesk (D14)".
   6. `payments` — **payments with no matching order, both kinds (owner's decision)**: (a) the Order Manager's
      e-Transfers that matched no customer or order — its `payments.unmatched` count, total and oldest, as one line:
      "N e-Transfers with no matching order in the Order Manager: $X — record or dismiss them there: Customers →
@@ -3197,6 +3208,128 @@ D17 and D18 built together; D7 (consulting engagements) is skipped, so "engageme
   shown, the accountant settles it); deposits on quotes; a quote's own expiry (valid until is printed, not enforced);
   per-line tax rates other than exempt.
 
+## Helpdesk (helpdesk module, D14)
+Server `server/src/modules/helpdesk/` (`imap.js` the read-only IMAP client, `mime.js` emails → plain text, `threads.js`
+the ticket rules — both pure —, `service.js`, `automations.js`, `entities.js`, `routes.js`, migrations `001_create_helpdesk.sql`,
+`002_saved_answers.sql`), client `client/src/modules/helpdesk/` (`TicketsPage` `/helpdesk`, `TicketPage`
+`/helpdesk/tickets/:id`, `AnswersPage` `/helpdesk/answers`, `HubPanel` + `MailboxPanel` on Connections, `logic.js`);
+tests `server/test/helpdesk-imap.test.js`, `server/test/helpdesk.test.js` (TZ Toronto), `client/test/helpdesk.test.js`,
+`test/e2e/helpdesk.e2e.test.js`, against `server/test/fixtures/imapFake.js` (a fake IMAP server recording every command
+and keeping flags; plain TCP, or TLS with the test-only certificate `fixtures/imap-test-cert.pem`) and D12's fake
+WooCommerce. Registered after `ebay` (it uses `woocommerce`, the planner and automations; without the planner — the sync
+engine's tests — it reads mail but makes no tasks and registers no synced type). Reads/writes only its own tables.
+**Owner decision (12 Oct)**: IMAP login per store mailbox; reading is IMAP only; nothing is ever sent from the suite.
+- **Mailboxes** (`helpdesk_mailboxes`, `helpdesk_changes`: **keepOnRestore**, like D12's stores): System → Connections →
+  **Support mailboxes** → *Add a mailbox…*: name, IMAP server, username, **app password**, inbox and Sent folders (INBOX /
+  Sent by default), its WooCommerce store (for orders), our business (retail by default). **Checked before anything is
+  saved**: a real login, LIST, and EXAMINE of both folders — a wrong password → 400 `refused`, a missing folder → 400
+  `no_folder` with `details.folders` (and the folder marked `\Sent`), unreachable / TLS → 502. The password is sealed
+  (AES-256-GCM, `lib/sealed.js`, key file `config.helpdesk.keyFile` = `<data>/helpdesk-secret.key`, `HELPDESK_KEY_FILE`),
+  never returned or logged. Each mailbox is its own pausable Connections row `mail-<id without dashes>` after the
+  always-on `helpdesk` row; its card: Pull now, Settings… (name, folders — checked with a login —, own address, "never
+  a ticket from" addresses/@domains, store, business), Replace the app password… (checked), Remove… (deletes its
+  tickets and messages here; nothing changes in the mailbox). Port 993 always (`HELPDESK_TEST_PLAIN_LOCALHOST` lets
+  tests reach a server on this machine over plain TCP on any port; never in production).
+- **Read only by construction** (`imap.js`, no dependency — decision: `imapflow` was approved, but its ~10-package tree
+  includes SMTP and every write command; a 400-line client that *can't* issue a write is the stronger guarantee and its
+  fake server is fully ours): `COMMANDS` = CAPABILITY, LOGIN, LIST, EXAMINE, UID SEARCH, UID FETCH, NOOP, LOGOUT;
+  `checkCommand` refuses anything else and any FETCH item but UID / INTERNALDATE / RFC822.SIZE / `BODY.PEEK[…]` before
+  writing. Tests: no SELECT, every FETCH peeks, the message's flags unchanged, no other module file opens sockets.
+- **Pulls** (`startPuller`, `HELPDESK_PULL_ENABLED`, on in production; one look a minute; a mailbox is read every
+  `HELPDESK_PULL_EVERY_MIN` = **5** minutes; no IDLE — decision: a long-lived connection per mailbox for minutes saved
+  isn't worth it): per folder (`helpdesk_folders`: folder, UIDVALIDITY, last uid; **not** kept across restores) the
+  first read is `UID SEARCH SINCE` 14 days back (`FIRST_READ_DAYS`), later ones `UID SEARCH UID n:*` (skipped when
+  UIDNEXT says nothing is new); a new UIDVALIDITY or folder name reads again from 14 days (a Message-ID already held is
+  never held twice). At most 100 messages a folder a round (`MAX_PER_ROUND`), fetched 20 at a time, the first 256 KB of
+  each (`BODY.PEEK[]<0.262144>`); the Sent folder (headers only) is read **only when the inbox is caught up**, so a reply
+  is normally never read before the email it answers; a sent email that answers no ticket yet is **held** (thread
+  headers and recipients only, `helpdesk_sent_waiting`) and tried again on the next `SENT_HOLD_ROUNDS` (2) reads, then
+  dropped. Failures back off 2 … 60 minutes (an auth refusal says "replace the app password"); paused = no calls at all;
+  switched on → read at once. After a round with a good read: `automations.emit('helpdesk.pulled')`. **Limits (review
+  fix)**: a whole read gives up after `HELPDESK_PULL_DEADLINE_MS` (5 min: an AbortController closes the connection,
+  connecting included); each command has its own deadline (3 × the timeout) and each wait the timeout; a literal larger
+  than asked for (+ 64 KB) or a line over 1 MB closes the connection, as do more than 20,000 answers or 48 MB to one
+  command; the reader (`ResponseReader`) is linear in the bytes received. Emails are parsed **before** the write
+  transaction; each is filed in its own savepoint.
+- **Tickets** (`helpdesk_tickets`, `helpdesk_messages`; server data, **not synced**, not kept across restores — rolled
+  back and read again): a customer email (Reply-To when it isn't our own address — contact forms —, else From) joins the
+  ticket of any message its In-Reply-To/References name, else the same customer + `subjectKey` (Re:/Fwd:/AW:… stripped)
+  within 30 days, else opens a new ticket (`number` from its own counter `helpdesk_meta.ticket_number`: never reused).
+  No Message-ID → an id hashed from its own headers (`fallbackMessageId`; never from where it was read, so a renumbered
+  folder doesn't hold it twice). One of our sent emails is kept (**without its body**) only when it replies to a ticket
+  (thread headers, else To + subject — a mailto reply). **Never a ticket, never kept** (`isAutomaticFor`): an email
+  whose Reply-To names someone other than the sender and us — **a contact form** (From noreply@ / wordpress@, the
+  customer as Reply-To, often through SendGrid / Mailgun with List-Unsubscribe and Precedence bulk) — is judged by that
+  Reply-To: only Auto-Submitted ≠ no, an auto-reply header or a noreply Reply-To leave it out, and its customer is the
+  Reply-To. Any other email: Auto-Submitted ≠ no, Precedence bulk/junk/list, List-Id/List-Unsubscribe, X-Autoreply,
+  mailer-daemon/postmaster/no-reply senders. Also the mailbox's own address as the customer, and "never a ticket from"
+  (`parseIgnore`/`isIgnored`: an address or @domain matches **From only**; `subject: <words>` matches the subject —
+  WooCommerce's new-order email also comes From the shop with the customer as Reply-To, so block it by subject, never
+  by the shop's address, which would block the contact form too). Counted as `skipped`.
+  State (`ticketStatus`, from INTERNALDATEs): `waiting` (a customer email after the later of our last reply and a close;
+  `waiting_since` = the first such), `answered`, `closed` (a person's close at or after our last reply); every move back
+  to waiting because the customer wrote is a new **episode** (`wait_reason: customer`). **Flagged** = waiting 24 hours or
+  more (`FLAG_AFTER_MS`), worked out at read time. Close ("no reply needed"; closed at now, never before the customer's
+  last email as the mail server timed it) / Reopen on the ticket page (`POST /tickets/:id/close|reopen`): a **reopen is
+  not a new episode** (the customer didn't write) — `reopen_count` +1, `reopened_at/_by`, `wait_reason: reopened`.
+- **Privacy** (customer emails are personal data; the stores sell age-restricted products): kept only to answer them —
+  **never for marketing, never copied into the CRM, never synced to devices** (said on every Support page and the
+  mailbox form). Kept: sender name and email, subject, dates, the body as **plain text** (HTML turned into text on the
+  server: scripts, styles, images and links' addresses dropped; quoted earlier messages left out; ≤ 20,000 characters),
+  attachment **names only** (never the files), thread ids. Pages show text as text (React): no remote image is ever
+  loaded (e2e: no request leaves the suite, no CSP violation). **Retention**: bodies (and attachment names) deleted 90
+  days after a ticket is answered or closed (`BODY_KEEP_DAYS`), whole tickets 365 days after (`TICKET_KEEP_DAYS`);
+  waiting tickets are kept; run on every puller look (at most hourly, `purgeIfDue` — paused or failing mailboxes too) and
+  at start. **At start** tickets, messages, folders, pulls and held sent emails of a mailbox that isn't there any more are
+  deleted (a restore keeps the current mailboxes but rolls tickets back). Every route answers `no-store`; addresses
+  carry ids only. **Linear by construction (review fix)**: every input is capped first (text parts 64 KB, HTML 256 KB,
+  400 header lines / 64 KB, 8 KB a value, 100 MIME parts) and HTML → text, text clean-up, quoted-reply trimming and
+  header parsing are single passes — tests time 256 KB of "<a", runs of spaces, thousands of "On … wrote:" and header
+  lines (the regex versions took over a minute).
+- **The order on each ticket**: `POST /api/helpdesk/tickets/:id/order` (the page calls it on open) — the order numbers
+  the customer's emails mention (`orderNumbers`: "#1042", "order 1042", "Order #TX-500", "commande 2051"; at most 3), else
+  the customer's email, looked up through `ctx.services.woocommerce.lookup` (D12) in the mailbox's store: shown with
+  D12's `OrderCard` (`sales/OrderCard.jsx`; first name only), **never stored, never logged**; the route answers every
+  error itself like D12's. No store linked → 409 `no_store`. **An order found by a number in the email may be anyone's**
+  (review fix): `woocommerce.lookup(id, { number, matchEmail })` compares the order's billing email with the ticket's
+  customer in the store module and returns only `senderMatches: true|false`; the page says "This order isn't under the
+  sender's email" when false. Orders found by the customer's email are theirs.
+- **Tasks** — automation `helpdesk-tickets` (events `helpdesk.pulled` / `helpdesk.changed` — closes, reopens, removals,
+  and once at start; **on, silent**): one task per waiting ticket per wait, key `ticket:<id>:<episode>` (+ `.r<n>` after
+  the n-th reopen on the page), on the
+  **shared list** (`owner: 'shared'`), the mailbox's business (retail), due the (server-local) day it started waiting,
+  title **"Answer support email #12 (TinsXpress)"** (": the customer wrote again" for a new episode, ": reopened" for a
+  reopen) and notes
+  with the path `/helpdesk/tickets/<id>` — **no customer data** (decision: tasks sync to devices and their titles go into
+  the calendar feed). The task row shows **Open the ticket** (`ticketPathIn`), so a phone reaches the ticket from Today.
+  Who finished it decides: answered / closed on the page / mailbox removed → the suite finishes it saying why; a
+  **person** ticking it off (or deleting it) while the ticket waits **closes the ticket** (`closeFromTask`:
+  `task_done` / `task_deleted`, `closed_by` = who changed the task last — planner's `taskState` now gives `updatedBy`
+  and `deletedAt` —, **closed_at = the task's done time**, or for a deleted one its delete time — review fix: never the
+  run's time, so an email that came after the tick is a new wait with a new task, not swallowed) and adds one line to the
+  task ("… Reopen this task to reopen the ticket"); a person **reopening that task** (a mistaken tick) → the ticket waits
+  again, same episode, same task (`uncloseFromTask`). The customer writing again → a new episode, a new task. At most
+  25 new a run (planned again after the closes). `accept` leaves no run rows when nothing changes.
+- **The overview** (D11): `support` = flagged tickets (`helpdesk.supportSection()`: count, items `{ number, mailbox,
+  hours }`, `waiting`, `failing`), linking to the ticket; urgent (in the headline). **For D15**:
+  `helpdesk.openTicketsByStore()` → `{ <sales store key>: count }` — open = waiting + answered (not closed), keyed like
+  `sales_daily.store` through the woocommerce service's `storeKey` for the mailbox's `store_id`; mailboxes with no store
+  (or one no longer connected) are left out. Read-only; call it guarded.
+- **Microsoft accounts** (Microsoft 365, Outlook.com, Hotmail: host or username) are refused at once with 400
+  `microsoft` ("can't be read yet: Microsoft only allows OAuth sign-in for IMAP") — nothing is tried.
+- **Saved answers** (`saved_answer`, `helpdesk_saved_answers`, synced, offline): title, body (≤ 5000), `mailbox_id` (id,
+  no ref — mailboxes aren't synced; null = every mailbox), position. On a ticket: **Copy** (`{name}` → the customer's
+  first name) and **Write it in Mail** (`mailto:` with "Re: <subject>" and the body — matched later by subject and
+  address; replying to the email itself keeps the thread; it opens the device's **default** mail account, which the
+  page says to check). Edits send only what changed.
+- **Placement**: a sidebar entry **Support** (`phone: false`, order 27); phones reach tickets from their task on Today
+  and the overview (the row link reads `ticketPathIn`, in `planner/links.js`, so the planner doesn't import the
+  helpdesk). Tabs Tickets · Saved answers.
+- **Not exercised here**: a real mailbox (Gmail, iCloud, a cPanel/Dovecot host) — only the fake server; real TLS
+  certificates (only the test certificate); real mail apps' Sent folders and threading headers; Microsoft 365 /
+  Outlook.com (refused up front: OAuth isn't built). **Open**: OAuth (XOAUTH2)
+  for providers that require it; a search over tickets; IDLE; merging two tickets by hand.
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
@@ -3333,6 +3466,12 @@ D17 and D18 built together; D7 (consulting engagements) is skipped, so "engageme
   comes in (source `invoices`, payments on their day, credit notes on paid invoices taking it back); invoices past due on the
   overview. Wholesale, Save Point Shop and Personal never bill here. Next: D15's cards can read `sales.monthly()` (source
   `invoices` is in it) and `billing.overdueInvoices`.
+- **D14 (helpdesk)**: done — see "Helpdesk (D14)". IMAP only, read only by construction (own client, no dependency:
+  EXAMINE + BODY.PEEK, a command allowlist), nothing ever sent — replies are written in the person's mail app and seen
+  in the Sent folder. Tickets are **server data with a read API, not synced records** (customer emails stay on the
+  Mac mini; synced steps are never pruned, so bodies there could never be deleted); a task per wait on the shared list
+  carries only the ticket's number and mailbox; ticking it closes the ticket. Bodies purged 90 days after a ticket is
+  handled, tickets after a year. Orders looked up live through D12, never stored. Saved answers are synced. Next: D15.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -3348,7 +3487,7 @@ works with `--force`: carrying the switches is best effort (a warning, then the 
 copy must pass `integrity_check`. Tests that depend on local time set
 `process.env.TZ = 'America/Toronto'` at the top (automations.test.js, wholesale-automations.test.js, wholesale-notes.test.js,
 costs.test.js, stockroom.test.js, leads.test.js, sales.test.js, woocommerce.test.js, ebay.test.js, wholesale-sales.test.js,
-sales-entries.test.js, overview.test.js, playbooks.test.js, meetings.test.js, billing.test.js — server and client). automations.test.js
+sales-entries.test.js, overview.test.js, playbooks.test.js, meetings.test.js, billing.test.js, helpdesk.test.js — server and client). automations.test.js
 switches D3's two scheduled wholesale automations, D6's two renewal reminders, D8's cross-sell list, D13's eBay sign-in reminder and D9's playbook-months off in its setup (they're on by default)
 so its ticks stay about C8; costs.test.js switches every other scheduled automation off. The e2e `startServer(t, { extraModules })` adds
 test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager checkout>` (D1) runs the real Order

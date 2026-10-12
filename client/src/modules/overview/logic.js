@@ -23,7 +23,7 @@ export const SECTIONS = Object.freeze({
   invoices: { title: 'Invoices past due', link: '/costs/billing?show=overdue', linkText: 'Invoices', empty: 'No invoice is past due.' },
   renewals: { title: 'Renewals and retainers in the next 30 days', link: '/costs', linkText: 'Costs', empty: 'Nothing renews in the next 30 days.' },
   lowStock: { title: 'Low stock', link: `/tasks?business=${BUSINESS_IDS.wholesale}`, linkText: 'Wholesale tasks (reorders)', empty: 'Nothing to reorder, as Stockroom last said.' },
-  support: { title: 'Support emails unanswered after 24 hours', link: null, linkText: null, empty: '' },
+  support: { title: 'Support emails unanswered after 24 hours', link: '/helpdesk', linkText: 'Support tickets', empty: 'No support email has waited 24 hours for a reply.' },
   payments: { title: 'Payments with no matching order', link: '/wholesale', linkText: 'Order Manager customers', empty: 'None: every payment has an order to go against.' },
   noNextStep: { title: 'No next step', link: '/crm/pipeline', linkText: 'Pipeline', empty: 'Every active relationship and open lead has a dated next step.' },
   quiet: { title: 'Clients gone quiet', link: '/crm', linkText: 'Clients', empty: 'No active client has gone quiet.' },
@@ -33,9 +33,11 @@ export const SECTIONS = Object.freeze({
 export function stateNote(section) {
   switch (section.state) {
     case 'ok': return null;
-    case 'paused': return section.id === 'lowStock' ? 'Stockroom is paused on Connections: this is its last answer.' : 'The Order Manager is paused on Connections: these are the last figures it sent.';
+    case 'paused':
+      if (section.id === 'support') return 'Every support mailbox is paused on Connections: this is their last read.';
+      return section.id === 'lowStock' ? 'Stockroom is paused on Connections: this is its last answer.' : 'The Order Manager is paused on Connections: these are the last figures it sent.';
     case 'not_connected':
-      if (section.id === 'support') return `Not connected yet · comes with ${section.comesWith ?? 'the helpdesk (D14)'}.`;
+      if (section.id === 'support') return 'Not connected: add each store’s support mailbox on System → Connections.';
       if (section.id === 'lowStock') return 'Not connected: Stockroom is set up on System → Connections.';
       return 'Not connected: the Order Manager is set up on System → Connections.';
     case 'not_read': return 'Stockroom hasn’t been read yet.';
@@ -126,6 +128,9 @@ export function itemLine(sectionId, item, fmt = { date: (d) => d }) {
     case 'noNextStep':
       if (item.kind === 'lead') return { key: `lead:${item.id}`, text: `Lead: ${item.name}`, link: `/crm/leads/${item.id}`, detail: [item.business, item.stage ? STAGES[item.stage] ?? item.stage : null].filter(Boolean).join(' · ') };
       return { key: `rel:${item.id}`, text: item.accountName, link: `/crm/clients/${item.clientId}`, detail: [item.business, item.clientName && item.clientName !== item.accountName ? item.clientName : null].filter(Boolean).join(' · ') };
+    case 'support':
+      // D14: the ticket's number and mailbox only (the customer's email stays on the ticket's page).
+      return { key: item.id, text: `Support email #${item.number} (${item.mailbox})`, link: `/helpdesk/tickets/${item.id}`, detail: `Waiting ${item.hours >= 48 ? plural(Math.floor(item.hours / 24), 'day') : plural(item.hours, 'hour')} for a reply`, tone: 'danger' };
     case 'quiet':
       return { key: item.id, text: item.name, link: `/crm/clients/${item.id}`, detail: item.since ? `Nothing since ${day(item.since)}` : 'Nothing logged yet' };
     default:
@@ -147,6 +152,7 @@ export function summaryText(section) {
     case 'invoices': return section.count ? `${money(section.totalCents ?? 0)} owing on our own invoices` : '';
     case 'renewals': return section.count ? `${plural(section.services ?? 0, 'client service')}, ${plural(section.costs ?? 0, 'of our costs', 'of our costs')}` : '';
     case 'noNextStep': return section.count ? `${plural(section.relationships ?? 0, 'relationship')}, ${plural(section.leads ?? 0, 'lead')}` : '';
+    case 'support': return [section.waiting ? `${plural(section.waiting, 'ticket')} waiting for a reply in all` : '', section.failing?.length ? `${section.failing.join(', ')} can’t be read right now` : ''].filter(Boolean).join(' · ');
     case 'quiet': return section.count ? `Active clients with nothing for ${section.days ?? 60} days (a note, a call, an order)` : '';
     case 'payments': return section.count && section.customers ? `${plural(section.customers, 'customer')} paid beyond their orders (regular depositors left out)` : '';
     default: return '';

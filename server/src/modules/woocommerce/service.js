@@ -486,8 +486,10 @@ export function createWooService(ctx) {
    * Find orders by number or by the customer's email, in the store, now. Only orders whose number (or email) is exactly
    * the one asked for come back (a search's other hits are dropped), at most LOOKUP_LIMIT, each as orderView (first
    * name only). Nothing is kept or logged. → { orders }
+   * D14: `matchEmail` (with a number) adds `senderMatches` to each order — whether its billing email is that one —
+   * worked out here so the email itself never leaves this function.
    */
-  async function lookup(id, { number = null, email = null } = {}) {
+  async function lookup(id, { number = null, email = null, matchEmail = null } = {}) {
     const row = mustStore(id);
     if (isPaused(row)) throw refused(409, 'paused', 'This store is switched off: switch it on to look up orders');
     const n = String(number ?? '').trim().replace(/^#/, '');
@@ -528,7 +530,9 @@ export function createWooService(ctx) {
         } catch {
           tracking = []; // no tracking plugin (404), or it failed: the order still shows
         }
-        orders.push(orderView(o, tracking));
+        const view = orderView(o, tracking);
+        if (matchEmail) view.senderMatches = String(o.billing?.email ?? '').trim().toLowerCase() === String(matchEmail).trim().toLowerCase();
+        orders.push(view);
       }
       return { orders, more: found.length > LOOKUP_LIMIT };
     } catch (err) {
