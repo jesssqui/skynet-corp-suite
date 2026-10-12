@@ -590,10 +590,40 @@ Then check once:
   Wholesale, Save Point Shop or Personal (their sales come from the Order Manager and eBay); Retail stores only for a
   store not connected to WooCommerce (the sheet warns). Needs a connection to the suite.
 - **The overview** (`/overview`; on a phone: Today → *Overview*): sales per business and *To deal with*. Support emails
-  show "Not connected yet · comes with the helpdesk (D14)" until D14.
+  count once a support mailbox is added (step 14).
 - **After restoring the suite from a backup**: nothing to do — the wholesale days are written again from the holding
   area (kept across restores) at start, and the last unmatched e-Transfer count is kept; sales entered by hand roll back
   with the backup (like the rest of the data).
+
+## 14. Support mailboxes: tickets from each store's support email (D14)
+
+The suite reads each store's support mailbox over IMAP — **read only**: nothing is marked read, moved, deleted or sent.
+You keep replying from your normal mail app; the suite sees the reply in the Sent folder and marks the ticket answered.
+Do this once per mailbox:
+
+1. **Make an app password** for the suite (never the mailbox's normal password; revoke it there any time):
+   - Gmail / Google Workspace: 2-Step Verification on, then Google Account → Security → App passwords. Server
+     `imap.gmail.com`, Sent folder `[Gmail]/Sent Mail` (check Gmail → Settings → Forwarding and POP/IMAP: IMAP on).
+   - iCloud: account.apple.com → Sign-In and Security → App-Specific Passwords. Server `imap.mail.me.com`, Sent folder
+     `Sent Messages`.
+   - Your web host's mail (cPanel / Dovecot): usually `mail.<your domain>`, the mailbox's own password or an app
+     password if the host offers one; Sent folder `Sent` or `INBOX.Sent`.
+   - Microsoft 365 / Outlook.com mostly refuse password logins over IMAP now: the suite can't read those yet.
+2. Make sure the mail app you answer from **saves sent mail in that mailbox's Sent folder** (it does when the account is
+   IMAP; with Gmail it always does).
+3. **System → Connections → Support mailboxes → Add a mailbox…**: name ("TinsXpress support"), server, username (the
+   address), app password, inbox folder (`INBOX`), Sent folder, its WooCommerce store (for the order on each ticket — add
+   the store first, step 11) and our business (Retail stores). The suite logs in and opens both folders before saving;
+   if the Sent folder is wrong it lists the mailbox's folders and names the one marked Sent.
+4. On the mailbox's card → **Settings…**: under *Never a ticket from*, add the store's own notification senders (e.g.
+   `wordpress@tinsxpress.com`, `orders@tinsxpress.com`) so order notifications don't become tickets.
+5. Check: send a test email to the mailbox from another address → within 5 minutes it shows on **Support** (sidebar) and
+   as "Answer support email #1 (…)" on Today's shared list; reply to it from your mail app → within 5 minutes the ticket
+   says *Answered* and the task is done.
+
+The first read goes back 14 days. Email texts are deleted 90 days after a ticket is answered or closed, tickets after a
+year; attachments are never kept. Settings: `HELPDESK_PULL_EVERY_MIN` (5), `HELPDESK_PULL_ENABLED` (on in production),
+`HELPDESK_KEY_FILE` (the key that encrypts the app passwords — in the data volume, never in backups).
 
 ## Troubleshooting
 
