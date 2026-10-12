@@ -24,6 +24,7 @@ import { STAGE_LABELS, clientLeads, leadTimelineItems, leadValueText, nextStepOf
 import { LeadForm } from './leadForms.jsx';
 import { WonTwice } from './LeadNotices.jsx';
 import { ClientFilesCard, AccountFilesLink } from '../files/ClientFilesCard.jsx';
+import { ClientProjectsCard } from '../playbooks/ClientProjectsCard.jsx';
 import './crm.css';
 
 // One client on one screen (/crm/clients/:id): who they are, their businesses (accounts) with
@@ -614,6 +615,7 @@ function ClientScreen({ clientId }) {
             onNew={() => open({ kind: 'lead' })}
           />
           <ClientFilesCard clientId={client.id} />
+          <ClientProjectsCard clientId={client.id} />
         </div>
         <div className="crm-col">
           <ClientTasksCard

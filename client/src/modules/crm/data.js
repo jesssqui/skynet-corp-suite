@@ -38,6 +38,11 @@ const BELONGS_TO = {
   // D8: a lead belongs to one of our businesses (its client/account are plain refs); its timeline to it.
   lead: ['business'],
   lead_activity: ['lead', 'business'],
+  // D9: playbooks and their runs belong to one of our businesses; steps to their playbook, a run's copy to the run.
+  playbook: ['business'],
+  playbook_step: ['playbook', 'business'],
+  playbook_run: ['business'],
+  run_step: ['playbook_run', 'business'],
 };
 
 const caches = new WeakMap(); // engine -> { entries: Map<entity, Promise<Entry>>, off }

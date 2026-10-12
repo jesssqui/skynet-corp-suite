@@ -89,6 +89,10 @@ export default function TasksPage() {
         )}
       />
       <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
+        {/* D9: playbooks and projects (a sidebar entry on the Mac; this is the way there on a phone). */}
+        <Link to="/playbooks" data-testid="tasks-playbooks-link" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minHeight: 'var(--tap)', fontWeight: 600, fontSize: 'var(--text-sm)', justifySelf: 'start' }}>
+          <Icon name="list" size={16} />Playbooks and projects ›
+        </Link>
         {data && toSort && due !== 'unplanned' ? (
           <div className="planner-to-sort-bar" data-testid="tasks-to-sort">
             <Icon name="flag" size={18} />

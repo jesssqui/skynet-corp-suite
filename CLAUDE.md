@@ -2814,6 +2814,118 @@ routes 503). The plan's "done when": an uploaded file survives a backup restore 
   thumbnails; moving a file to another owner; a bin screen; virus scanning; files from the share sheet (C5); per-person
   quotas. Pruning file tombstones follows the sync pruning plan.
 
+## Projects and playbooks (playbooks module, D9)
+Server `server/src/modules/playbooks/` (`entities.js`, `service.js` — checks and reads —, `automations.js`, migration
+`001_create_playbooks.sql`), planner migration `004_task_run.sql`, shared rules `shared/playbooks.js`, client
+`client/src/modules/playbooks/` (`logic.js` no React, `data.js`, `forms.jsx`, `parts.jsx`, `PlaybooksPage`, `PlaybookPage`,
+`RunPage`, `ClientProjectsCard.jsx`); tests `shared/test/playbooks.test.js`, `server/test/playbooks.test.js` (TZ Toronto),
+`client/test/playbooks.test.js` (logic + two devices: the plan's three "done when"), `test/e2e/playbooks.e2e.test.js`
+(iPhone, Mac, 320 px). Registered after the crm, planner and automations (`modules/index.js`); without the crm/planner
+(the sync engine's own tests) it registers nothing (`{ enabled: false }`).
+
+**Record types** (synced, UUIDv7, `created_*`/`updated_*`, `flagged`; ⇧ parent, → plain ref, * required):
+- `playbook` (`playbooks_playbooks`; create/update/delete — delete is for mistakes, `archived` hides one): name*,
+  business_id*⇧ (one of ours), repeat (`once|monthly`, null = once: monthly = a retainer), for_client (a run asks for a
+  client), kind (a relationship kind: what we do for them), description, archived.
+- `playbook_step` (`playbooks_steps`): playbook_id*⇧, position, title* (a task's title), stage (free text: the run's
+  checklist is grouped by it), action (`task|renewal`, null = task), offset_amount + offset_unit (`days|weeks|months|
+  years`; from the run's start, negative = before, ten years at most — `checkStepFields`), owner (`runner|business|owner|
+  partner|shared`, null = whoever runs it; `business` = the business's default owner), estimate_minutes, notes, links
+  (one per line: a web address with an optional label, `file:<id>`, or words), and for a renewal step service_name,
+  service_period, service_amount_cents; for an **offer**, only_if_lacks_business→ + only_if_lacks_kind.
+- `playbook_run` (`playbooks_runs`; create/update/delete): playbook_id→ (plain: deleting the playbook hides no run),
+  name*, business_id*⇧, repeat, client_id→, account_id→, relationship_id→, start_date*, end_date (monthly: no month
+  starts after it; `checkRun`: not before the start), owner (`OWNERS`: everything to one person / the shared list;
+  null = as each step says), runner* (who ran it: each step's "whoever runs it", later months too), status
+  (`active|done|stopped|starting`, null = active), playbook_as_of (the latest change to the playbook **or its steps**
+  when copied), playbook_name (its name then: later months' notes use it), made (what it made or changed in the
+  client's records: `relationship:<id> service:<id> restarted:relationship:<id> renewal:<service id>:<old date>`;
+  migration 002), notes.
+- `run_step` (`playbooks_run_steps`; **append-only**): run_id*⇧, step_id (no ref), every step field copied, outcome
+  (`task|skipped|renewal`) + outcome_note (why it was left out, what date it set).
+- `task.run_id` + `task.run_step_id` (planner migration 004): **plain ids with no `ref`** (decision: the planner is
+  registered before playbooks and mustn't depend on it; a deleted run reads as none and its tasks stay).
+
+**Rules (decisions)**
+- **Editing a playbook changes only future runs — by copy, not versions**: a run copies every step into its own
+  append-only `run_step`s when it starts, and its tasks are made from those copies (the device for a run's first month,
+  the server for a retainer's later ones). A playbook edited, reordered or deleted never touches a run, its copies or its
+  tasks (tested on two devices and on the server). Chosen over version numbers: nothing to keep in step, and a run reads
+  as it started even after the playbook is deleted. Versions would only matter for "update this run to the new steps"
+  (not built).
+- **Runs execute on the device, offline** (`planRun` → `applyRun`, like D8's win): one person's tap makes the run, its
+  copies, the tasks, the renewal dates and (when missing) the relationship as ordinary store writes — shown at once,
+  synced later — so a phone in the warehouse runs the packing playbook with no signal. Ids are **made once per playbook
+  and choice** (`keptRunIds`, localStorage `suite.playbooks.runIds.<playbook id>` until saved, keyed by client, account,
+  start, owner, end): a retry after a failure part-way, a double tap or a reload re-uses them (`already_exists` = done),
+  never a second run; after a save they are forgotten (running it again is a new run). The server only makes later
+  months of a repeating run (it is the one always on; a phone can't run on a schedule).
+- **What a run makes** (`planRun`): the relationship it works on = the account's with the playbook's business (and kind)
+  — an active one, else a paused/ended one made active again (only `status` sent), else (kind known) a new active one
+  from the start day; then the run, a `run_step` per step, then per step: a **task** (`stepTaskFields`: the step's
+  title — "· November 2026" added in a repeating run —, notes + "Files and links" + "From the playbook …", owner by
+  `stepOwner`, the run's business, client, account and relationship, due = `stepDate(start, step)`, estimate, run_id,
+  run_step_id); a **renewal** sets `renewal_date` on the relationship's service of that name (any case; not done or
+  cancelled) — or adds it (active, start = the start day, its period, flat amount when given) — so D6's
+  `service-renewals` reminds 30 days before; with no relationship it is left out. **Offers** follow D8's cross-sell
+  rule (`offerSkipReason`): left out when the account has a relationship of that business and kind **in any status**
+  (an ended one was a "no thanks"; the one this run adds counts), or is **age-restricted** with no relationship with that
+  business at all, or no client was picked — the website launch's "Offer social media" is made only for a client
+  without GWND social. Renewal dates go on the CRM `service` only (not a `recurring_cost`: our own costs are D6's page).
+- **Stages**: the step's free-text stage; a run's checklist groups its copies by stage in step order, and its current
+  stage is the first with an open task (`runChecklist`, derived, never stored). D6's `service.stage` free text stays
+  as it is: a service's project is shown by its run on the client page's Projects card, not written into the service.
+- **Retainers** (`repeat: monthly`) — decision: **an automation with an idempotency key** (`playbook-months`, daily
+  07:20, on, silent): month n starts on `cycleStart(start, n)` (= start + n months, counted from the start each time:
+  Jan 31 → Feb 28 → Mar 31); month 0 is made by the device at run time; each later month is made from
+  `MONTH_LEAD_DAYS` (7) before it starts until it is over (`dueCycles`: a month that went by entirely — the server off
+  — isn't made late; none starting after `end_date`), key `<run id>:<YYYY-MM>` in `automations_made`, remembered in the
+  run's transaction — the scheduler again, Run now and restarts never make a month twice. From the run's own copies
+  (task steps only: renewal dates are set once), owner by the same rule (`runner` = the run's runner), the offer
+  re-checked each month. Nothing for a run done or stopped, a client closed or deleted, or an archived business (the run
+  log says "waiting: … — its client is closed"). Not capped (one person's runs, a few tasks a month each).
+- **Review fixes**:
+  - **Unfinished runs**: a run is created `starting` and its **last write** sets it `active`, so a save that stopped
+    part-way is never "under way" (the automation skips it). Its page says "This run didn't finish saving": **Finish it**
+    on the device that kept its ids and choice (`keptRunFor`; nothing made twice) or **Delete the unfinished run**.
+  - **Run twice**: the Run sheet says "Already under way: <run>, started <date>" for an open run of the same playbook
+    and account (`runsUnderWay`). Runs of the same playbook, account and start day (two devices offline at once —
+    on one device the kept ids prevent it) are flagged "Run twice" (`duplicateRuns`; the first made is kept) and the run
+    page offers **Delete the extra** (`extraRunPlan` → `removeExtraRuns`, D8's pattern: sync and re-read first; the
+    extra's open, unchanged tasks, the services and relationship it added while unchanged and unused by anything else —
+    another run, a task not its own, a resold cost —, then the run; sync again and re-read: "Kept: … was changed on the
+    other device"). A relationship it restarted and renewal dates it moved stay (listed).
+  - **Renewal dates**: an earlier (or no) date on their service is moved — the preview says "moves from X to Y"; a
+    **later** one is left alone unless the person ticks "Also move renewal dates that are later than the playbook's".
+  - **Retainers** wait while the run's relationship is paused, ended or deleted (or its account deleted), as D6's
+    reminders do; an **offer is made once per run** (the first month made it — its copy's outcome `task` — or a later
+    month did: key `<run id>:offer:<run step id>`).
+  - Offer tasks say whose email consent counts ("only if <business> has their email consent"), as D8's cross-sell.
+  - `checkStepFields` checks the offset/unit pair when either changes alone; `stepDate` clamps to the unit's limit.
+  - Run… is off for an archived business; the Run sheet ignores a second tap while saving (a ref).
+- **Linked files**: `links` is text — web addresses, words, and `file:<id>` lines, the **seam for D10** (no D10 code is
+  used): `parseLinks` reads them, a task's notes list them, and `StepLinks` shows a file line as a link once D10 sets
+  `setFileHref((id) => …)` (`client/src/modules/playbooks/parts.jsx`), plain text until then.
+- **Done / stopped / delete**: a person marks a run done (offered when every task is), stops a retainer ("Stop
+  repeating"), or reopens either; Delete (for a run made by mistake) removes the run and its **open** tasks — done
+  tasks, renewal dates and a relationship it added stay (tidy by hand).
+- **Screens** (offline; edits send only what changed — the CRM's `useForm`/`editChanges`, two devices tested):
+  `/playbooks` (under way with progress and next task, playbooks by business with Run…, "Start from an example":
+  `EXAMPLE_PLAYBOOKS` — Website launch, Monthly content retainer, Packing a wholesale order (all on the shared list), New
+  client onboarding — copied into a playbook of yours; nothing is seeded on the server; `?client=` from the client page),
+  `/playbooks/:id` (steps by stage with up/down — `reorderChanges` renumbers only what moves —, a step sheet, Run…,
+  its runs, "Changes apply to runs started from now on"), the **Run sheet** (client search + account, start, end for a
+  retainer, who does it, a **preview** of every task, renewal date, skipped offer and the relationship line, then
+  "Run it"), `/playbooks/runs/:id` (progress, checklist with ticks, done / stop / reopen / edit / delete). **Placement
+  (decision)**: a sidebar entry (`phone: false`, the phone keeps eight tabs); phones reach it from Tasks ("Playbooks and
+  projects ›") and the client page's **Projects** card (runs with progress, "Run a playbook").
+- **Reads for others**: `ctx.services.playbooks.activeRuns()` / `run(id)` / `runSteps(id)` / `repeatingRuns()` (D15's
+  overview cards can show projects under way).
+- **Not built / open**: "Run twice" can't tell two devices from one person running the same playbook for the same
+  client and day on purpose (it offers, never acts on its own); updating a running run to its playbook's new steps; a playbook's own attachments beyond links;
+  per-step dependencies ("after the previous one is done" — every date is from the start); weekly repeats; a
+  `recurring_cost` from a renewal step; quotes (D17) starting a run on acceptance; pruning done runs (the pull scope).
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
@@ -2931,6 +3043,11 @@ routes 503). The plan's "done when": an uploaded file survives a backup restore 
   checked from the headers before reading; downloads are attachments (images/PDFs shown on request), nosniff, sandboxed,
   no-store; deletes are soft with the bytes purged 30 days later (no bin); password pointers hold no secrets; task files
   list on their client's and account's tab.
+- **D9 (projects and playbooks)**: done — see "Projects and playbooks". Runs execute on the device (offline, ids made
+  once) and copy their steps (`run_step`), so editing a playbook changes only future runs; a run makes tasks with owners
+  and dates, renewal dates on the client's services (D6 reminds) and offers only where D8's rule allows; retainers' later
+  months come from the `playbook-months` automation keyed per run and month; links are text with a `file:<id>` seam for
+  D10; tasks carry `run_id`/`run_step_id` (plain ids). Next: D10 sets `setFileHref`; D15 reads `activeRuns()`.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -2946,8 +3063,8 @@ works with `--force`: carrying the switches is best effort (a warning, then the 
 copy must pass `integrity_check`. Tests that depend on local time set
 `process.env.TZ = 'America/Toronto'` at the top (automations.test.js, wholesale-automations.test.js, wholesale-notes.test.js,
 costs.test.js, stockroom.test.js, leads.test.js, sales.test.js, woocommerce.test.js, ebay.test.js, wholesale-sales.test.js,
-sales-entries.test.js, overview.test.js). automations.test.js
-switches D3's two scheduled wholesale automations, D6's two renewal reminders, D8's cross-sell list and D13's eBay sign-in reminder off in its setup (they're on by default)
+sales-entries.test.js, overview.test.js, playbooks.test.js). automations.test.js
+switches D3's two scheduled wholesale automations, D6's two renewal reminders, D8's cross-sell list, D13's eBay sign-in reminder and D9's playbook-months off in its setup (they're on by default)
 so its ticks stay about C8; costs.test.js switches every other scheduled automation off. The e2e `startServer(t, { extraModules })` adds
 test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager checkout>` (D1) runs the real Order
 Manager (needs `npm ci` in its `server/`) against a real suite and checks the timeline and spend against its own;

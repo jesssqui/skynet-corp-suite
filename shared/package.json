@@ -19,7 +19,8 @@
     "./leads": "./leads.js",
     "./sales": "./sales.js",
     "./ebay": "./ebay.js",
-    "./files": "./files.js"
+    "./files": "./files.js",
+    "./playbooks": "./playbooks.js"
   },
   "scripts": {
     "test": "node --test \"test/*.test.js\""
