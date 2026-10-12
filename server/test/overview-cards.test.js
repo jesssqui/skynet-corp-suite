@@ -15,15 +15,17 @@ import { tmpDir, testConfig, startApp, ensureTestUsers, sessionFor, testClock } 
 import { modules } from '../src/modules/index.js';
 import { womKit, postEvents } from './fixtures/wom.js';
 import { CARD_IDS } from '../src/modules/overview/service.js';
+import { startFakeImap, email } from './fixtures/imapFake.js';
+import { startFakeWoo, STORE_KEY, STORE_SECRET } from './fixtures/wooStore.js';
 
 const B = BUSINESS_IDS;
 const TODAY = '2026-10-14';
 const NOW = '2026-10-14T15:00:00Z';
 
-async function setup(t, { extraModules = [] } = {}) {
+async function setup(t, { extraModules = [], config = {} } = {}) {
   const clock = testClock();
   clock.offsetMs = Date.parse(NOW) - Date.now();
-  const env = await startApp(t, testConfig(tmpDir(t)), { now: clock.now, modules: [...modules, ...extraModules] });
+  const env = await startApp(t, testConfig(tmpDir(t), config), { now: clock.now, modules: [...modules, ...extraModules] });
   const users = await ensureTestUsers(env.ctx);
   const owner = sessionFor(env.ctx, users.owner);
   const call = async (method, url, body, session = owner) => {
@@ -50,7 +52,8 @@ test('an empty suite: every card in the plan’s order, each with its figures or
   const body = await overview();
   assert.deepEqual(body.cards.map((c) => c.id), [...CARD_IDS]);
   assert.deepEqual(['wholesale', 'stock', 'savePoint', 'retail'].map((id) => cardOf(body, id).state), ['not_connected', 'not_connected', 'not_set_up', 'not_connected']);
-  assert.deepEqual(cardOf(body, 'retail').support, { state: 'not_connected', comesWith: 'the helpdesk (D14)' });
+  // The helpdesk (D14) is there but no support mailbox has been added: says where to add one.
+  assert.deepEqual(cardOf(body, 'retail').support, { state: 'not_connected', setUp: 'System → Connections → Support mailboxes' });
   const web = cardOf(body, 'web');
   assert.deepEqual([web.state, web.relationships.total, web.services.active, web.renewals.count, web.pipeline.openCount], ['ok', 0, 0, 0, 0]);
   assert.deepEqual(Object.keys(web.relationships.byKind), ['website', 'social']);
@@ -220,7 +223,8 @@ test('web and social, consulting: active relationships, services a month, renewa
   assert.deepEqual(w.month.map((f) => [f.currency, f.total, f.totalOnly]), [['CAD', 120000, true]]);
   assert.deepEqual(w.costs.map((x) => [x.currency, x.monthlyCents]), [['CAD', 2400]]);
   const c2 = cardOf(body, 'consulting');
-  assert.deepEqual([c2.relationships.total, c2.pipeline.openCount, c2.invoicesConnected], [0, 1, false]);
+  // D18's `invoices` sales source is always there with the billing module: no "entered by hand only" note.
+  assert.deepEqual([c2.relationships.total, c2.pipeline.openCount, c2.invoicesConnected], [0, 1, true]);
 });
 
 test('Save Point Shop: eBay not set up, with a month entered by hand; clients: active, new this month, quiet', async (t) => {
@@ -260,23 +264,39 @@ test('all businesses: three months of sales beside recurring costs a month, per 
   assert.deepEqual(all.together.costs, [{ currency: 'CAD', monthlyCents: 10000 }], 'the home’s costs aren’t the businesses’');
 });
 
-test('retail stores: each store’s sales and state, and open tickets per store once the helpdesk (D14) is there', async (t) => {
-  const { db, ctx, overview, cardOf } = await setup(t);
-  // D14's read (helpdesk.openTicketsByStore() → { <sales store key>: open tickets }), stood in on the real service when
-  // it is registered, else on its own — never a second module called "helpdesk".
-  const helpdesk = ctx.services.helpdesk ?? (ctx.services.helpdesk = {});
-  helpdesk.openTicketsByStore = () => ({ 'tinsxpress.com': 3, 'elsewhere.example': 1 });
+test('retail stores: each store’s sales and state, and open tickets per store from the helpdesk (D14)', async (t) => {
+  const { db, ctx, call, overview, cardOf } = await setup(t, { config: { HELPDESK_TEST_PLAIN_LOCALHOST: '1', HELPDESK_TIMEOUT_MS: '1500', WOO_TIMEOUT_MS: '1000' } });
+  // A store removed earlier: its totals stay, it has no mailbox.
   db.prepare(`INSERT INTO sales_stores (source, store, name, business_id, currency, time_zone, updated_at) VALUES ('woo', 'tinsxpress.com', 'TinsXpress', ?, 'CAD', 'America/Toronto', ?)`).run(B.retail, NOW);
   db.prepare(`INSERT INTO sales_daily (source, store, day, business_id, currency, orders, items, gross, discounts, refunds, net, tax, shipping, total, fetched_at)
     VALUES ('woo', 'tinsxpress.com', ?, ?, 'CAD', 3, 5, 9000, 0, 0, 9000, 1170, 1000, 11170, ?)`).run(TODAY, B.retail, NOW);
+  // A connected store (the fake WooCommerce) with its support mailbox (the fake IMAP server): the real D14 read.
+  const woo = await startFakeWoo(t);
+  const store = await call('POST', '/api/woocommerce/stores', { url: woo.url, key: STORE_KEY, secret: STORE_SECRET, readOnlyConfirmed: true });
+  assert.equal(store.status, 201, JSON.stringify(store.body));
+  const user = 'support@shop.example';
+  const imap = await startFakeImap({ users: { [user]: 'app pass' }, folders: ['INBOX', 'Sent'] });
+  t.after(() => imap.close());
+  const mb = await call('POST', '/api/helpdesk/mailboxes', { name: 'Shop support', host: '127.0.0.1', port: imap.port, username: user, password: 'app pass', inboxFolder: 'INBOX', sentFolder: 'Sent', storeId: store.body.store.id });
+  assert.equal(mb.status, 201, JSON.stringify(mb.body));
+  await ctx.services.helpdesk.pullMailbox(mb.body.mailbox.id);
+  imap.add('INBOX', email({ id: 'q1@example.com', from: 'Pat <pat@example.com>', subject: 'Where is my order?' }), { at: new Date(Date.parse(NOW) - 60_000).toISOString() });
+  imap.add('INBOX', email({ id: 'q2@example.com', from: 'Sam <sam@example.com>', subject: 'Wrong flavour' }), { at: new Date(Date.parse(NOW) - 30_000).toISOString() });
+  await ctx.services.helpdesk.pullRound({ force: true });
+  const key = store.body.store.storeKey;
+  assert.deepEqual(ctx.services.helpdesk.openTicketsByStore(), { [key]: 2 });
   const r = cardOf(await overview(), 'retail');
   assert.equal(r.state, 'ok');
-  assert.deepEqual(r.stores.map((s) => [s.name, s.state, s.tickets, s.today.map((f) => f.total)]), [['TinsXpress', 'removed', 3, [11170]]]);
-  assert.deepEqual(r.support, { state: 'ok', total: 4, unmatched: 1 });
+  const byName = Object.fromEntries(r.stores.map((s) => [s.store, s]));
+  assert.deepEqual([byName['tinsxpress.com'].state, byName['tinsxpress.com'].tickets, byName['tinsxpress.com'].today.map((f) => f.total)], ['removed', 0, [11170]]);
+  assert.equal(byName[key].tickets, 2);
+  assert.deepEqual(r.support, { state: 'ok', total: 2, unmatched: 0 });
   // Its failure says so on the support line; the stores still show.
-  helpdesk.openTicketsByStore = () => { throw new Error('mailbox gone'); };
+  const real = ctx.services.helpdesk.openTicketsByStore;
+  ctx.services.helpdesk.openTicketsByStore = () => { throw new Error('mailbox gone'); };
+  t.after(() => { ctx.services.helpdesk.openTicketsByStore = real; });
   const broken = cardOf(await overview(), 'retail');
-  assert.deepEqual([broken.state, broken.support.state, broken.stores[0].name, broken.stores[0].tickets], ['ok', 'error', 'TinsXpress', null]);
+  assert.deepEqual([broken.state, broken.support.state, broken.stores.every((s) => s.tickets === null)], ['ok', 'error', true]);
 });
 
 test('one card failing says so; the rest and the goals still come', async (t) => {

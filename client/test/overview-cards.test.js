@@ -36,6 +36,9 @@ test('every card shows a clear “not connected” when its source isn’t there
   for (const id of ['wholesale', 'stock', 'web', 'consulting', 'savePoint', 'clients', 'allBusinesses', 'retail']) assert.ok(CARD_META[id].title);
   const retail = cardView({ id: 'retail', state: 'not_connected', stores: [], support: { state: 'not_connected', comesWith: 'the helpdesk (D14)' } }, fmt);
   assert.equal(retail.support, 'Open support tickets per store: not connected yet · comes with the helpdesk (D14).');
+  // The helpdesk is there but no support mailbox is: where to add one.
+  const noMailbox = cardView({ id: 'retail', state: 'not_connected', stores: [], support: { state: 'not_connected', setUp: 'System → Connections → Support mailboxes' } }, fmt);
+  assert.equal(noMailbox.support, 'Open support tickets per store: no support mailbox yet · add each store’s on System → Connections → Support mailboxes.');
 });
 
 test('the cards in words: wholesale, stock, web and social, Save Point Shop, clients, retail', () => {

@@ -18,7 +18,7 @@
 //   allBusinesses  each business's sales for the last three months beside its recurring costs a month (D6's monthly
 //                  equivalent), per currency; Personal (the home) on its own line, left out of the together line
 //   retail         each WooCommerce store's sales and state (and the retail stores' sales entered by hand), and open
-//                  support tickets per store (waiting + answered) once the helpdesk (D14) is there
+//                  support tickets per store (waiting + answered) from the helpdesk (D14)
 // Each card: { id, state, businessId?, … }; state ok | not_connected | not_available | paused | revoked | not_read |
 // not_set_up | not_signed_in | signed_out | failing | error.
 import { BUSINESS_IDS } from '@suite/shared/crm';
@@ -213,22 +213,27 @@ export function createCards({ services, log, now }) {
         store: s.store, source: s.source, name: s.name, state: s.state ?? null, link: s.link ?? null, lastFetchedAt: s.lastFetchedAt ?? null,
         today: (s.today ?? []).map(fig), week: (s.week ?? []).map(fig), month: (s.month ?? []).map(fig), tickets: null,
       }));
-    // D14 (the helpdesk) adds open tickets per store; until it is there the line says it isn't connected yet.
+    // D14 (the helpdesk): open tickets per store. Without the module the line says it isn't there; with it but no support
+    // mailbox added yet, that the mailboxes aren't set up (`setUp`: where to add them).
     const helpdesk = services.helpdesk;
     let support = { state: 'not_connected', comesWith: 'the helpdesk (D14)' };
     if (helpdesk?.openTicketsByStore) {
       // D14: { <sales store key>: open tickets (waiting + answered) }. Read on its own: a failure here says so on the
       // support line and leaves the rest of the card alone.
       try {
-        const byStore = helpdesk.openTicketsByStore() ?? {};
-        support = { state: 'ok', total: 0, unmatched: 0 };
-        for (const s of stores) if (s.source === 'woo') s.tickets = 0;
-        for (const [key, count] of Object.entries(byStore)) {
-          const n = Number(count) || 0;
-          const s = stores.find((x) => x.source === 'woo' && x.store === key);
-          if (s) s.tickets = n;
-          else support.unmatched += n;
-          support.total += n;
+        if (helpdesk.supportSection?.().state === 'not_connected') {
+          support = { state: 'not_connected', setUp: 'System → Connections → Support mailboxes' };
+        } else {
+          const byStore = helpdesk.openTicketsByStore() ?? {};
+          support = { state: 'ok', total: 0, unmatched: 0 };
+          for (const s of stores) if (s.source === 'woo') s.tickets = 0;
+          for (const [key, count] of Object.entries(byStore)) {
+            const n = Number(count) || 0;
+            const s = stores.find((x) => x.source === 'woo' && x.store === key);
+            if (s) s.tickets = n;
+            else support.unmatched += n;
+            support.total += n;
+          }
         }
       } catch (err) {
         log?.error?.('overview: open tickets per store failed:', err);

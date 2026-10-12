@@ -77,7 +77,8 @@ export function cardView(card, fmt = { date: (d) => d, dateTime: (d) => d }) {
   if (card.id === 'retail') {
     view.support = card.support?.state === 'error' ? 'Open support tickets per store couldn’t be read just now.' : card.support?.state === 'ok'
       ? `${plural(card.support.total, 'open support ticket')}${card.support.unmatched ? ` (${n(card.support.unmatched)} not matched to a store)` : ''}`
-      : `Open support tickets per store: not connected yet · comes with ${card.support?.comesWith ?? 'the helpdesk (D14)'}.`;
+      : card.support?.setUp ? `Open support tickets per store: no support mailbox yet · add each store’s on ${card.support.setUp}.`
+        : `Open support tickets per store: not connected yet · comes with ${card.support?.comesWith ?? 'the helpdesk (D14)'}.`;
   }
   if (!figuresShown) return view;
   const day = (iso) => (iso ? fmt.date(String(iso).slice(0, 10)) : null);
