@@ -20,6 +20,7 @@ const WHOSE = { mine: 'Yours', partner: 'Your partner’s', shared: 'Shared list
 export const SECTIONS = Object.freeze({
   overdue: { title: 'Overdue tasks', link: '/tasks?due=overdue', linkText: 'All overdue tasks', empty: 'Nothing overdue.' },
   balances: { title: 'Wholesale balances over 30 days', link: '/wholesale', linkText: 'Order Manager customers', empty: 'Nothing owed over 30 days.' },
+  invoices: { title: 'Invoices past due', link: '/costs/billing?show=overdue', linkText: 'Invoices', empty: 'No invoice is past due.' },
   renewals: { title: 'Renewals and retainers in the next 30 days', link: '/costs', linkText: 'Costs', empty: 'Nothing renews in the next 30 days.' },
   lowStock: { title: 'Low stock', link: `/tasks?business=${BUSINESS_IDS.wholesale}`, linkText: 'Wholesale tasks (reorders)', empty: 'Nothing to reorder, as Stockroom last said.' },
   support: { title: 'Support emails unanswered after 24 hours', link: null, linkText: null, empty: '' },
@@ -95,6 +96,11 @@ export function itemLine(sectionId, item, fmt = { date: (d) => d }) {
         key: item.id, text: `${item.name}: ${money(item.overdueCents)}`, link: item.clientId ? `/crm/clients/${item.clientId}` : '/wholesale',
         detail: `${plural(item.orders, 'order')} over 30 days · the oldest from ${day(item.oldestDate)}${item.clientId ? '' : ' · not linked to a client'}`,
       };
+    case 'invoices':
+      return {
+        key: item.id, text: `${item.number} · ${item.toName ?? ''}: ${money(item.owingCents)} owing`, link: `/costs/billing/invoices/${item.id}`, tone: 'danger',
+        detail: [`Due ${day(item.dueDate)} (${plural(item.daysOverdue, 'day')} ago)`, item.business].filter(Boolean).join(' · '),
+      };
     case 'renewals': {
       const amount = item.amountCents ? ` · ${money(item.amountCents, item.currency ?? 'CAD')}${PERIOD_WORDS[item.period] ?? ''}` : '';
       if (item.kind === 'cost') {
@@ -138,6 +144,7 @@ export function summaryText(section) {
   switch (section.id) {
     case 'overdue': return section.count ? 'Both of you and the shared list' : '';
     case 'balances': return section.count ? `${money(section.totalCents ?? 0)} owed on orders more than 30 days old` : '';
+    case 'invoices': return section.count ? `${money(section.totalCents ?? 0)} owing on our own invoices` : '';
     case 'renewals': return section.count ? `${plural(section.services ?? 0, 'client service')}, ${plural(section.costs ?? 0, 'of our costs', 'of our costs')}` : '';
     case 'noNextStep': return section.count ? `${plural(section.relationships ?? 0, 'relationship')}, ${plural(section.leads ?? 0, 'lead')}` : '';
     case 'quiet': return section.count ? `Active clients with nothing for ${section.days ?? 60} days (a note, a call, an order)` : '';
@@ -169,7 +176,7 @@ export function restText(section, shown) {
  * Review fix: the sections the headline adds up — the urgent ones. "No next step" and "Clients gone quiet" are standing
  * lists (thousands with an imported client list) with their own counts, left out so the headline stays meaningful.
  */
-export const URGENT = Object.freeze(['overdue', 'balances', 'renewals', 'lowStock', 'support', 'payments']);
+export const URGENT = Object.freeze(['overdue', 'balances', 'invoices', 'renewals', 'lowStock', 'support', 'payments']);
 /** The headline count: urgent sections that can be read and have something, plus this device's changes it couldn't save. */
 export function attentionTotal(attention, syncAttention = 0, urgent = URGENT) {
   return (attention ?? []).reduce((a, s) => a + (urgent.includes(s.id) && s.state !== 'not_connected' && s.count ? s.count : 0), 0) + (syncAttention || 0);

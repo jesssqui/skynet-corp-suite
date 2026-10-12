@@ -26,6 +26,7 @@ import { HttpError } from '../../lib/httpError.js';
 import { BILLING_ENTITIES, BILLING_ENTITY_NAMES, SERVER_FIELDS, CONTENT_FIELDS } from './entities.js';
 import { renderDocument } from './document.js';
 import { registerBillingAutomations } from './automations.js';
+import { createInvoiceMoney } from './money.js';
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const realDay = (d) => typeof d === 'string' && DAY_RE.test(d) && new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) === d;
@@ -163,8 +164,8 @@ export function createBillingService(ctx) {
   }
 
   const now = () => new Date(clock());
-  // Invoices in sales and invoices past due come with D18.
-  const money = { rebuildSales: () => 0, rebuildSalesSafe: () => {}, overdueInvoices: () => [] };
+  // D18: invoices in sales (money in and kept, on its day) and invoices past due (money.js).
+  const money = createInvoiceMoney({ db, crm, sales, log, now });
   const todayHere = () => localDate(now());
   const must = (r, what) => {
     if (r.status !== 'applied' && r.status !== 'clash') throw new Error(`could not write the ${what}: ${r.code ?? r.status} ${r.reason ?? ''}`.trim());

@@ -223,3 +223,28 @@ test('two devices: accepting a lead’s quote wins the lead once (offline, retri
   assert.deepEqual([row(server.db, 'crm_leads', lead2).stage, row(server.db, 'crm_leads', lead2).lost_reason], ['lost', 'price']);
   assert.ok(server.db.prepare("SELECT done_at FROM planner_tasks WHERE lead_id = ? AND title LIKE 'Follow up on quote%'").get(lead2).done_at);
 });
+
+test('two devices: an invoice issued, paid in parts on both devices (one offline) — both count in sales on their days; a credit note takes some back', async (t) => {
+  const { server, mac, phone } = await devices(t);
+  const client = await mac.engine.create('client', { name: 'Alpha Bakery', status: 'active' });
+  const inv = await makeDraft(mac, 'invoice', { business_id: B.consulting, client_id: client, to_name: 'Alpha Bakery' }, [{ description: 'Coaching, 10 hours', quantity: 10, unit_cents: 10000 }]);
+  await mac.engine.syncNow();
+  assert.equal((await approveOn(mac, 'invoice', inv)).number, 'BC-INV-0001');
+  await phone.engine.syncNow();
+  phone.online = false;
+  await phone.engine.create('invoice_payment', { invoice_id: inv, amount_cents: 50000, paid_on: '2026-10-13', method: 'cash' });
+  await mac.engine.create('invoice_payment', { invoice_id: inv, amount_cents: 63000, paid_on: '2026-10-14', method: 'etransfer' });
+  await mac.engine.syncNow();
+  phone.online = true;
+  await phone.engine.syncNow();
+  const days = server.db.prepare("SELECT day, total FROM sales_daily WHERE source = 'invoices' AND store = ? ORDER BY day").all(`invoices:${B.consulting}`);
+  assert.deepEqual(days.map((r) => [r.day, r.total]), [['2026-10-13', 50000], ['2026-10-14', 63000]]);
+  await mac.engine.syncNow();
+  const status = docStatus('invoice', await mac.engine.get('invoice', inv), { payments: await mac.engine.list('invoice_payment'), today: '2026-10-14' });
+  assert.equal(status.key, 'paid');
+  const cn = await createDocument(mac.engine, 'credit_note', { ...creditNoteFor(await mac.engine.get('invoice', inv), 'One hour less'), lines: [{ description: 'One hour', unit_cents: 10000 }] }, docIds(newId, 1));
+  await mac.engine.syncNow();
+  assert.equal((await approveOn(mac, 'credit_note', cn)).number, 'BC-CN-0001');
+  const total = server.db.prepare("SELECT SUM(total) AS t FROM sales_daily WHERE source = 'invoices' AND store = ?").get(`invoices:${B.consulting}`).t;
+  assert.equal(total, 113000 - 11300, 'the credit note took $113 back on its day');
+});

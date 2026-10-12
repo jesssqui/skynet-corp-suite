@@ -256,6 +256,69 @@ test('sending a lead’s quote: the lead moves to Quoted (its whole stage set, a
   assert.equal(env.row('crm_leads', lost).stage, 'lost');
 });
 
+test('sales: an invoice counts as it is paid, on the payment’s day; a credit note takes it back; void and drafts count nothing', async (t) => {
+  const env = await setup(t);
+  const dev = env.phone();
+  const { clientId } = env.client('Alpha Bakery');
+  const inv = env.draft(dev, 'invoice', { business_id: B.agency, client_id: clientId, to_name: 'Alpha Bakery' }, [{ description: 'Website', unit_cents: 100000 }]);
+  env.approve('invoice', inv);
+  assert.deepEqual(salesRows(env, B.agency).filter((r) => r.total), [], 'issued, not paid: not a sale yet');
+  // Paid in two parts on two days (recorded on a phone, the way people do).
+  dev.create('invoice_payment', { invoice_id: inv, amount_cents: 50000, paid_on: '2026-10-12', method: 'etransfer' });
+  dev.create('invoice_payment', { invoice_id: inv, amount_cents: 63000, paid_on: '2026-10-14', method: 'cheque' });
+  let rows = salesRows(env, B.agency);
+  assert.deepEqual(rows.map((r) => [r.day, r.total, r.net, r.tax, r.orders]), [['2026-10-12', 50000, 44248, 5752, 1], ['2026-10-14', 63000, 55752, 7248, 1]]);
+  // Counted in the overview's sales for the business (the "done when"), not as a total-only hand entry.
+  env.setNow('2026-10-14 16:00');
+  const strip = env.ctx.services.overview.overview({ today: '2026-10-14' }).sales;
+  const agency = strip.businesses.find((b) => b.businessId === B.agency);
+  assert.ok(agency, 'Great White North Design is in the sales strip');
+  assert.deepEqual(agency.month.map((f) => [f.currency, f.total, Boolean(f.totalOnly)]), [['CAD', 113000, false]]);
+  assert.equal(agency.today[0].total, 63000);
+  assert.ok(agency.stores.some((s) => s.source === 'invoices'));
+  // A credit note for part of it (the work was smaller): issued on the 20th, it takes $226 off that day.
+  env.setNow('2026-10-20 09:00');
+  const cn = env.draft(dev, 'credit_note', { invoice_id: inv, business_id: B.agency, to_name: 'Alpha Bakery', reason: 'Fewer pages than quoted' }, [{ description: 'Two pages fewer', unit_cents: 20000 }]);
+  // Too much is refused: no credit note above what is left on the invoice.
+  const big = env.draft(dev, 'credit_note', { invoice_id: inv, business_id: B.agency, to_name: 'A' }, [{ description: 'All', unit_cents: 200000 }]);
+  assert.throws(() => env.approve('credit_note', big, { today: '2026-10-20' }), (e) => e.code === 'too_much');
+  assert.equal(env.approve('credit_note', cn, { today: '2026-10-20' }).number, 'GWND-CN-0001');
+  rows = salesRows(env, B.agency);
+  assert.deepEqual(rows.find((r) => r.day === '2026-10-20') && [rows.find((r) => r.day === '2026-10-20').total, rows.find((r) => r.day === '2026-10-20').refunds], [-22600, 20000]);
+  const month = env.ctx.services.sales.totals({ from: '2026-10-01', to: '2026-10-31', business: B.agency }).overall[0];
+  assert.equal(month.total, 113000 - 22600);
+  // A payment recorded by mistake and taken off: its day goes back to nothing.
+  const oops = dev.create('invoice_payment', { invoice_id: inv, amount_cents: 1, paid_on: '2026-10-21' });
+  assert.equal(salesRows(env, B.agency).find((r) => r.day === '2026-10-21'), undefined, 'already paid (and credited) in full: a sale only up to what it owes');
+  dev.remove('invoice_payment', oops.id);
+  // Void: refused with payments; a second invoice voided counts nothing. Start-up writes the same days again (nothing changes).
+  assert.throws(() => env.billing.voidInvoice(inv, { actor: 'owner', reason: 'Mistake' }), (e) => e.code === 'has_payments');
+  const inv2 = env.draft(dev, 'invoice', { business_id: B.agency, client_id: clientId, to_name: 'Alpha Bakery' });
+  env.approve('invoice', inv2, { today: '2026-10-20' });
+  assert.throws(() => env.billing.voidInvoice(inv2, { actor: 'owner', reason: '' }), (e) => e.code === 'no_reason');
+  env.billing.voidInvoice(inv2, { actor: 'owner', today: '2026-10-20', reason: 'Sent twice' });
+  assert.equal(env.row('billing_invoices', inv2).status, 'void');
+  assert.equal(dev.create('invoice_payment', { invoice_id: inv2, amount_cents: 100, paid_on: '2026-10-20' }).status, 'rejected');
+  const before = JSON.stringify(salesRows(env, B.agency).map(({ fetched_at: _f, ...r }) => r));
+  assert.equal(env.billing.rebuildSales(), 0, 'nothing to write again');
+  assert.equal(JSON.stringify(salesRows(env, B.agency).map(({ fetched_at: _f, ...r }) => r)), before);
+});
+
+test('overdue invoices on the overview’s “To deal with”', async (t) => {
+  const env = await setup(t);
+  const dev = env.phone();
+  const { clientId } = env.client('Alpha Bakery');
+  const inv = env.draft(dev, 'invoice', { business_id: B.agency, client_id: clientId, to_name: 'Alpha Bakery', due_days: 14 });
+  env.approve('invoice', inv, { today: '2026-10-12' });
+  dev.create('invoice_payment', { invoice_id: inv, amount_cents: 100000, paid_on: '2026-10-13' });
+  const section = (today) => env.ctx.services.overview.overview({ today }).attention.find((s) => s.id === 'invoices');
+  assert.equal(section('2026-10-26').count, 0, 'due on the 26th: not past due yet');
+  const s = section('2026-10-28');
+  assert.equal(s.count, 1);
+  assert.deepEqual(s.items.map((i) => [i.number, i.owingCents, i.dueDate, i.daysOverdue, i.clientId]), [['GWND-INV-0001', 182500, '2026-10-26', 2, clientId]]);
+  assert.ok(env.ctx.services.overview.overview({ today: '2026-10-28' }).urgent.includes('invoices'));
+});
+
 test('HTTP: settings, approving with the fingerprint, the PDF (inline or to download), void; a phone needs a session', async (t) => {
   const env = await setup(t);
   const dev = env.phone();

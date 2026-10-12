@@ -16,7 +16,7 @@ import {
 const date = (d) => `[${d}]`;
 
 test('every section has a title, a link (when there is a page for it) and words for "nothing"', () => {
-  assert.deepEqual(Object.keys(SECTIONS), ['overdue', 'balances', 'renewals', 'lowStock', 'support', 'payments', 'noNextStep', 'quiet']);
+  assert.deepEqual(Object.keys(SECTIONS), ['overdue', 'balances', 'invoices', 'renewals', 'lowStock', 'support', 'payments', 'noNextStep', 'quiet']);
   for (const [id, s] of Object.entries(SECTIONS)) {
     assert.ok(s.title, id);
     if (id !== 'support') assert.ok(s.link?.startsWith('/') && s.empty, id);
@@ -32,6 +32,11 @@ test('item lines: overdue tasks, balances, renewals, low stock, payments, no nex
   const bal = itemLine('balances', { id: 'c1', name: 'Northwind', overdueCents: 12690, orders: 2, oldestDate: '2026-08-30', clientId: 'cl1' }, { date });
   assert.deepEqual([bal.text, bal.link, bal.detail], ['Northwind: $126.90', '/crm/clients/cl1', '2 orders over 30 days · the oldest from [2026-08-30]']);
   assert.equal(itemLine('balances', { id: 'c2', name: 'Bay', overdueCents: 100, orders: 1, oldestDate: '2026-08-30', clientId: null }, { date }).link, '/wholesale');
+  // D18: our own invoices past due.
+  const inv = itemLine('invoices', { id: 'i1', number: 'GWND-INV-0003', toName: 'Alpha Bakery', owingCents: 56500, dueDate: '2026-10-01', daysOverdue: 9, business: 'Great White North Design' }, { date });
+  assert.deepEqual([inv.text, inv.link, inv.detail, inv.tone], ['GWND-INV-0003 · Alpha Bakery: $565 owing', '/costs/billing/invoices/i1', 'Due [2026-10-01] (9 days ago) · Great White North Design', 'danger']);
+  assert.equal(summaryText({ id: 'invoices', count: 2, totalCents: 100000 }), '$1,000 owing on our own invoices');
+  assert.ok(URGENT.includes('invoices'));
   const svc = itemLine('renewals', { kind: 'service', id: 's1', name: 'Hosting', accountName: 'Lefty’s', clientId: 'cl1', date: '2026-10-24', amountCents: 48000, period: 'yearly', business: 'Great White North Design' }, { date });
   assert.deepEqual([svc.text, svc.link, svc.detail], ['Hosting for Lefty’s', '/crm/clients/cl1', 'Renews [2026-10-24] · $480/yr · Great White North Design']);
   const cost = itemLine('renewals', { kind: 'cost', id: 'k1', name: 'Domain', date: '2026-10-19', amountCents: 2000, currency: 'USD', period: 'yearly', autoRenews: true }, { date });
