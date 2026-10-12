@@ -19,6 +19,7 @@ test('a step’s day: days, weeks, months and years after (or before) the start,
   assert.equal(stepDate('2026-01-31', { offset_amount: 1, offset_unit: 'months' }), '2026-02-28', 'clamped to the month’s end');
   assert.equal(stepDate('2028-02-29', { offset_amount: 1, offset_unit: 'years' }), '2029-02-28');
   assert.equal(stepDate('2026-10-12', { offset_amount: 1, offset_unit: 'years' }), '2027-10-12');
+  assert.equal(stepDate('2026-10-12', { offset_amount: 400, offset_unit: 'years' }), '2036-10-12', 'clamped to ten years (a pair split by two devices)');
   assert.equal(offsetText({}), 'On the start day');
   assert.equal(offsetText({ offset_amount: 1 }), '1 day after the start');
   assert.equal(offsetText({ offset_amount: 3, offset_unit: 'weeks' }), '3 weeks after the start');
@@ -110,4 +111,5 @@ test('stages in order of first appearance; the examples are well formed', () => 
   const launch = EXAMPLE_PLAYBOOKS.find((p) => p.key === 'website_launch');
   assert.deepEqual(launch.steps.filter((s) => s.action === 'renewal').map((s) => s.service_name), ['Hosting', 'Domain']);
   assert.ok(EXAMPLE_PLAYBOOKS.find((p) => p.key === 'packing').steps.every((s) => s.owner === 'shared'));
+  assert.equal(EXAMPLE_PLAYBOOKS.find((p) => p.key === 'onboarding').kind, null, 'onboarding adds no relationship');
 });

@@ -57,8 +57,10 @@ async function setup(t, { config = testConfig(tmpDir(t)), clock = testClock() } 
     const run = local('playbook_run', {
       playbook_id: pb, name: 'Content retainer — Lefty’s', business_id: AGENCY, repeat: 'monthly', client_id: clientIds.clientId,
       account_id: clientIds.accountId, relationship_id: clientIds.relId, start_date: start, end_date: end, runner: 'partner', status: 'active',
+      playbook_name: 'Content retainer',
     });
-    const runSteps = steps.map((s, i) => local('run_step', { run_id: run, step_id: stepIds[i], ...s, outcome: 'task' }));
+    // The first month (the device's) left the offer out — they had a website then, say — so a later month may make it, once.
+    const runSteps = steps.map((s, i) => local('run_step', { run_id: run, step_id: stepIds[i], ...s, outcome: s.only_if_lacks_kind ? 'skipped' : 'task' }));
     return { pb, stepIds, run, runSteps };
   };
   return { ...env, clock, sync, autos, apply, local, edit, setNow, tasks, tick, client, retainer };
@@ -115,6 +117,7 @@ test('a repeating run: each later month once, a week ahead, from the run’s own
   assert.ok(nov.every((x) => x.client_id === c.clientId && x.account_id === c.accountId && x.relationship_id === c.relId && x.business_id === AGENCY));
   assert.deepEqual(nov.map((x) => x.run_step_id), r.runSteps);
   assert.match(nov[1].notes, /Files and links:\n- Brand guide: https:\/\/example\.com\/brand/);
+  assert.match(nov[2].notes, /Email them about it only if Great White North Design has their email consent/, 'an offer says whose consent counts');
   assert.match(runs[0].summary, /Made 3 tasks for Content retainer — Lefty’s \(November 2026\)/);
 
   // Again the same day, Run now, the next day: never twice.
@@ -126,13 +129,14 @@ test('a repeating run: each later month once, a week ahead, from the run’s own
   // Editing the playbook changes only future runs: December still comes from the run's copy.
   env.edit('playbook_step', r.stepIds[1], { title: 'Content due for approval (new wording)', offset_amount: 9 });
   env.apply('playbook_step', 'delete', null, r.stepIds[0]);
-  // They get a website meanwhile: December's offer is left out.
-  env.local('relationship', { account_id: c.accountId, business_id: AGENCY, kind: 'website', status: 'active' });
+  // The playbook is renamed: later months' notes keep the name the run started with.
+  env.edit('playbook', r.pb, { name: 'Renamed retainer' });
   env.setNow(at('2026-12-08 09:00'));
   runs = env.tick(MONTHS_ID);
   const dec = env.tasks("run_id = ? AND title LIKE '%December 2026'", r.run);
-  assert.deepEqual(dec.map((x) => [x.title, x.due_date]), [['Plan the posts · December 2026', '2026-12-15'], ['Content due · December 2026', '2026-12-22']]);
-  assert.match(runs[0].summary, /1 offer left out/);
+  assert.deepEqual(dec.map((x) => [x.title, x.due_date]), [['Plan the posts · December 2026', '2026-12-15'], ['Content due · December 2026', '2026-12-22']],
+    'the offer is made once per run: not again in December');
+  assert.match(dec[0].notes, /From the playbook “Content retainer”/);
 });
 
 test('no new months for a stopped run, a closed client, an archived business, after the end date; a restart makes nothing twice', async (t) => {
@@ -163,15 +167,16 @@ test('no new months for a stopped run, a closed client, an archived business, af
   assert.equal(env.tasks('run_id = ?', ra.run).length, 0, 'archived business');
   env.edit('business', AGENCY, { archived: false });
   env.autos.runNow(MONTHS_ID, { actor: 'owner' });
-  assert.deepEqual(env.tasks('run_id = ?', ra.run).map((x) => x.title.replace(/^.* · /, '')).sort(),
-    ['December 2026', 'December 2026', 'December 2026', 'November 2026', 'November 2026', 'November 2026'],
-    'once everything is back: November (it runs to Dec 14, so it isn’t over) and December (a week ahead)');
+  assert.deepEqual(env.tasks('run_id = ?', ra.run).map((x) => x.title).sort(), [
+    'Content due · December 2026', 'Content due · November 2026', 'Offer a website · November 2026',
+    'Plan the posts · December 2026', 'Plan the posts · November 2026',
+  ], 'once everything is back: November (it runs to Dec 14, so it isn’t over) and December (a week ahead); the offer once');
 
   // A restart on the same database: nothing again.
   await env.close();
   const again = await startApp(t, config, { modules, now: clock.now });
   again.ctx.services.automations.runNow(MONTHS_ID, { actor: 'owner' });
-  assert.equal(again.db.prepare('SELECT count(*) AS n FROM planner_tasks WHERE deleted_at IS NULL AND run_id = ?').get(ra.run).n, 6);
+  assert.equal(again.db.prepare('SELECT count(*) AS n FROM planner_tasks WHERE deleted_at IS NULL AND run_id = ?').get(ra.run).n, 5);
 });
 
 test('a renewal date a run set on the client’s service gets D6’s reminder 30 days before', async (t) => {
@@ -190,4 +195,48 @@ test('the service without the CRM: nothing registered (the sync engine’s own t
   const env = await startApp(t, testConfig(tmpDir(t)), { modules: modules.filter((m) => !['automations', 'crm', 'planner', 'wholesale', 'calendar', 'costs', 'stockroom'].includes(m.name)) });
   assert.equal(env.ctx.services.playbooks.enabled, false);
   assert.ok(!env.ctx.services.sync.info().entities.some((e) => e.entity === 'playbook'));
+});
+
+test('review fixes: a retainer waits while its relationship is paused, ended or deleted; an offer the first month made never repeats', async (t) => {
+  const env = await setup(t);
+  const c = env.client('Lefty’s', ['social']);
+  const r = env.retainer({ clientIds: c, start: '2026-10-15' });
+  env.edit('relationship', c.relId, { status: 'paused' });
+  env.setNow(at('2026-11-08 09:00'));
+  let out = env.autos.runNow(MONTHS_ID, { actor: 'owner' });
+  assert.match(out.summary, /its relationship is paused/);
+  env.edit('relationship', c.relId, { status: 'ended' });
+  out = env.autos.runNow(MONTHS_ID, { actor: 'owner' });
+  assert.match(out.summary, /its relationship is ended/);
+  assert.equal(env.tasks('run_id = ?', r.run).length, 0);
+  env.apply('relationship', 'delete', null, c.relId);
+  out = env.autos.runNow(MONTHS_ID, { actor: 'owner' });
+  assert.match(out.summary, /its relationship was deleted/);
+  assert.equal(env.tasks('run_id = ?', r.run).length, 0, 'never carried on with no relationship');
+
+  // A second client whose first month made the offer: later months never make it again.
+  const b = env.client('Bravo', ['social']);
+  const rb = env.retainer({ clientIds: b, start: '2026-10-15' });
+  const offerCopy = env.ctx.services.playbooks.runSteps(rb.run).find((x) => x.only_if_lacks_kind);
+  assert.equal(offerCopy.outcome, 'skipped');
+  const rc = env.local('playbook_run', { name: 'Charlie', business_id: AGENCY, repeat: 'monthly', client_id: b.clientId, account_id: b.accountId, relationship_id: b.relId, start_date: '2026-10-15', runner: 'owner' });
+  env.local('run_step', { run_id: rc, title: 'Offer a website', position: 1, only_if_lacks_business: AGENCY, only_if_lacks_kind: 'website', outcome: 'task' });
+  env.autos.runNow(MONTHS_ID, { actor: 'owner' });
+  assert.equal(env.tasks('run_id = ?', rc).length, 0, 'made in the first month: not again');
+  assert.equal(env.tasks("run_id = ? AND title LIKE 'Offer%'", rb.run).length, 1, 'the other run’s offer, once');
+});
+
+test('review fixes: the offset limit is checked when only the unit changes; a run not finished saving makes no months', async (t) => {
+  const env = await setup(t);
+  const pb = env.local('playbook', { name: 'P', business_id: AGENCY });
+  const step = env.local('playbook_step', { playbook_id: pb, title: 'Far', offset_amount: 100, offset_unit: 'days' });
+  const r = env.sync.applyLocal({ actor: 'owner', entity: 'playbook_step', op: 'update', recordId: step, fields: { offset_unit: 'years' } });
+  assert.equal(r.code, 'invalid_value', '100 years is too far');
+  assert.equal(env.sync.applyLocal({ actor: 'owner', entity: 'playbook_step', op: 'update', recordId: step, fields: { offset_unit: 'weeks' } }).status, 'applied');
+  const c = env.client('Delta', ['social']);
+  const run = env.retainer({ clientIds: c, start: '2026-10-15' }).run;
+  env.edit('playbook_run', run, { status: 'starting' });
+  env.setNow(at('2026-11-08 09:00'));
+  env.autos.runNow(MONTHS_ID, { actor: 'owner' });
+  assert.equal(env.tasks('run_id = ?', run).length, 0);
 });

@@ -15,7 +15,9 @@ export const STEP_ACTIONS = Object.freeze(['task', 'renewal']);
 export const OFFSET_UNITS = Object.freeze(['days', 'weeks', 'months', 'years']);
 /** Who a step's task goes to: whoever runs it, the business's default owner, or a fixed person / the shared list. */
 export const STEP_OWNERS = Object.freeze(['runner', 'business', ...OWNERS]);
-export const RUN_STATUSES = Object.freeze(['active', 'done', 'stopped']);
+// `starting` (D9 review): a run is created starting and set active by its LAST write, so a run whose saving
+// stopped part-way (the device ran out of space, the app was closed) is seen as unfinished, never as under way.
+export const RUN_STATUSES = Object.freeze(['active', 'done', 'stopped', 'starting']);
 /** What a step did when the run started (the run's own copy says so). */
 export const RUN_STEP_OUTCOMES = Object.freeze(['task', 'skipped', 'renewal']);
 
@@ -35,13 +37,15 @@ export const REPEAT_LABELS = Object.freeze({ once: 'Once', monthly: 'Every month
 export const STEP_OWNER_LABELS = Object.freeze({
   runner: 'Whoever runs it', business: 'The business’s default owner', owner: 'Owner', partner: 'Partner', shared: 'Shared list',
 });
-export const RUN_STATUS_LABELS = Object.freeze({ active: 'Under way', done: 'Done', stopped: 'Stopped' });
+export const RUN_STATUS_LABELS = Object.freeze({ active: 'Under way', done: 'Done', stopped: 'Stopped', starting: 'Not finished' });
 
 export const repeatOf = (x) => (x?.repeat === 'monthly' ? 'monthly' : 'once');
 export const actionOf = (step) => (step?.action === 'renewal' ? 'renewal' : 'task');
 export const unitOf = (step) => (OFFSET_UNITS.includes(step?.offset_unit) ? step.offset_unit : 'days');
 export const runStatus = (run) => (RUN_STATUSES.includes(run?.status) ? run.status : 'active');
 export const isActiveRun = (run) => Boolean(run) && runStatus(run) === 'active';
+/** Under way or not finished saving: what the lists show as open. */
+export const isOpenRun = (run) => Boolean(run) && ['active', 'starting'].includes(runStatus(run));
 
 /** Is an offset (whole number) within ten years either way in its unit? */
 export function isOffset(offset, unit = 'days') {
@@ -51,7 +55,10 @@ export function isOffset(offset, unit = 'days') {
 
 /** The day a step falls on: the run's start (or a month's start, for a repeating run) plus its offset, on the calendar. */
 export function stepDate(start, step) {
-  const n = Number.isInteger(step?.offset_amount) ? step.offset_amount : 0;
+  const raw = Number.isInteger(step?.offset_amount) ? step.offset_amount : 0;
+  // Clamped to the unit's limit (review fix): a pair split by two devices' edits can't push a date centuries out.
+  const limit = OFFSET_LIMITS[unitOf(step)];
+  const n = Math.max(-limit, Math.min(limit, raw));
   switch (unitOf(step)) {
     case 'weeks': return addDays(start, 7 * n);
     case 'months': return addMonths(start, n);
@@ -189,14 +196,19 @@ export function dueCycles(run, today) {
  * repeating run's later ones). `step` = the run's own copy of the step (run_step); `cycle` = { start,
  * label } for a repeating run's month (its title says which month), else the run's start.
  */
-export function stepTaskFields({ step, run, owner, cycle = null, playbookName = null }) {
+export function stepTaskFields({ step, run, owner, cycle = null, playbookName = null, businessName = null }) {
   const start = cycle?.start ?? run.start_date;
   const title = cycle?.label ? `${step.title} · ${cycle.label}` : step.title;
   const lines = [];
   if (step.notes) lines.push(step.notes);
+  if (hasOfferCondition(step)) {
+    // As D8's cross-sell tasks: another business's consent never counts.
+    const seller = businessName?.(step.only_if_lacks_business) ?? 'the business making the offer';
+    lines.push(`Email them about it only if ${seller} has their email consent (see the client page); otherwise call or ask in person.`);
+  }
   const links = parseLinks(step.links);
   if (links.length) lines.push(['Files and links:', ...links.map((l) => `- ${linkLine(l)}`)].join('\n'));
-  lines.push(`From the playbook “${playbookName ?? run.name}”: ${run.name}.`);
+  lines.push(`From the playbook “${playbookName ?? run.playbook_name ?? run.name}”: ${run.name}.`);
   return {
     title: title.slice(0, STEP_TITLE_MAX),
     notes: lines.join('\n\n'),
@@ -296,7 +308,7 @@ export const EXAMPLE_PLAYBOOKS = Object.freeze([
     key: 'onboarding',
     name: 'New client onboarding',
     business_id: BUSINESS_IDS.agency,
-    kind: 'website',
+    kind: null,
     repeat: 'once',
     for_client: true,
     description: 'The checklist for a new client: welcome, kick-off, their files.',

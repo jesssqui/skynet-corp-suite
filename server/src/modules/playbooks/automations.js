@@ -9,9 +9,11 @@
 // tasks come from the run's OWN copy of the steps (run_step), never the playbook: editing the playbook
 // changes only future runs. A stopped or done run, a closed or deleted client and an archived business
 // get no new months. The offer condition (D8's cross-sell rule) is checked again each month.
-import { dueCycles, stepOwner, stepTaskFields, offerSkipReason, actionOf } from '@suite/shared/playbooks';
+import { dueCycles, stepOwner, stepTaskFields, offerSkipReason, actionOf, hasOfferCondition } from '@suite/shared/playbooks';
 
 export const MONTHS_ID = 'playbook-months';
+/** An offer step is made once per run: remembered under this key when a later month makes it. */
+export const offerKey = (runId, runStepId) => `${runId}:offer:${runStepId}`;
 
 /**
  * What to make today (pure over reads): [{ run, cycle, key, tasks: [fields], skipped: [{ step, why }] }]
@@ -28,20 +30,31 @@ export function monthsPlan({ runs, today, made, readsFor }) {
       held.push({ run, why: ctx.why });
       continue;
     }
+    const offered = new Set(); // offers made by an earlier month in this same run of the automation
     for (const cycle of due) {
       const tasks = [];
       const skipped = [];
+      const offers = [];
       for (const step of ctx.steps) {
         if (actionOf(step) !== 'task') continue; // renewal dates are set once, when the run starts
+        if (hasOfferCondition(step)) {
+          // An offer is made once per run (review fix): the first month made it (outcome task), or an earlier month here.
+          if (step.outcome === 'task' || made(offerKey(run.id, step.id)).length || offered.has(step.id)) continue;
+        }
         const why = offerSkipReason(step, { account: ctx.account, relationships: ctx.relationships, businessName: ctx.businessName });
         if (why) {
           skipped.push({ step, why });
           continue;
         }
         const owner = stepOwner(step, { runner: run.runner, business: ctx.business, override: run.owner });
-        tasks.push(stepTaskFields({ step, run: ctx.run, owner, cycle, playbookName: ctx.playbookName }));
+        const fields = stepTaskFields({ step, run: ctx.run, owner, cycle, playbookName: ctx.playbookName, businessName: ctx.businessName });
+        tasks.push(fields);
+        if (hasOfferCondition(step)) {
+          offers.push({ stepId: step.id, key: offerKey(run.id, step.id), fields });
+          offered.add(step.id);
+        }
       }
-      out.push({ run, cycle, key: `${run.id}:${cycle.key}`, tasks, skipped });
+      out.push({ run, cycle, key: `${run.id}:${cycle.key}`, tasks, skipped, offers });
     }
   }
   return { months: out, held };
@@ -61,16 +74,20 @@ export function registerPlaybookAutomations({ automations, crm, reads }) {
       if (client.status === 'closed') return { why: 'its client is closed' };
       account = run.account_id ? crm.liveAccount(run.account_id) : null;
     }
+    if (run.account_id && run.client_id && !account) return { why: 'its account was deleted' };
+    // Review fix (as D6's service reminders): a run on a relationship that was ended, paused or deleted waits.
     const relationship = run.relationship_id ? crm.liveRecord('relationship', run.relationship_id) : null;
+    if (run.relationship_id && !relationship) return { why: 'its relationship was deleted' };
+    if (relationship && relationship.status !== 'active') return { why: `its relationship is ${relationship.status}` };
     const playbook = run.playbook_id ? reads.playbook(run.playbook_id) : null;
     return {
       business,
       account,
       relationships: account ? crm.accountRelationships(account.id) : [],
       businessName,
-      playbookName: playbook?.name ?? null,
+      playbookName: run.playbook_name ?? playbook?.name ?? null, // the name it had when the run started
       // Refs that went away read as none (a deleted account or relationship isn't put on new tasks).
-      run: { ...run, account_id: account ? run.account_id : null, relationship_id: relationship && account ? run.relationship_id : null },
+      run: { ...run, account_id: account ? run.account_id : null, relationship_id: relationship ? run.relationship_id : null },
       steps: reads.runSteps(run.id),
     };
   }
@@ -81,7 +98,8 @@ export function registerPlaybookAutomations({ automations, crm, reads }) {
     module: 'playbooks',
     description: 'Makes each month’s tasks for a playbook run that repeats every month (a content retainer), a week before the month starts, '
       + 'from the steps the run started with. Once per run and month; the first month is made when the run is started. Nothing for a run '
-      + 'that is done or stopped, a closed client or an archived business.',
+      + 'that is done, stopped or not finished saving, a closed client, a relationship that is paused, ended or deleted, or an archived '
+      + 'business. An offer step is made once per run.',
     trigger: { type: 'schedule', every: 'day', at: '07:20' },
     defaults: { enabled: true, alert: false },
     alertLink: '/playbooks',
@@ -94,6 +112,7 @@ export function registerPlaybookAutomations({ automations, crm, reads }) {
           made_ += 1;
         }
         remember(m.key, 'playbook_run', m.run.id);
+        for (const o of m.offers) remember(o.key, 'playbook_run', m.run.id);
       }
       const parts = [];
       if (months.length) parts.push(`Made ${made_} task${made_ === 1 ? '' : 's'} for ${months.map((m) => `${m.run.name} (${m.cycle.label})`).join(', ')}`);

@@ -78,8 +78,10 @@ export const PLAYBOOK_ENTITIES = [
       end_date: { type: 'date' },
       owner: { type: 'enum', values: OWNERS },
       runner: { type: 'enum', values: ACTORS, required: true },
-      status: { type: 'enum', values: RUN_STATUSES }, // null = active
-      playbook_as_of: { type: 'datetime' },
+      status: { type: 'enum', values: RUN_STATUSES }, // null = active; starting = not finished saving
+      playbook_as_of: { type: 'datetime' }, // the latest change to the playbook or its steps when copied
+      playbook_name: { type: 'text', max: PLAYBOOK_NAME_MAX }, // its name then (review fix)
+      made: { type: 'text', max: 4000 }, // what it made or changed in the client's records (planRun's runMade)
       notes: { type: 'text', max: 20_000 },
     },
   },

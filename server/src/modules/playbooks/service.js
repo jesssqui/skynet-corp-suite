@@ -19,9 +19,13 @@ const has = (fields, k) => Object.hasOwn(fields, k) && fields[k] !== null && fie
  */
 export function checkStepFields({ op, fields, current }) {
   if (op === 'delete' || !fields) return null;
-  if (has(fields, 'offset_amount')) {
-    const unit = OFFSET_UNITS.includes(fields.offset_unit) ? fields.offset_unit : (current?.offset_unit ?? 'days');
-    if (!isOffset(fields.offset_amount, unit)) return { code: 'invalid_value', reason: 'offset_amount: at most ten years before or after the start' };
+  if (has(fields, 'offset_amount') || has(fields, 'offset_unit')) {
+    // Either half may change alone (review fix): check the pair as the step leaves it.
+    const unit = OFFSET_UNITS.includes(fields.offset_unit) ? fields.offset_unit : (OFFSET_UNITS.includes(current?.offset_unit) ? current.offset_unit : 'days');
+    const amount = Object.hasOwn(fields, 'offset_amount') ? fields.offset_amount : current?.offset_amount;
+    if (amount !== null && amount !== undefined && !isOffset(amount, unit)) {
+      return { code: 'invalid_value', reason: 'offset_amount: at most ten years before or after the start' };
+    }
   }
   if (has(fields, 'estimate_minutes') && !(fields.estimate_minutes >= 1 && fields.estimate_minutes <= ESTIMATE_MAX_MINUTES)) {
     return { code: 'invalid_value', reason: 'estimate_minutes: 1 minute to a week' };
