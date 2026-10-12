@@ -233,11 +233,33 @@ export function FilesPanel({ owner, items, showWhere = false, accountsById = new
     api.get('/api/files/usage').then(setUsage, () => {});
   }, [offline]);
 
+  // A file dropped just beside the panel must not make the browser open it in place of the app (leaving
+  // the app, unsaved typing and all): while a panel is shown, file drags anywhere else do nothing.
+  useEffect(() => {
+    const isFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes('Files');
+    const stop = (e) => {
+      if (isFiles(e) && !e.defaultPrevented) e.preventDefault();
+    };
+    window.addEventListener('dragover', stop);
+    window.addEventListener('drop', stop);
+    return () => {
+      window.removeEventListener('dragover', stop);
+      window.removeEventListener('drop', stop);
+    };
+  }, []);
+
   // An upload's row goes once its record is on this device (pulled after the upload).
   const listed = useMemo(() => new Set(items.map((i) => i.file.id)), [items]);
   useEffect(() => {
     setUploads((cur) => (cur.some((u) => u.done && listed.has(u.id)) ? cur.filter((u) => !(u.done && listed.has(u.id))) : cur));
   }, [listed]);
+  // …and in any case a little while after it was stored (it may never be listed here: deleted on the other
+  // device meanwhile, or this list is filtered).
+  useEffect(() => {
+    if (!uploads.some((u) => u.done)) return undefined;
+    const timer = setTimeout(() => setUploads((cur) => cur.filter((u) => !u.done)), 15_000);
+    return () => clearTimeout(timer);
+  }, [uploads]);
 
   const patch = (key, p) => setUploads((cur) => cur.map((u) => (u.key === key ? { ...u, ...p } : u)));
 

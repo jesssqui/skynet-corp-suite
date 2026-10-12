@@ -15,10 +15,16 @@ export default {
   // The one request body that isn't JSON: POST /api/files/upload (application/octet-stream, signed in).
   rawUploads: ['/upload'],
   start(ctx, service) {
-    try {
-      service.purge();
-    } catch (err) {
-      ctx.log.warn(`couldn't purge deleted files' bytes: ${err.message}`);
-    }
+    const sweep = () => {
+      try {
+        service.purge();
+      } catch (err) {
+        ctx.log.warn(`couldn't purge deleted files' bytes: ${err.message}`);
+      }
+    };
+    sweep();
+    // Hourly too (D10 review): it also notes when the server first saw each file deleted, which the 30 days
+    // count from. unref: never keeps the process (or a test) alive.
+    if (!service.disabled) setInterval(() => ctx.db.open && sweep(), 60 * 60 * 1000).unref();
   },
 };

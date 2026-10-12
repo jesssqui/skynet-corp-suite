@@ -8,6 +8,7 @@
 //   GET  /api/files/usage           space used and the limits (for the upload button)
 // Nothing about a file (its name, its owner) is ever logged: names travel in a header, never in a
 // path, and log lines say only an id, a size and a type.
+import crypto from 'node:crypto';
 import { once } from 'node:events';
 import { Router } from 'express';
 import { isInlineType, downloadName } from '@suite/shared/files';
@@ -23,32 +24,52 @@ export function contentDisposition(kind, name) {
   return `${kind}; filename="${ascii}"; filename*=UTF-8''${utf8}`;
 }
 
-/** Read exactly `expected` bytes of the body (the size was checked before anything was read). */
-function readBody(req, expected) {
+const cutShort = () => new HttpError(400, 'The upload was cut short: try again', undefined, { code: 'incomplete' });
+
+/**
+ * Read exactly `expected` bytes of the body (the size was checked before anything was read), hashing
+ * as it comes (D10 review). Nothing for `idleMs` → 408 `idle` (a stalled upload doesn't hold its
+ * memory and its slot for ever). → { bytes, sha256 }
+ */
+function readBody(req, expected, idleMs) {
   return new Promise((resolve, reject) => {
     const parts = [];
+    const hash = crypto.createHash('sha256');
     let got = 0;
     let done = false;
+    let timer = null;
     const fail = (err) => {
       if (done) return;
       done = true;
+      clearTimeout(timer);
       reject(err);
     };
+    const idle = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fail(new HttpError(408, 'The upload stalled: try again', undefined, { code: 'idle' })), idleMs);
+    };
+    idle();
     req.on('data', (c) => {
+      if (done) return;
       got += c.length;
       if (got > expected) {
         fail(new HttpError(413, 'The file is bigger than it said', undefined, { code: 'too_big' }));
         req.destroy();
-      } else parts.push(c);
+        return;
+      }
+      parts.push(c);
+      hash.update(c);
+      idle();
     });
     req.on('end', () => {
       if (done) return;
       done = true;
-      if (got !== expected) reject(new HttpError(400, 'The upload was cut short: try again', undefined, { code: 'incomplete' }));
-      else resolve(Buffer.concat(parts, got));
+      clearTimeout(timer);
+      if (got !== expected) reject(cutShort());
+      else resolve({ bytes: Buffer.concat(parts, got), sha256: hash.digest('hex') });
     });
-    req.on('error', () => fail(new HttpError(400, 'The upload was cut short: try again', undefined, { code: 'incomplete' })));
-    req.on('close', () => fail(new HttpError(400, 'The upload was cut short: try again', undefined, { code: 'incomplete' })));
+    req.on('error', () => fail(cutShort()));
+    req.on('close', () => fail(cutShort()));
   });
 }
 
@@ -79,8 +100,18 @@ export function createFilesRouter(ctx, service) {
     }
     uploading += 1;
     try {
-      const bytes = await readBody(req, length);
-      const { file, created } = service.store({ ...info, bytes, actor: req.auth.user.actor });
+      let body;
+      try {
+        body = await readBody(req, length, ctx.config.files.uploadIdleMs);
+      } catch (err) {
+        if (err.code === 'idle') {
+          // Answer, then drop the connection (the rest of the body never came).
+          res.set('Connection', 'close');
+          res.on('finish', () => req.destroy());
+        }
+        throw err;
+      }
+      const { file, created } = await service.store({ ...info, bytes: body.bytes, sha256: body.sha256, actor: req.auth.user.actor });
       res.status(created ? 201 : 200).set('Cache-Control', 'no-store').json({ file, existing: Boolean(check.existing) });
     } finally {
       uploading -= 1;

@@ -8,7 +8,7 @@ import { BUSINESS_IDS } from '@suite/shared/crm';
 import { parseUploadInfo } from '../../server/src/modules/files/service.js';
 import {
   filesForClient, filesOnTab, ownerForTab, tabCounts, whereText, fileDetail, downloadHref, canShow, isImage,
-  entryValues, entryFields, entryChanges, looksLikeSecret, uploadProblem, uploadInfoHeader, uploadErrorText,
+  entryValues, entryFields, entryChanges, looksLikeSecret, safeName, uploadProblem, uploadInfoHeader, uploadErrorText,
 } from '../src/modules/files/logic.js';
 import { startServer, makeDevice, row } from './helpers.js';
 
@@ -77,6 +77,15 @@ test('link and password pointer forms; edits send only what changed', () => {
   const upload = { id: 'u', kind: 'upload', name: 'a.pdf', notes: null };
   const us = entryValues('upload', upload);
   assert.deepEqual(entryChanges(upload, us, { ...us, name: 'Signed.pdf', url: 'https://x.ca' }).fields, { name: 'Signed.pdf' }, 'an upload has only a name and notes');
+});
+
+test('review fixes: a renamed upload is cleaned like an upload’s name; other names lose control, bidi and invisible characters', () => {
+  const upload = { id: 'u', kind: 'upload', name: 'a.pdf', notes: null };
+  const us = entryValues('upload', upload);
+  assert.deepEqual(entryChanges(upload, us, { ...us, name: '../x/Invoice\u202Efdp.exe .pdf' }).fields, { name: 'Invoice fdp.exe.pdf' });
+  assert.equal(entryFields({ ...entryValues('link'), url: 'https://x.ca', name: 'Brand\u200B fol\u0007der' }).fields.name, 'Brand folder');
+  assert.equal(safeName('  a\u202Eb  '), 'ab');
+  assert.equal(safeName('\u200B'), null);
 });
 
 test('uploads: checked on the device first; the header the server reads; plain-English answers', () => {

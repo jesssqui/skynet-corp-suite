@@ -2,7 +2,7 @@
 // client's and an account's Files tab (task files included), how a row is described, the forms for
 // links and password pointers, and the plain-English answers for uploads.
 import {
-  FILE_TYPES, fileTypeOf, cleanFileName, cleanUrl, sizeText, isInlineType, extensionOf, ALLOWED_TEXT,
+  FILE_TYPES, fileTypeOf, cleanFileName, hasUnsafeNameChars, cleanUrl, sizeText, isInlineType, extensionOf, ALLOWED_TEXT,
   FILE_NAME_MAX, FILE_NOTES_MAX, VAULT_MAX, VAULT_ITEM_MAX,
 } from '@suite/shared/files';
 
@@ -109,6 +109,11 @@ const trimOrNull = (v) => {
   return s ? s : null;
 };
 
+/** A typed name without control, bidi or invisible characters (the server refuses them). */
+export function safeName(v) {
+  return trimOrNull([...String(v ?? '')].filter((c) => !hasUnsafeNameChars(c)).join('').replace(/\s+/g, ' '));
+}
+
 /** The form's starting values (a new one, or a record being edited). */
 export function entryValues(kind, record = null) {
   return {
@@ -147,8 +152,10 @@ export function entryFields(v) {
     if (fields.vault_item && fields.vault_item.length > VAULT_ITEM_MAX) problems.vault_item = `At most ${VAULT_ITEM_MAX} characters`;
     fields.name = trimOrNull(v.name) ?? fields.vault_item;
   } else {
-    fields.name = trimOrNull(v.name);
+    // A renamed upload: cleaned like the upload's own name was (no path, reserved or invisible characters).
+    fields.name = trimOrNull(v.name) ? cleanFileName(v.name) : null;
   }
+  if (fields.name && v.kind !== 'upload') fields.name = safeName(fields.name);
   if (!fields.name) problems.name = 'A name';
   else if ([...fields.name].length > FILE_NAME_MAX) problems.name = `At most ${FILE_NAME_MAX} characters`;
   return { fields, problems };

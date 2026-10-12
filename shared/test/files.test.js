@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  cleanFileName, fileTypeOf, extensionOf, isInlineType, magicMatches, downloadName, cleanUrl, sizeText, fileOwner, FILE_NAME_MAX, FILE_ACCEPT,
+  cleanFileName, hasUnsafeNameChars, fileTypeOf, extensionOf, isInlineType, magicMatches, downloadName, cleanUrl, sizeText, fileOwner, FILE_NAME_MAX, FILE_ACCEPT,
 } from '../files.js';
 
 test('cleanFileName: only the last part of a path; no control, bidi, invisible or reserved characters; short enough', () => {
@@ -15,6 +15,8 @@ test('cleanFileName: only the last part of a path; no control, bidi, invisible o
   assert.equal(cleanFileName(''), 'file');
   assert.equal(cleanFileName('...'), 'file');
   assert.equal(cleanFileName(null), 'file');
+  assert.ok(hasUnsafeNameChars(`a${String.fromCharCode(0x202e)}b`) && hasUnsafeNameChars(`a${String.fromCharCode(7)}`) && hasUnsafeNameChars(`a${String.fromCharCode(0x200b)}`));
+  assert.ok(!hasUnsafeNameChars('Café: “menu” (v2).pdf'), 'reserved characters are only for file names');
   const long = cleanFileName(`${'é'.repeat(300)}.docx`);
   assert.equal([...long].length, FILE_NAME_MAX);
   assert.ok(long.endsWith('.docx'), 'the extension is kept');

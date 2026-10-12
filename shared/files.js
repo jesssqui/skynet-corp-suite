@@ -20,7 +20,7 @@ export const VAULT_ITEM_MAX = 200;
 
 // Default limits (server settings FILES_MAX_MB, FILES_MAX_TOTAL_MB, FILES_PURGE_DAYS).
 export const DEFAULT_MAX_FILE_MB = 25;
-export const DEFAULT_MAX_TOTAL_MB = 1024;
+export const DEFAULT_MAX_TOTAL_MB = 500;
 export const DEFAULT_PURGE_DAYS = 30;
 
 const MB = 1024 * 1024;
@@ -100,7 +100,14 @@ export function magicMatches(name, bytes) {
 // Control characters, bidi overrides (which can make "gpj.exe" look like "exe.jpg"), zero-width
 // characters and characters that are not allowed in names on Windows or macOS.
 // eslint-disable-next-line no-control-regex
-const BAD_CHARS = /[\u0000-\u001f\u007f-\u009f­؜​-‏‪-‮⁠-⁩﻿<>:"/\\|?*]/g;
+const BAD_CHARS = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff<>:"/\\|?*]/g;
+// The ones no name may hold at all, whatever it is (a link's, a pointer's, a renamed file's): control,
+// bidi and invisible characters. The server refuses them (D10 review); cleanFileName takes them out.
+// eslint-disable-next-line no-control-regex
+const UNSAFE_NAME_CHARS = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/;
+
+/** Does a name hold control, bidi or invisible characters? */
+export const hasUnsafeNameChars = (name) => UNSAFE_NAME_CHARS.test(String(name ?? ''));
 
 /**
  * A safe file name: only the last part of a path, no control/bidi/invisible characters or ones

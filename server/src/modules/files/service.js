@@ -4,14 +4,18 @@
 // asked of the crm and planner services. Records are written through sync (devices' steps, or
 // sync.applyLocal from the upload route) — the sync module's guard makes any other write fail.
 import crypto from 'node:crypto';
+import { setImmediate as yieldNow } from 'node:timers/promises';
 import { newId, isId } from '@suite/shared/ids';
 import {
-  fileTypeOf, magicMatches, cleanFileName, cleanUrl, fileOwner, sizeText, ALLOWED_TEXT, FILE_NOTES_MAX,
+  fileTypeOf, magicMatches, cleanFileName, cleanUrl, fileOwner, sizeText, hasUnsafeNameChars, ALLOWED_TEXT, FILE_NOTES_MAX,
 } from '@suite/shared/files';
 import { HttpError } from '../../lib/httpError.js';
 import { FILE_ENTITY, BLOB_FIELDS, FIXED_FIELDS } from './entities.js';
 
 export const CHUNK_BYTES = 512 * 1024;
+/** Pieces written per transaction (8 MB), yielding to the event loop in between (D10 review). */
+export const PIECES_PER_WRITE = 16;
+const ORPHAN_GRACE_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const has = (fields, k) => Object.hasOwn(fields, k) && fields[k] !== null && fields[k] !== undefined;
@@ -27,6 +31,7 @@ export function makeCheckFile(blobExists) {
     if (op === 'create') {
       if (!fileOwner(fields)) return refuse('A file belongs to exactly one client, account or task');
       if (!String(fields.name ?? '').trim()) return refuse('name: required');
+      if (hasUnsafeNameChars(fields.name)) return refuse('name: no control, bidi or invisible characters');
       if (fields.kind === 'upload') {
         if (!server) return refuse('Files are uploaded with the Upload button (it needs a connection)', 'op_not_allowed');
         if (!BLOB_FIELDS.every((k) => has(fields, k)) || !blobExists(fields.blob_id)) return refuse('An upload needs its stored file');
@@ -40,6 +45,7 @@ export function makeCheckFile(blobExists) {
       if (Object.hasOwn(fields, k)) return refuse(`${k}: can't be changed (add it again where it belongs instead)`);
     }
     if (Object.hasOwn(fields, 'name') && !String(fields.name ?? '').trim()) return refuse('name: required');
+    if (Object.hasOwn(fields, 'name') && hasUnsafeNameChars(fields.name)) return refuse('name: no control, bidi or invisible characters');
     return checkKindFields(current?.kind, fields, { creating: false });
   };
 }
@@ -89,18 +95,30 @@ export function createFilesService({ db, config, services, log, now = Date.now }
 
   const q = {
     blob: db.prepare('SELECT * FROM files_blobs WHERE id = ?'),
-    blobExists: db.prepare('SELECT 1 FROM files_blobs WHERE id = ?').pluck(),
-    insertBlob: db.prepare('INSERT INTO files_blobs (id, size, sha256, chunks, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)'),
+    blobExists: db.prepare('SELECT 1 FROM files_blobs WHERE id = ? AND complete = 1').pluck(),
+    insertBlob: db.prepare('INSERT INTO files_blobs (id, size, sha256, chunks, created_at, created_by, complete) VALUES (?, ?, ?, ?, ?, ?, 0)'),
+    completeBlob: db.prepare('UPDATE files_blobs SET complete = 1 WHERE id = ?'),
     insertChunk: db.prepare('INSERT INTO files_chunks (blob_id, n, data) VALUES (?, ?, ?)'),
     chunk: db.prepare('SELECT data FROM files_chunks WHERE blob_id = ? AND n = ?').pluck(),
     used: db.prepare('SELECT coalesce(sum(size), 0) AS bytes, count(*) AS n FROM files_blobs'),
     record: db.prepare('SELECT * FROM files_items WHERE id = ?'),
     counts: db.prepare(`SELECT kind, count(*) AS n FROM files_items WHERE deleted_at IS NULL GROUP BY kind`),
-    // Blobs to purge: their record deleted more than purgeDays ago, or no record names them at all.
+    // When the server first sees an upload's record deleted (marks), and a mark taken back when it is live again.
+    markDeleted: db.prepare(`INSERT OR IGNORE INTO files_purge_marks (blob_id, seen_at)
+      SELECT DISTINCT i.blob_id, ? FROM files_items i WHERE i.blob_id IS NOT NULL AND i.deleted_at IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM files_items j WHERE j.blob_id = i.blob_id AND j.deleted_at IS NULL)`),
+    unmarkLive: db.prepare(`DELETE FROM files_purge_marks WHERE blob_id IN
+      (SELECT blob_id FROM files_items WHERE deleted_at IS NULL AND blob_id IS NOT NULL)`),
+    // Blobs to purge: deleted more than purgeDays ago by the later of the record's deleted_at (the device's
+    // clock) and when the server first saw it deleted; or (left by a crash mid-upload) named by no record an hour on.
     purgeable: db.prepare(`SELECT b.id FROM files_blobs b
-      WHERE NOT EXISTS (SELECT 1 FROM files_items i WHERE i.blob_id = b.id AND (i.deleted_at IS NULL OR i.deleted_at > ?))
-        AND b.created_at < ?`).pluck(),
+      WHERE (EXISTS (SELECT 1 FROM files_items i WHERE i.blob_id = b.id)
+          AND NOT EXISTS (SELECT 1 FROM files_items i WHERE i.blob_id = b.id AND i.deleted_at IS NULL)
+          AND (SELECT max(i.deleted_at) FROM files_items i WHERE i.blob_id = b.id) <= @cut
+          AND (SELECT m.seen_at FROM files_purge_marks m WHERE m.blob_id = b.id) <= @cut)
+        OR (NOT EXISTS (SELECT 1 FROM files_items i WHERE i.blob_id = b.id) AND b.created_at < @orphan)`).pluck(),
     deleteBlob: db.prepare('DELETE FROM files_blobs WHERE id = ?'),
+    deleteMark: db.prepare('DELETE FROM files_purge_marks WHERE blob_id = ?'),
   };
 
   sync.registerEntity({ module: 'files', ...FILE_ENTITY, check: makeCheckFile((id) => Boolean(q.blobExists.get(id))) });
@@ -121,15 +139,24 @@ export function createFilesService({ db, config, services, log, now = Date.now }
   }
 
   /**
-   * Delete the bytes of files deleted more than purgeDays ago (and any blob no record names — none
-   * should exist: a blob and its record are written in one transaction; a minute's grace covers an
-   * upload in progress). Returns how many were purged. Runs at start and before each upload.
+   * Delete the bytes of files deleted more than purgeDays ago — counted from the later of the record's
+   * deleted_at and when the server first saw it deleted (marked here) — and pieces an interrupted upload
+   * left (no record an hour on). Runs at start, every hour and before each upload. Returns how many went.
    */
   function purge() {
     const t = now();
-    const ids = q.purgeable.all(iso(t - limits.purgeDays * DAY_MS), iso(t - 60_000));
+    const ids = db.transaction(() => {
+      q.unmarkLive.run();
+      q.markDeleted.run(iso(t));
+      return q.purgeable.all({ cut: iso(t - limits.purgeDays * DAY_MS), orphan: iso(t - ORPHAN_GRACE_MS) });
+    })();
     if (!ids.length) return 0;
-    db.transaction(() => { for (const id of ids) q.deleteBlob.run(id); })();
+    db.transaction(() => {
+      for (const id of ids) {
+        q.deleteBlob.run(id);
+        q.deleteMark.run(id);
+      }
+    })();
     log?.info?.(`purged the stored bytes of ${ids.length} deleted file(s)`);
     return ids.length;
   }
@@ -158,46 +185,78 @@ export function createFilesService({ db, config, services, log, now = Date.now }
     }
     purge();
     const { usedBytes } = usage();
-    if (usedBytes + size > limits.maxTotalBytes) {
-      throw new HttpError(413, `No room left: the suite keeps at most ${sizeText(limits.maxTotalBytes)} of files (${sizeText(usedBytes)} used). Delete some first.`, undefined, { code: 'no_space' });
-    }
+    if (usedBytes + size > limits.maxTotalBytes) throw noSpace(usedBytes);
     return { existing: null, type };
   }
 
-  /** Store the bytes and make the record, in one transaction. → { file, created } */
-  function store({ id, name, owner, notes, bytes, actor }) {
+  const noSpace = (usedBytes) => new HttpError(413, `No room left: the suite keeps at most ${sizeText(limits.maxTotalBytes)} of files (${sizeText(usedBytes)} used). Delete some first.`,
+    undefined, { code: 'no_space' });
+
+  /**
+   * Store the bytes and make the record. The pieces go in a few transactions (8 MB each, yielding in
+   * between so the server keeps answering); the record is made — and the space checked again, counting
+   * every other upload stored or under way meanwhile — in the last one, so a file is listed only once all
+   * its bytes are in, and two uploads at once can't both take the last room. → { file, created }
+   */
+  async function store({ id, name, owner, notes, bytes, sha256: given, actor }) {
     const clean = cleanFileName(name);
     const type = fileTypeOf(clean);
-    const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+    const sha256 = given ?? crypto.createHash('sha256').update(bytes).digest('hex');
     const existing = q.record.get(id);
-    if (existing) {
-      // The same upload sent again (its answer was lost): the same answer. Anything else under that id: refused.
-      if (existing.kind === 'upload' && existing.sha256 === sha256 && existing[owner.field] === owner.id) {
-        return { file: recordView(existing), created: false };
-      }
-      throw new HttpError(409, 'That id is already used by another file', undefined, { code: 'exists' });
-    }
+    if (existing) return answerExisting(existing, { sha256, owner });
     if (!magicMatches(clean, bytes)) {
       throw new HttpError(422, `That file isn’t really a .${type.ext} file (its contents don’t match its name)`, undefined, { code: 'type_mismatch' });
     }
-    const result = db.transaction(() => {
-      const blobId = newId();
-      const chunks = Math.ceil(bytes.length / CHUNK_BYTES);
-      q.insertBlob.run(blobId, bytes.length, sha256, chunks, iso(), actor);
-      for (let n = 0; n < chunks; n++) q.insertChunk.run(blobId, n, bytes.subarray(n * CHUNK_BYTES, (n + 1) * CHUNK_BYTES));
-      const r = sync.applyLocal({
-        actor, entity: 'file', op: 'create', recordId: id,
-        fields: { kind: 'upload', name: clean, [owner.field]: owner.id, notes, blob_id: blobId, size: bytes.length, content_type: type.type, sha256 },
-      });
-      if (r.status !== 'applied') {
-        const gone = ['not_found', 'deleted'].includes(r.code);
-        throw new HttpError(gone ? 404 : 400, gone ? 'The client, account or task this file was for isn’t here any more' : `Couldn’t save it: ${r.reason}`,
-          undefined, { code: gone ? 'owner_not_found' : r.code });
+    const blobId = newId();
+    const chunks = Math.ceil(bytes.length / CHUNK_BYTES);
+    q.insertBlob.run(blobId, bytes.length, sha256, chunks, iso(), actor);
+    let record;
+    try {
+      for (let first = 0; first < chunks; first += PIECES_PER_WRITE) {
+        db.transaction(() => {
+          for (let n = first; n < Math.min(chunks, first + PIECES_PER_WRITE); n++) {
+            q.insertChunk.run(blobId, n, bytes.subarray(n * CHUNK_BYTES, (n + 1) * CHUNK_BYTES));
+          }
+        })();
+        // eslint-disable-next-line no-await-in-loop
+        if (first + PIECES_PER_WRITE < chunks) await yieldNow();
       }
-      return q.record.get(id);
-    })();
+      record = db.transaction(() => {
+        const raced = q.record.get(id);
+        if (raced) return { raced };
+        const { bytes: used } = q.used.get(); // this upload included
+        if (used > limits.maxTotalBytes) throw noSpace(used - bytes.length);
+        q.completeBlob.run(blobId);
+        const r = sync.applyLocal({
+          actor, entity: 'file', op: 'create', recordId: id,
+          fields: { kind: 'upload', name: clean, [owner.field]: owner.id, notes, blob_id: blobId, size: bytes.length, content_type: type.type, sha256 },
+        });
+        if (r.status !== 'applied') {
+          const gone = ['not_found', 'deleted'].includes(r.code);
+          throw new HttpError(gone ? 404 : 400, gone ? 'The client, account or task this file was for isn’t here any more' : `Couldn’t save it: ${r.reason}`,
+            undefined, { code: gone ? 'owner_not_found' : r.code });
+        }
+        return { row: q.record.get(id) };
+      })();
+    } catch (err) {
+      q.deleteBlob.run(blobId);
+      throw err;
+    }
+    if (record.raced) {
+      q.deleteBlob.run(blobId);
+      return answerExisting(record.raced, { sha256, owner });
+    }
     log?.info?.(`file uploaded ${id} (${bytes.length} bytes, ${type.type})`); // never its name
-    return { file: recordView(result), created: true };
+    return { file: recordView(record.row), created: true };
+  }
+
+  /** The same upload sent again (its answer was lost): the same answer. Deleted meanwhile, or other bytes: refused. */
+  function answerExisting(existing, { sha256, owner }) {
+    if (existing.kind === 'upload' && existing.sha256 === sha256 && existing[owner.field] === owner.id) {
+      if (existing.deleted_at) throw new HttpError(409, 'This file was deleted meanwhile', undefined, { code: 'deleted' });
+      return { file: recordView(existing), created: false };
+    }
+    throw new HttpError(409, 'That id is already used by another file', undefined, { code: 'exists' });
   }
 
   const recordView = (r) => ({

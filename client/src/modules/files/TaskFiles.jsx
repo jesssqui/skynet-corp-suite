@@ -13,7 +13,7 @@ export function TaskFiles({ task }) {
     .map((file) => ({ file, where: { on: 'task', taskId: task.id } })), [records, task.id]);
   return (
     <div style={{ display: 'grid', gap: 'var(--space-2)' }} data-testid="task-files">
-      <span style={h3}>Files{task.client_id ? ' (also on the client’s Files tab)' : ''}</span>
+      <span style={h3}>Files{task.client_id ? ' (also on the client’s Files tab)' : task.account_id ? ' (also on the account’s Files tab)' : ''}</span>
       <FilesPanel owner={{ field: 'task_id', id: task.id }} items={items} testId="task-files-panel" emptyText="No files on this task." />
     </div>
   );

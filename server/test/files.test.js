@@ -336,3 +336,170 @@ test('DONE WHEN: an uploaded file survives a backup and restore (and what came a
   const pull = await (await fetch(`${again.base}/api/sync/pull?limit=1000`, { headers: { cookie: session.cookie } })).json();
   assert.ok(pull.changes.some((c) => c.id === kept && c.entity === 'file' && !c.deleted));
 });
+
+test('a backup of a database with files in it never freezes the server: /api/health keeps answering', async (t) => {
+  const dir = tmpDir(t);
+  const config = testConfig(dir);
+  const env = await startApp(t, config, { modules });
+  // ~200 MB of stored file pieces (random, so nothing compresses away).
+  // Plus many small rows, like years of records: what makes the backup's last step and the check slow.
+  env.db.exec('CREATE TABLE test_rows (id INTEGER PRIMARY KEY, k TEXT, v BLOB); CREATE INDEX test_rows_k ON test_rows (k)');
+  env.db.transaction(() => {
+    const ins = env.db.prepare('INSERT INTO test_rows (k, v) VALUES (?, ?)');
+    for (let i = 0; i < 300_000; i++) ins.run(`k${i}`, Buffer.alloc(20));
+  })();
+  const piece = crypto.randomBytes(CHUNK_BYTES);
+  const blobs = 4;
+  env.db.transaction(() => {
+    for (let b = 0; b < blobs; b++) {
+      const id = newId();
+      env.db.prepare('INSERT INTO files_blobs (id, size, sha256, chunks, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)').run(id, 100 * CHUNK_BYTES, 'x', 100, new Date().toISOString(), 'owner');
+      const ins = env.db.prepare('INSERT INTO files_chunks (blob_id, n, data) VALUES (?, ?, ?)');
+      for (let n = 0; n < 100; n++) ins.run(id, n, piece);
+    }
+  })();
+  const offsite = path.join(dir, 'offsite');
+  fs.mkdirSync(offsite, { recursive: true });
+  fs.writeFileSync(path.join(offsite, '.suite-backup-target'), '');
+
+  let worst = 0;
+  let answers = 0;
+  let running = true;
+  // The event loop itself: a timer every 5 ms; the longest gap is how long the server was frozen.
+  let last = Date.now();
+  let frozen = 0;
+  const timer = setInterval(() => {
+    const now = Date.now();
+    frozen = Math.max(frozen, now - last);
+    last = now;
+  }, 5);
+  const poll = (async () => {
+    while (running) {
+      const started = Date.now();
+      const res = await fetch(`${env.base}/api/health`);
+      assert.equal(res.status, 200);
+      await res.arrayBuffer();
+      worst = Math.max(worst, Date.now() - started);
+      answers += 1;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  })();
+  const started = Date.now();
+  const result = await runBackup({ db: env.db, dir: config.backup.dir, offsiteDir: offsite, keepDays: 30 });
+  const took = Date.now() - started;
+  running = false;
+  clearInterval(timer);
+  await poll;
+  assert.ok(result.bytes > 200 * 1024 * 1024);
+  assert.ok(fs.existsSync(result.offsiteFile));
+  t.diagnostic(`backup of ${(result.bytes / 1048576).toFixed(0)} MB took ${took} ms; ${answers} health answers, the slowest ${worst} ms; longest freeze ${frozen} ms`);
+  assert.ok(answers >= 5, 'health answered all along');
+  // On the main thread (before the review fix) the backup's last step alone froze it ~0.5 s here, the
+  // integrity check and the off-machine copy more on a bigger database.
+  assert.ok(frozen < 200, `the server was frozen for ${frozen} ms during the backup`);
+  assert.ok(worst < 300, `the slowest health answer took ${worst} ms`);
+});
+
+test('review fixes: the space is checked again as the record is made (two uploads can’t both take the last room)', async (t) => {
+  const config = testConfig(tmpDir(t), { FILES_MAX_TOTAL_MB: '2' });
+  const env = await setup(t, { config });
+  const files = env.ctx.services.files;
+  const a = { id: newId(), name: 'a.zip', owner: { field: 'client_id', id: env.clientId }, notes: null };
+  const b = { ...a, id: newId(), name: 'b.zip' };
+  const size = 1200 * 1024;
+  // Both pass the check from the headers (neither is stored yet) …
+  files.precheck({ ...a, size });
+  files.precheck({ ...b, size });
+  // … then both are stored at once: one fits, the other is refused, and leaves nothing behind.
+  const results = await Promise.allSettled([
+    files.store({ ...a, bytes: crypto.randomBytes(size), actor: 'owner' }),
+    files.store({ ...b, bytes: crypto.randomBytes(size), actor: 'owner' }),
+  ]);
+  assert.deepEqual(results.map((r) => r.status).sort(), ['fulfilled', 'rejected']);
+  const refused = results.find((r) => r.status === 'rejected').reason;
+  assert.equal(refused.status, 413);
+  assert.equal(refused.code, 'no_space');
+  assert.equal(env.db.prepare('SELECT count(*) FROM files_blobs').pluck().get(), 1);
+  assert.equal(env.db.prepare('SELECT count(*) FROM files_chunks').pluck().get(), 3);
+});
+
+test('review fixes: a big upload is written in pieces with the server answering between them; complete only with its record', async (t) => {
+  const env = await setup(t);
+  const id = newId();
+  const bytes = crypto.randomBytes(20 * 1024 * 1024);
+  let ticks = 0;
+  const timer = setInterval(() => { ticks += 1; }, 0);
+  const res = await env.upload(bytes, { id, name: 'big.zip', clientId: env.clientId });
+  clearInterval(timer);
+  assert.equal(res.status, 201);
+  const blob = env.db.prepare('SELECT * FROM files_blobs').get();
+  assert.equal(blob.complete, 1);
+  assert.equal(blob.sha256, crypto.createHash('sha256').update(bytes).digest('hex'), 'hashed as it came in');
+  assert.ok(ticks > 0);
+  const got = Buffer.from(await (await env.download(id)).arrayBuffer());
+  assert.ok(got.equals(bytes));
+});
+
+test('review fixes: purge counts 30 days from when the server saw the delete (not an old device clock); leftovers of an interrupted upload go after an hour', async (t) => {
+  const clock = testClock();
+  const env = await setup(t, { clock });
+  const files = env.ctx.services.files;
+  const id = newId();
+  assert.equal((await env.upload(PNG, { id, name: 'a.png', clientId: env.clientId })).status, 201);
+  // A phone deleted it offline 40 days ago (by its clock); the delete arrives now.
+  const res = await env.push({ entity: 'file', recordId: id, op: 'delete', hlc: encodeHlc({ ms: Date.now() - 40 * 24 * 3600 * 1000, counter: 0, node: env.owner.deviceId }) });
+  assert.equal(res.status, 'applied', JSON.stringify(res));
+  assert.ok(env.record(id).deleted_at < new Date(Date.now() - 39 * 24 * 3600 * 1000).toISOString(), 'deleted_at is the device’s time');
+  assert.equal(files.purge(), 0, 'not purged at once: the server only saw it now');
+  clock.advance(29 * 24 * 3600 * 1000);
+  assert.equal(files.purge(), 0);
+  clock.advance(2 * 24 * 3600 * 1000);
+  assert.equal(files.purge(), 1);
+
+  // An upload interrupted after its pieces were written (a crash): no record, gone after an hour.
+  const orphan = newId();
+  env.db.prepare('INSERT INTO files_blobs (id, size, sha256, chunks, created_at, created_by, complete) VALUES (?, 1, ?, 1, ?, ?, 0)').run(orphan, 'x', new Date(clock.now()).toISOString(), 'owner');
+  env.db.prepare('INSERT INTO files_chunks (blob_id, n, data) VALUES (?, 0, ?)').run(orphan, Buffer.from('x'));
+  assert.equal(files.purge(), 0);
+  clock.advance(61 * 60 * 1000);
+  assert.equal(files.purge(), 1);
+  assert.equal(env.db.prepare('SELECT count(*) FROM files_chunks').pluck().get(), 0);
+});
+
+test('review fixes: a stalled upload is answered 408; a retry of an upload deleted meanwhile is refused; names with control or bidi characters are refused', async (t) => {
+  const config = testConfig(tmpDir(t));
+  config.files.uploadIdleMs = 300;
+  const env = await setup(t, { config });
+  const stalled = await new Promise((resolve, reject) => {
+    const req = http.request(`${env.base}/api/files/upload`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/octet-stream', 'content-length': '1000', origin: env.base, cookie: env.owner.cookie,
+        'x-file-info': encodeURIComponent(JSON.stringify({ id: newId(), name: 'a.txt', clientId: env.clientId })),
+      },
+    }, (res) => {
+      let text = '';
+      res.on('data', (c) => { text += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(text) }));
+    });
+    req.on('error', reject);
+    req.write(Buffer.alloc(10)); // then nothing
+  });
+  assert.equal(stalled.status, 408);
+  assert.equal(stalled.body.code, 'idle');
+
+  const id = newId();
+  assert.equal((await env.upload(PNG, { id, name: 'a.png', clientId: env.clientId })).status, 201);
+  assert.equal((await env.push({ entity: 'file', recordId: id, op: 'delete' })).status, 'applied');
+  const again = await env.upload(PNG, { id, name: 'a.png', clientId: env.clientId });
+  assert.equal(again.status, 409);
+  assert.equal((await again.json()).code, 'deleted', 'the device’s row says so instead of waiting for it');
+
+  const keep = newId();
+  assert.equal((await env.upload(PNG, { id: keep, name: 'b.png', clientId: env.clientId })).status, 201);
+  const rename = await env.push({ entity: 'file', recordId: keep, op: 'update', fields: { name: 'invoice‮fdp.exe' } });
+  assert.equal(rename.status, 'rejected');
+  assert.match(rename.reason, /bidi/);
+  const link = await env.push({ entity: 'file', recordId: newId(), op: 'create', fields: { kind: 'link', name: 'a\u0007b', client_id: env.clientId, url: 'https://x.ca/' } });
+  assert.equal(link.status, 'rejected');
+});
