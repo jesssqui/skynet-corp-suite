@@ -14,6 +14,7 @@ try {
     dir: config.backup.dir,
     offsiteDir: config.backup.offsiteDir,
     keepDays: config.backup.keepDays,
+    localKeepDays: config.backup.localKeepDays,
     log: (m) => console.log(m),
   });
   if (!result.offsiteFile) console.warn('WARNING: BACKUP_OFFSITE_DIR is not set — this backup is on this machine only.');

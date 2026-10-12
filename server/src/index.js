@@ -35,6 +35,7 @@ if (config.backup.enabled) {
       dir: config.backup.dir,
       offsiteDir: config.backup.offsiteDir,
       keepDays: config.backup.keepDays,
+      localKeepDays: config.backup.localKeepDays,
       now: new Date(),
       log: (m) => backupLog.info(m),
     }),

@@ -2,19 +2,20 @@
 // a folder that lives off this machine, and old copies pruned.
 //
 //  1. better-sqlite3's backup API copies the database page by page from a read
-//     transaction, so the snapshot is exactly the last committed state even
+//     transaction (D10 review: in a worker thread with its own connection), so the snapshot is exactly the last committed state even
 //     while the app keeps writing (WAL included). Never copy the .db file by hand.
 //  2. The snapshot is switched to a single self-contained file (journal_mode
-//     DELETE — no -wal/-shm needed) and must pass PRAGMA integrity_check.
+//     DELETE — no -wal/-shm needed) and must pass PRAGMA integrity_check. (D10 review: in a worker thread, and the copies below are async — so the server keeps answering while a
+//     database with files in it is backed up)
 //  3. It is copied to BACKUP_OFFSITE_DIR, flushed to disk and its SHA-256 compared
 //     with the original before it gets its final name.
-//  4. Copies older than BACKUP_KEEP_DAYS are deleted in both folders; the newest
+//  4. Copies older than BACKUP_KEEP_DAYS are deleted off-machine, older than BACKUP_LOCAL_KEEP_DAYS
+//     (D10 review, default 7) locally; the newest
 //     copy is always kept, whatever its age.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import Database from 'better-sqlite3';
-import { openDb } from '../db/open.js';
+import { Worker } from 'node:worker_threads';
 
 export const OFFSITE_MARKER = '.suite-backup-target';
 const NAME_RE = /^suite-(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})\.(\d{3})Z\.db$/;
@@ -49,9 +50,29 @@ export async function sha256File(file) {
   return hash.digest('hex');
 }
 
-function fsyncFile(file) {
-  const fd = fs.openSync(file, 'r+');
-  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+async function fsyncFile(file) {
+  const fh = await fs.promises.open(file, 'r+');
+  try { await fh.sync(); } finally { await fh.close(); }
+}
+
+/**
+ * The snapshot, in a worker thread (D10 review): copied from `source` (the live database's path) with the
+ * backup API — skipped when `source` is null, to check a copy made already —, made one self-contained file
+ * (journal_mode DELETE) and integrity-checked. With files in the database each step takes seconds; on the
+ * main thread they froze the server. Resolves to integrity_check's answer ('ok' when sound).
+ */
+export function checkSnapshot(file, source = null) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./checkWorker.js', import.meta.url), { workerData: { file, source } });
+    let done = false;
+    worker.once('message', (m) => {
+      done = true;
+      if (m.error) reject(new Error(m.error));
+      else resolve(m.check);
+    });
+    worker.once('error', (err) => { done = true; reject(err); });
+    worker.once('exit', (code) => { if (!done) reject(new Error(`the backup check stopped (exit ${code})`)); });
+  });
 }
 
 /** Throws with a helpful message unless the off-machine folder looks mounted. */
@@ -118,42 +139,30 @@ function writeStatus(dir, patch) {
 /**
  * Make one backup.
  * @param {object} opts
- * @param {import('better-sqlite3').Database} [opts.db] live connection to copy from (the server passes its own)
+ * @param {import('better-sqlite3').Database} [opts.db] the server's live connection: its file is copied (by a worker
+ *   thread's own read connection, so the server keeps answering)
  * @param {string} [opts.dbPath] or the database file to open (scripts)
  * @param {string} opts.dir local backup folder
  * @param {string|null} opts.offsiteDir off-machine folder; null = local only (reported as a problem)
- * @param {number} opts.keepDays
+ * @param {number} opts.keepDays days of backups kept off-machine
+ * @param {number} [opts.localKeepDays] days kept in the local folder (BACKUP_LOCAL_KEEP_DAYS; default keepDays)
  * @returns {Promise<{ file: string, offsiteFile: string|null, sha256: string, bytes: number, pruned: string[] }>}
  */
-export async function runBackup({ db, dbPath, dir, offsiteDir, keepDays, now = new Date(), log = () => {} }) {
+export async function runBackup({ db, dbPath, dir, offsiteDir, keepDays, localKeepDays = keepDays, now = new Date(), log = () => {} }) {
   const startedAt = now.toISOString();
   writeStatus(dir, { lastAttemptAt: startedAt });
   let localFile = null;
   try {
-    let source = db;
-    if (!source) {
-      if (!fs.existsSync(dbPath)) throw new Error(`Database ${dbPath} does not exist`);
-      source = openDb(dbPath);
-    }
+    // The live database's file: the copy is made from it by a worker thread's own connection.
+    const source = db ? db.name : dbPath;
+    if (!source || !fs.existsSync(source)) throw new Error(`Database ${source} does not exist`);
     const name = backupFileName(now);
     const partial = path.join(dir, `${name}.partial`);
     fs.mkdirSync(dir, { recursive: true });
-    try {
-      await source.backup(partial);
-    } finally {
-      if (!db) source.close();
-    }
-
-    // Make the snapshot one standalone file and check it.
-    const snap = new Database(partial);
-    try {
-      snap.pragma('journal_mode = DELETE');
-      const check = snap.pragma('integrity_check', { simple: true });
-      if (check !== 'ok') throw new Error(`Backup failed integrity_check: ${check}`);
-    } finally {
-      snap.close();
-    }
-    fsyncFile(partial);
+    fs.rmSync(partial, { force: true });
+    const check = await checkSnapshot(partial, source);
+    if (check !== 'ok') throw new Error(`Backup failed integrity_check: ${check}`);
+    await fsyncFile(partial);
     localFile = path.join(dir, name);
     fs.renameSync(partial, localFile);
     const sha256 = await sha256File(localFile);
@@ -161,12 +170,13 @@ export async function runBackup({ db, dbPath, dir, offsiteDir, keepDays, now = n
     log(`backup written ${localFile} (${bytes} bytes)`);
 
     let offsiteFile = null;
-    const pruned = pruneBackups(dir, keepDays, now);
+    const pruned = pruneBackups(dir, localKeepDays, now);
     if (offsiteDir) {
       checkOffsiteDir(offsiteDir);
       const offPartial = path.join(offsiteDir, `${name}.partial`);
-      fs.copyFileSync(localFile, offPartial);
-      fsyncFile(offPartial);
+      // Async (D10 review): a copy of a database holding files to a network share can take a minute.
+      await fs.promises.copyFile(localFile, offPartial);
+      await fsyncFile(offPartial);
       const offSha = await sha256File(offPartial);
       if (offSha !== sha256) {
         fs.unlinkSync(offPartial);
