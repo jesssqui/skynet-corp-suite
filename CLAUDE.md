@@ -26,7 +26,8 @@ module: its CRM notes on the linked client's timeline, and its follow-up dates a
 (same module: Order Manager customers linked automatically on a clean email or phone, suggestions for review with
 "Not the same", possible duplicate clients, and an undo that puts back what linking changed), and from **C6a** the task
 calendar feed (module `calendar`: each person's dated tasks as a read-only calendar Apple Calendar subscribes to, by a
-secret link per person), and from **D6** renewals and recurring costs (module `costs`: what our businesses and the home
+secret link per person; **C6b**: each person's meetings read from their iCloud calendars into Today, the morning plan
+and the day's load), and from **D6** renewals and recurring costs (module `costs`: what our businesses and the home
 pay for, with monthly and yearly totals, reminder tasks 30 days before a client service renews and 14 days before one
 of our costs does, auto-renewing costs rolled forward, resold costs on the client page), and from **D16** stock tasks
 from Stockroom (module `stockroom`: a read-only, signed pull from Stockroom — the Inventory Hub on Fly — that makes
@@ -136,7 +137,10 @@ server/src/
   modules/calendar/        C6a: the task calendar feed — ics.js (iCalendar writer, pure: escaping, 75-octet folding,
                            VTIMEZONE from Intl's zone data, events), service.js (links: make/replace/turn off, token
                            lookup, the feed, the per-address throttle, the 'calendar-feed' connection), routes.js
-                           (public GET /feed/<token>.ics; signed-in /link), migrations/001 (calendar_feeds, _changes)
+                           (public GET /feed/<token>.ics; signed-in /link), migrations/001 (calendar_feeds, _changes);
+                           C6b: caldav.js (the PROPFIND/REPORT-only iCloud client, XML reader), icsRead.js (iCalendar
+                           reader: repeats, exceptions, zones — pure), apple.js (per-person connection, pulls, the synced
+                           `meeting` records, the 'calendar' Connections row), routes /apple…, migrations/002_meetings.sql
   modules/costs/           D6: entities.js (the synced recurring_cost), service.js (registration + checkCost, reads:
                            cost/renewingBetween/autoRenewingPassed/liveCosts, monthlyTotals for D15), reminders.js
                            (the reminder engine reminderPlan/applyReminderPlan, rollCostsForward, the service-renewals
@@ -206,7 +210,9 @@ client/src/
                            logic.js (no React; client/test/automations.test.js)
   modules/calendar/        C6a: CalendarPage (/account/calendar, a tab of Account: make / replace / turn off the link,
                            shown once, how to subscribe), links.js (no React: the https link, "only works on
-                           this Mac"; client/test/calendar.test.js)
+                           this Mac"; client/test/calendar.test.js); C6b: AppleCard.jsx + apple.js (connect, calendars,
+                           Read now, Forget; the 'calendar' Connections panel links here); planner/meetings.js (no React:
+                           meetingsOn, busyMinutes, meetingTimeText; client/test/meetings.test.js)
   modules/sync/            /sync (Offline data), /sync/attention (Needs attention), /sync/data/:entity (plain records view)
   modules/costs/           D6: CostsPage (/costs: by business, totals, filters in the URL, ?open= / ?new=&relationship=),
                            CostForm.jsx (the add/edit sheet, the CRM's useForm), data.js (cached reads via crm/data.js),
@@ -356,6 +362,11 @@ One folder per module on each side, same name on both (`server/src/modules/healt
     person's browser, not the server. Scope `sell.fulfillment.readonly` only. Key file `ebay-secret.key` (the Cert ID
     and the refresh token; the access token stays in memory). No buyer details are kept (no username, name, address,
     email or phone): totals, and for orders to ship only their id, items, total and ship-by date.
+  - **Apple Calendar** (C6b): iCloud's CalDAV hosts only (`https://caldav.icloud.com` and its `p<NN>-caldav.icloud.com`
+    partition hosts, https), HTTP Basic with each person's Apple ID and **app-specific password**;
+    PROPFIND and REPORT only (they only read; their XML bodies are fixed templates), redirects followed only to another
+    iCloud host. Key file `calendar-secret.key`. Kept: meeting titles, times, calendar names, free/busy — no notes,
+    places or attendees.
   Nothing else in the suite calls out.
 - **No HSTS** (helmet's is off): browsers apply it to the whole ts.net hostname on every port, which would force the
   Order Manager's plain-http port on the same Mac to https. Tailscale Serve already makes the suite HTTPS-only.
@@ -1068,7 +1079,8 @@ only its own tables and has **no HTTP routes**: devices use their offline copy, 
   never fills the other person's three; counts, stars, Today and the plan's load show only your own picks, and
   moving a task clears only your own pick. Changes are worked out from the latest record (`store.get`), so a
   move right after a star clears it. Ticking sets `done_at`; the row stays (ticked, with undo) for the rest of the app session
-  (`keepFinished`, in memory). Today's calendar (Apple Calendar) is a later package: **nothing is shown for it yet**.
+  (`keepFinished`, in memory). C6b: the day's meetings from Apple Calendar are listed beside the tasks (see "Meetings from
+  Apple Calendar").
 - **Morning plan** (`PlanSheet`, "Plan my day"): proposes overdue + due today on my Today (mine and the shared list's)
   + **my** undated open tasks that belong to **this week's goals or this month's priorities** (C4b; before C4b it
   proposed every undated task of mine). Undated tasks with no goal are counted ("N with no day or goal to sort" →
@@ -1227,8 +1239,8 @@ Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (
 
 **For C5 / C6 / C8 / D15**
 - **C5** (Siri, share sheet): captured items still become tasks with no day or goal → they land in To sort, by design.
-- **C6b / calendar** (C6a, the task feed, is done): a task's day is `taskDay`; the overbooked warning has no calendar meetings yet — when Apple Calendar
-  events arrive, add their minutes to `dayLoad`/`loadsByDay` (timed events are never "suggested to push").
+- **C6b / calendar** (done: see "Meetings from Apple Calendar"): a task's day is `taskDay`; busy timed meetings add their
+  minutes to `dayLoad`/`loadsByDay` and are never "suggested to push".
 - **C8 overview** ("goals against targets"): `ctx.services.planner.goals(kind, period)` returns live goals of one period
   (server); devices use `goalsOf` + `goalProgress`. The last-Friday-of-the-month review of priorities can reuse
   `reviewLists` with `goalsOf(goals, 'month', monthStart(today))`.
@@ -1266,8 +1278,8 @@ switch pauses it without breaking the app.
 - **Rows today**: the off-machine backup (from `backup/status.json`: last success, last error, "queue" = whole days
   behind once the last good backup is over 26 h old; `pausable: false` — backups are never pausable from the app), the
   Order Manager (`wom`, D1 — real, see "Wholesale"), the task calendar feed (`calendar-feed`, C6a: last read by a
-  calendar, refused lookups, whose links are on; paused = every feed answers 503) and placeholders "Not connected yet ·
-  comes with …": Apple Calendar (C6b, meetings over CalDAV). Stockroom (`stockroom`, D16 — real, see "Stock tasks from
+  calendar, refused lookups, whose links are on; paused = every feed answers 503), Apple Calendar (`calendar`, C6b — real,
+  the last placeholder's slot: see "Meetings from Apple Calendar"; no placeholder is left). Stockroom (`stockroom`, D16 — real, see "Stock tasks from
   Stockroom") took its placeholder's slot. D12: "WooCommerce stores" (`woocommerce`, always on: it only adds stores)
   and one row per store under it (`woo-<store id without dashes>`, pausable), placed with `register({ …, after:
   'woocommerce' })` and taken off with `unregister(id)` when a store is removed (its switch row stays; a store added
@@ -1841,6 +1853,108 @@ business names through `crm.getBusiness`, display names through `auth.accounts`)
   fetched on the "Fetch New Data" schedule (15 minutes at best), not pushed.
 - **For C6b**: meetings come in through the `calendar` connection (CalDAV pull) in this module; their minutes go into
   C4b's `dayLoad`. The feed could later show them too, but they already are in Apple Calendar.
+
+## Meetings from Apple Calendar (calendar module, C6b)
+Code `server/src/modules/calendar/` (`caldav.js` the client, `icsRead.js` the iCalendar reader — pure, `apple.js` the
+connection, pulls and records, routes in `routes.js`, migration `002_meetings.sql`); client `client/src/modules/calendar/`
+(`AppleCard.jsx`, `apple.js`) and the planner (`meetings.js`, Today, Plan my day, the week strip); tests
+`server/test/meetings.test.js` (TZ Toronto, against `server/test/fixtures/caldavFake.js`, a fake iCloud),
+`client/test/meetings.test.js`, `test/e2e/meetings.e2e.test.js`. Same module as C6a; reads and writes only its own tables.
+The plan's "done when" — a meeting added in Apple Calendar shows on Today at the next refresh and counts in that day's
+load — is proved against the fake (server, device and browser). **Real iCloud is not exercised here.**
+- **The connection — per person** (Account → Calendar, the session's own actor; each manages only their own): Apple ID
+  (an email, lowercase) + an **app-specific password** (appleid.apple.com → Sign-In and Security; its shape —
+  four groups of four letters — is required, so the Apple ID's own password is refused before anything is sent).
+  `PUT /api/calendar/apple { appleId, password }` checks it with iCloud first (find the calendar home, list the
+  calendars; 401 → 400 `refused`, unreachable → 502, paused → 409) and only then saves it in `calendar_apple` (one row
+  per person) with the calendars it lists — **nothing is read from them yet** (review fix: the person chooses first;
+  `confirmed_at` is set by the first `PUT /apple/calendars`, which then reads at once): the password **AES-256-GCM-sealed** with the key file `config.calendar.apple.keyFile`
+  (`<data>/calendar-secret.key`, `CALDAV_KEY_FILE`; `lib/sealed.js`) — never in the database or backups in usable form,
+  **never sent back** (`GET /apple` has no password), never logged (tests check the database, answers and log); an Apple
+  ID with ":" is refused (HTTP Basic). A new password **for the same Apple ID** keeps the calendars left out, the
+  choice and what was read (no churn on devices) and reads at once (review fix: it used to tick every calendar again);
+  **another Apple ID** starts over (a new `conn_id`: what was read for the old one and its meetings go; choose again).
+  The principal's `calendar-user-address-set` (its mailto: aliases) is kept in `addresses`, so an invitation declined
+  under an alias is left out too. `PUT /apple/calendars { excluded }`
+  — every event calendar counts except the ones unticked (a calendar added later is read; one left out has its events
+  forgotten and its meetings taken off). `POST /apple/pull` (Read now), `DELETE /apple` (Forget: the connection, what
+  was read and this person's meetings on devices). Changes in `calendar_apple_changes` (connected / replaced /
+  calendars / forgotten / refused). Both tables are **keepOnRestore** (like Stockroom's: a password replaced or
+  forgotten after a backup never comes back).
+- **Read only by construction** (`caldav.js`): `request()` is the one network call; methods **PROPFIND and REPORT**
+  only (anything else throws before a request), XML bodies from fixed templates, https to `caldav.icloud.com` and
+  iCloud's partition hosts `p<NN>-caldav.icloud.com` only (review fix: not any `*.icloud.com`; the partition host
+  is followed, a redirect to any other host is refused before the password is sent), no query strings, a time-out
+  (`CALDAV_TIMEOUT_MS`, 20 s), answers read as a stream and **stopped at 20 MB counted in bytes** (`maxBytes`; the
+  request is aborted). The XML reader is one linear pass (`indexOf` for comments, CDATA, PIs; it stops where a
+  terminator is missing — review fix for a quadratic regex; tested with a time budget). Tests: every request the fake saw was PROPFIND/REPORT, and the module's sources hold one `fetch`
+  (in caldav.js) and no other HTTP client. Only for tests, the base address (`config.calendar.apple.baseUrl`, not an env
+  setting) may be the fake's local port.
+- **Pulls** (`startPuller`, from `src/index.js` when `CALDAV_PULL_ENABLED`, on in production; one look a minute): each
+  connected person every `CALDAV_PULL_EVERY_MIN` (15) minutes, one round at a time (Read now chains one forced round).
+  Several forced requests while a round runs share one chained round, for every person asked (review fix: the second
+  person's Read now was lost). **Window**: today − 7 … today + 60 days in the suite's zone (`WINDOW_PAST_DAYS` / `WINDOW_FUTURE_DAYS`: the week
+  strip's Monday to two months of planning). Each read lists the calendars (PROPFIND Depth 1: name, colour, CTag,
+  components — reminders-only lists, the inbox and outbox are left out); a calendar whose **CTag** and window are as
+  last read is skipped; otherwise a `calendar-query` REPORT gets its objects' **ETags** in the window and a
+  `calendar-multiget` fetches only new or changed objects (50 a request); objects no longer listed are dropped.
+  (Decision: CTag + ETag, not sync-token — the window moves daily, and an ETag list is cheap.) Each object is kept in
+  `calendar_apple_objects` in its **minimal form** (`minimalCalendar`: UID, RECURRENCE-ID, SUMMARY, DTSTART, DTEND /
+  DURATION, RRULE, EXDATE, RDATE, STATUS, TRANSP, whether this person declined, and VTIMEZONE rules only for a TZID
+  Intl doesn't know — never DESCRIPTION, LOCATION, attendees, organizer, URL or alarms). A failure backs off 2, 4 … 60
+  minutes; a 404 or unreadable home re-discovers it once. **401** (the app-specific password revoked) sets
+  `refused_at`: **no more calls for that person** until a new password is entered (repeated refused sign-ins could lock
+  the Apple ID). **Paused** (the `calendar` Connections row, both people): no calls at all, and nothing is deleted.
+  Pull state (`calendar_apple_pulls`), calendars and objects are not kept across restores (the next read refreshes them).
+- **The iCalendar reader** (`icsRead.js`, hand-rolled — decision: no dependency; the suite needs a known part of RFC
+  5545 and every rule is tested): unfolding (CRLF or LF), quoted parameters, TEXT escapes; **zones**: an IANA TZID (what
+  Apple writes) through Intl, else the object's own VTIMEZONE (STANDARD/DAYLIGHT with yearly BYMONTH/BYDAY rules or fixed
+  onsets), else Windows names (Exchange invitations), else the suite's zone; `Z` = UTC, floating = the suite's zone; a
+  wall time in the spring-forward gap uses the offset before it (2:30 → 3:30 daylight). **Repeats**: RRULE DAILY / WEEKLY
+  / MONTHLY / YEARLY with INTERVAL, COUNT, UNTIL, BYDAY (ordinals 1MO, −1FR), BYMONTHDAY (negative too), BYMONTH,
+  BYSETPOS, WKST — everything Apple Calendar's repeat options write — expanded in the event's own wall clock (a weekly
+  10:00 stays 10:00 across DST), starts before the window counted (COUNT) but not kept; then EXDATE, RDATE, and each
+  **override** (same UID + RECURRENCE-ID) in its original's place — moved, retitled, or `STATUS:CANCELLED` (gone); an
+  override moved into the window from outside shows, but not one whose original EXDATE removed, nor one past
+  UNTIL / COUNT or on a day the rule never makes (review fix; checked with `ruleStarts`). A rule with parts it doesn't read (BYHOUR, BYWEEKNO, BYYEARDAY,
+  HOURLY…) keeps only its first instance and is counted (`unsupported`, shown on the card) — never guessed. Left out:
+  cancelled events, invitations this person **declined** (their ATTENDEE row matched by the Apple ID), and events whose
+  UID ends `@skynet-corp-suite` — **the suite's own task feed (C6a), never read back as meetings** (were it ever
+  subscribed through iCloud).
+- **The records devices see** — `meeting` (`calendar_meetings`; synced, **`readOnly` + a check refusing every device
+  step**, written by the server through `applyLocal` as `system`): actor* (whose calendar), source_key* (a hash of
+  person, calendar, UID and instance — a rename is an update, not a new record), calendar_name, title*, all_day,
+  start_at / end_at (timed: UTC instants), start_date / end_date* (the suite's zone; all-day: first and last day,
+  inclusive), busy (false for "free" and every all-day event), recurring. **One record per instance** in the window
+  (at most `MAX_MEETINGS` = 3,000 per person, soonest first). After each read `project(actor)` creates, updates what
+  differs and deletes what is gone (extras with one key too), in 200-step transactions; the start hook projects again
+  (not while paused), so a restore's rolled-back meetings are put right at once and fully at the next read.
+  **Decision — synced records, not a server read API**: Today, the morning plan and the load work offline on the phone.
+  **What that means for privacy, plainly** (review fix): every signed-in device holds **both people's** meetings (like
+  tasks). Today, the plan, the load and the plain records view (`/sync/data/meeting`, which lists only your own and
+  says how many of your partner's are on the device) show each person only their own — but the other person could
+  read them from the device's offline copy. Titles also stay in the sync log (`sync_steps`, never pruned yet) and in
+  every backup, after a meeting is deleted in Apple Calendar or the connection forgotten. The card says so.
+- **On devices** (`client/src/modules/planner/meetings.js`, the device's local days like tasks): `meetingsOn` (mine,
+  on the day — a meeting past midnight is on both days; all-day by its dates — all-day first, then by start),
+  `busyMinutes` (**busy timed meetings only**, overlaps counted once, clipped to the day; all-day and free ones add
+  nothing, nor — review decision — **timed events of 24 hours or more** (`LONG_EVENT_MS`: a conference or trip
+  entered with times would otherwise fill whole days; listed like all-day ones)), `meetingTimeText` ("9:00 AM – 10:00 AM", "All day", "Until …", "From …"). **Load**: `dayLoad` and
+  `loadsByDay` (C4b) take `meetings` and add their busy minutes (`minutes` = tasks + meetings; `taskMinutes`,
+  `meetingMinutes` and the day's `meetings` beside); **`pushSuggestions` never suggests a meeting** (they are not in
+  `load.tasks`; other days' meetings leave less room in `nextDayWithRoom`; meetings alone over the day → every
+  estimated task suggested); `weekLoads` counts them too (the week strip's "· 1 meeting"). Shown: **Today** (a
+  "Calendar" card of today's meetings in time order, ended ones dimmed, beside the tasks; the load panel says "Includes
+  N of meetings from Apple Calendar — they stay where they are"), **Plan my day** ("Your calendar today" + the load),
+  the Monday plan's days. `usePlannerData` reads `meeting` with the planner's cached lists. Past meetings of today still
+  count in today's load (the day's length is the whole day).
+- **The Connections row** `calendar` (the placeholder's slot): last success / last error per person (named), queue label
+  "Jessy: 2 calendars · Sam: not connected" / "password refused"; its panel links to Account → Calendar.
+- **The task feed (C6a) never sends meetings back**: it reads tasks only (`planner.feedTasks`); tested.
+- **Not built / open**: real iCloud (shared calendars someone else owns, delegated calendars, huge accounts, Apple's
+  rate limits); RRULE parts above; pruning meeting titles out of the sync log; RANGE=THISANDFUTURE overrides (Apple splits a series instead); an Apple ID that is a
+  phone number (email only); a meeting's place or video link; meetings in the overview (D15) or the Friday review; the
+  pull scope (meetings leave devices as the window moves, so they don't pile up).
 
 ## Renewals and recurring costs (costs module, D6)
 Code `server/src/modules/costs/` (`entities.js`, `service.js`, `reminders.js`, migration `001_create_costs.sql`), shared
@@ -2983,6 +3097,12 @@ Server `server/src/modules/playbooks/` (`entities.js`, `service.js` — checks a
   out after 30 days); titles go as written (automated ones include account names and amounts), nothing else of the
   task's; the https link only (no webcal); the token is never logged; the links survive restores (`keepOnRestore`); its own Connections row
   (pausable). Next: C6b (meetings over CalDAV into Today and the day load).
+- **C6b (meetings from Apple Calendar)**: done — see "Meetings from Apple Calendar". CalDAV pull per person with an
+  app-specific password (sealed, checked first, kept across restores), PROPFIND/REPORT only to iCloud hosts; a
+  hand-rolled iCalendar reader (no dependency); meetings are server-written, read-only synced records (one per
+  instance, a week back to two months ahead), so Today, the plan and the load have them offline (both people's on every
+  device; titles stay in the sync log and backups); calendars are chosen before anything is read; busy timed meetings
+  under 24 h count in `dayLoad`/`loadsByDay` and are never pushed; the task feed never echoes them.
 - **D6 (renewals and recurring costs)**: done — see "Renewals and recurring costs". One module `costs` for the synced
   `recurring_cost` and both reminder automations (client services 30 days ahead, our costs 14 days), sharing one engine
   keyed by record + renewal date; reminders are made on their day (or today when late), capped at 20 new a run, silent by
@@ -3063,7 +3183,7 @@ works with `--force`: carrying the switches is best effort (a warning, then the 
 copy must pass `integrity_check`. Tests that depend on local time set
 `process.env.TZ = 'America/Toronto'` at the top (automations.test.js, wholesale-automations.test.js, wholesale-notes.test.js,
 costs.test.js, stockroom.test.js, leads.test.js, sales.test.js, woocommerce.test.js, ebay.test.js, wholesale-sales.test.js,
-sales-entries.test.js, overview.test.js, playbooks.test.js). automations.test.js
+sales-entries.test.js, overview.test.js, playbooks.test.js, meetings.test.js — server and client). automations.test.js
 switches D3's two scheduled wholesale automations, D6's two renewal reminders, D8's cross-sell list, D13's eBay sign-in reminder and D9's playbook-months off in its setup (they're on by default)
 so its ticks stay about C8; costs.test.js switches every other scheduled automation off. The e2e `startServer(t, { extraModules })` adds
 test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager checkout>` (D1) runs the real Order

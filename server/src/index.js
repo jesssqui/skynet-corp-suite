@@ -79,6 +79,14 @@ if (config.ebay.scheduled) {
   log.info('eBay pulls are off (EBAY_PULL_ENABLED); Pull now on its card still works');
 }
 
+// Apple Calendar (C6b): each person's meetings (one look a minute; read when due, every 15 minutes).
+let stopCalendar = () => {};
+if (config.calendar.apple.scheduled) {
+  stopCalendar = ctx.services.calendar.apple.startPuller();
+} else {
+  log.info('Apple Calendar reads are off (CALDAV_PULL_ENABLED); Pull now on Account → Calendar still works');
+}
+
 let shuttingDown = false;
 function shutdown(signal) {
   if (shuttingDown) return;
@@ -90,6 +98,7 @@ function shutdown(signal) {
   stopStockroom();
   stopWoo();
   stopEbay();
+  stopCalendar();
   server.close(() => {
     db.close(); // checkpoints the WAL into the main file
     stopHeartbeat();

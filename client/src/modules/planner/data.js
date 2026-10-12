@@ -7,10 +7,11 @@ import { cachedLists, cachedList, lastActivityOf } from '../crm/data.js';
 import { lastOrderByClient, mergeLastActivity } from '../wholesale/logic.js';
 
 // D8: leads too (Today's "No next step" lists open leads; task rows name their lead).
-const PLANNER_ENTITIES = ['business', 'client', 'account', 'relationship', 'task', 'inbox_item', 'goal', 'workday', 'lead'];
+// C6b: meetings from Apple Calendar (synced, read-only): Today, the morning plan and the day's load.
+const PLANNER_ENTITIES = ['business', 'client', 'account', 'relationship', 'task', 'inbox_item', 'goal', 'workday', 'lead', 'meeting'];
 
 function maps(entries) {
-  const [businesses, clients, accounts, relationships, tasks, inbox, goals, workdays, leads] = entries;
+  const [businesses, clients, accounts, relationships, tasks, inbox, goals, workdays, leads, meetings] = entries;
   return {
     businesses: businesses.records,
     clients: clients.records,
@@ -32,6 +33,8 @@ function maps(entries) {
     // D8: leads and the tasks naming each (its "No next step").
     leads: leads.records,
     leadsById: leads.byId(),
+    // C6b: both people's meetings are on the device (like tasks); screens show each person only their own.
+    meetings: meetings.records,
   };
 }
 
