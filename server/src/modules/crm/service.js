@@ -7,6 +7,7 @@ import { normalizePhone } from '@suite/shared/normalize';
 import { OUR_BUSINESSES, consentStatus } from '@suite/shared/crm';
 import { CRM_ENTITIES, CRM_ENTITY } from './entities.js';
 import { createImportService } from './import.js';
+import { createLeadImportService } from './leadImport.js';
 import { isCurrency } from '@suite/shared/costs';
 
 /**
@@ -443,6 +444,8 @@ export function createCrmService({ db, services, log }) {
     seedBusinesses,
     // C7: the accounting CSV import (preview, commit in chunks, batches). See import.js.
     imports: createImportService({ db, sync, log }),
+    // D8b: leads from a research / outreach export (preview, commit). See leadImport.js.
+    leadImports: createLeadImportService({ db, sync, log }),
     liveLinks,
     // D2 (matching, undoing links): everything matching compares, what hangs off a record, one live record.
     matchingRecords,

@@ -105,7 +105,8 @@ server/src/
                            routes.js (read API + C7's import routes), import.js (C7: the CSV import — preview, commit
                            in chunks through applyLocal, remembered rows, batches), migrations/001_create_crm.sql,
                            002_import.sql (crm_import_batches, crm_import_rows: not synced); D8: the `lead` and
-                           `lead_activity` record types + checkLead, liveLeads/crossSellInputs, migrations/005_leads.sql
+                           `lead_activity` record types + checkLead, liveLeads/crossSellInputs, migrations/005_leads.sql;
+                           D8b: leadImport.js (the leads CSV import), migrations/006_lead_import.sql
   modules/planner/         tasks + inbox (C4a), goals + workdays (C4b): entities.js, service.js (registration,
                            checkTask/checkGoal/checkWorkday, automatedOwnerFor, goals(), seedWorkdays; C8 reads for
                            its automations), migrations/001_create_planner.sql, 002_goals.sql; no routes.
@@ -2254,6 +2255,30 @@ automation and the page use the same function):
 **Not built / open**: quotes (D17, above); a lead's own attachments or emails; merging two leads; taking back a win
 of a lead now lost (by hand); a relationship two wins both restarted stays as it is; per-person pipeline
 targets (D15); the pull scope (closed leads accumulate on devices like done tasks).
+
+## Importing leads (crm module, D8b)
+Shared `shared/leadImport.js` (pure: `leadRowsFromTable`, `cleanLeadRow`, `dayToIso`; tests `shared/test/leadImport.test.js`);
+server `server/src/modules/crm/leadImport.js` + routes + migration `crm/006_lead_import.sql` (`crm_lead_import_batches`,
+`crm_lead_import_rows`: not synced); client `client/src/modules/crm/LeadImportPage.jsx` (`/crm/import-leads`, linked from the
+pipeline and the client list; **needs a connection**). Tests `server/test/lead-import.test.js` (TZ Toronto). A research /
+outreach CSV (the Great White North export: `company_name` is the one required column) becomes leads.
+- **API** (signed in): `POST /api/crm/leads/import/preview { text, fileName? }` → every row flagged
+  (`new | imported | exists | client | duplicate | invalid`) and counts, writes nothing; `POST /leads/import/commit
+  { batchId, text, fileName? }` → 201 `{ batch }` (done synchronously, chunks of 100, each row in a savepoint), or 200 with the
+  existing batch for the same id and file (a retry never imports twice; another file under that id → 409 `batch_mismatch`).
+  ≤ 2,000 rows (413 `too_many_rows`), ≤ 5 MB. Body limit 8 MB on `/leads/import`.
+- **Mapping (decisions)**: every row → Great White North Design, kind `website`, source `outreach`, owner = the importer, stage
+  `lead` — even if already emailed (the email is kept as an `email` timeline entry dated from the file). Rows the export
+  excluded (`outreach_bucket` / `do_not_email` "excluded") come in as **lost / not a fit** with a note and a `stage` entry.
+  Value = `estimated_value` × 100, period `once`. Research, angle, source, offer, priority, "consent not cleared" (CASL) and
+  do-not-email flags go in the lead's notes. A bad phone / email / value is **not stored** and not guessed: it goes in the notes
+  with a warning (a bounced address is kept in the notes, never as the email). A task "Follow up: <name>" is made only when
+  `next_action_on` is a real date.
+- **Skips** (nothing existing is changed): `imported` (source key `id:<lead_id>` else a hash of name|email|city, in
+  `crm_lead_import_rows`), `exists` (a live lead with the same email or name key), `client` (same email/phone on a contact,
+  or a similar client/account name — C7's `buildMatchIndex`/`findMatch`), `duplicate` (earlier in the file), `invalid`.
+- **Known consequence**: open leads with no dated task show as "No next step" (pipeline, Today, overview, Friday review); the
+  real file's ~329 open leads without a follow-up date will all appear there until they get a dated next step.
 
 ## Sales totals (sales module, D12)
 Code `server/src/modules/sales/` (`service.js`, `routes.js`, migration `001_create_sales.sql`), shared facts

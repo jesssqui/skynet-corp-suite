@@ -16,5 +16,6 @@ export default {
     service.imports.markInterrupted(); // an import cut off by a restart
   },
   // The CSV import sends the file's text as JSON (up to 5 MB of text): a larger body limit there.
-  bodyLimits: { '/import': '8mb' },
+  // D8b: the leads import takes the same.
+  bodyLimits: { '/import': '8mb', '/leads/import': '8mb' },
 };

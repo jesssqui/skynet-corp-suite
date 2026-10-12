@@ -17,6 +17,7 @@
     "./intake": "./intake.js",
     "./costs": "./costs.js",
     "./leads": "./leads.js",
+    "./leadImport": "./leadImport.js",
     "./sales": "./sales.js",
     "./ebay": "./ebay.js"
   },
