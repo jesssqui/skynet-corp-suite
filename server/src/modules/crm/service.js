@@ -151,6 +151,26 @@ export function createCrmService({ db, services, log }) {
     return made;
   }
 
+  /**
+   * D8d: leads the CSV import made before "Scraped from the internet" existed were given source `outreach`.
+   * Once (remembered in crm_backfills), through applyLocal: each such lead that still says `outreach` becomes
+   * `scraped`. Only leads recorded in crm_lead_import_rows; a lead whose source a person changed is left alone.
+   */
+  function backfillScrapedSource() {
+    const NAME = 'lead-source-scraped';
+    if (db.prepare('SELECT 1 FROM crm_backfills WHERE name = ?').get(NAME)) return 0;
+    const rows = db.prepare(`SELECT l.id FROM crm_lead_import_rows r JOIN crm_leads l ON l.id = r.lead_id
+      WHERE l.deleted_at IS NULL AND l.source = 'outreach'`).all();
+    let n = 0;
+    for (const { id } of rows) {
+      const r = sync.applyLocal({ entity: 'lead', op: 'update', recordId: id, fields: { source: 'scraped' } });
+      if (r.status === 'applied') n++;
+    }
+    db.prepare('INSERT INTO crm_backfills (name, done_at) VALUES (?, ?)').run(NAME, new Date().toISOString());
+    if (n) log?.info(`marked ${n} imported leads as scraped from the internet`);
+    return n;
+  }
+
   // ---- reads ---------------------------------------------------------------------------
   // A record shows only while it and everything it belongs to (its `parent` chain) is live: deletes
   // don't cascade, so every query joins up its chain. Non-parent refs (contact.account_id,
@@ -482,6 +502,7 @@ export function createCrmService({ db, services, log }) {
   return {
     seedBusinesses,
     seedCampaigns,
+    backfillScrapedSource,
     /** D8c: is this campaign live (and not under a deleted one)? */
     liveCampaign: (id) => {
       const c = campaignRow.get(id);

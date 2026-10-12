@@ -17,7 +17,7 @@ test('a clean row: lead stage, value in cents, email and phone in stored forms, 
   const [c] = clean('company_name,contact_email,business_phone,estimated_value,next_action_on\nAcme Paving,Info@Acme.ca,(519) 555-0100,595,2026-10-21\n');
   assert.equal(c.name, 'Acme Paving');
   assert.equal(c.fields.stage, 'lead');
-  assert.equal(c.fields.source, 'outreach');
+  assert.equal(c.fields.source, 'scraped');
   assert.equal(c.fields.value_cents, 59500);
   assert.equal(c.email, 'info@acme.ca');
   assert.equal(c.phone, '5195550100');

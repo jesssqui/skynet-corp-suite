@@ -9,7 +9,7 @@
 // it needs). Nothing is guessed: what a field can't hold goes into the lead's notes, never dropped.
 //
 // Decisions (see CLAUDE.md, "Importing leads (D8b)"):
-//  - every row is a lead for Great White North Design (`agency`), kind website, source outreach;
+//  - every row is a lead for Great White North Design (`agency`), kind website, source scraped;
 //  - the stage is `lead` — also for rows already emailed: an email with no reply isn't a conversation
 //    ("talking" is set by hand when someone answers); the emailing is kept as an `email` entry on the
 //    lead's timeline, dated from the file;
@@ -139,7 +139,7 @@ export function cleanLeadRow(cells, { fileName = null, rowNumber = null } = {}) 
 
   const fields = {
     name,
-    source: 'outreach',
+    source: 'scraped',
     business_id: BUSINESS_IDS.agency,
     kind: 'website',
     stage: excluded ? 'lost' : LEAD_STAGE,

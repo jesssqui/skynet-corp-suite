@@ -11,6 +11,7 @@ import { parseDollars, centsToInput, textOrNull, fold, KIND_LABELS } from './log
 export const STAGE_LABELS = Object.freeze({ lead: 'Lead', talking: 'Talking', quoted: 'Quoted', won: 'Won', lost: 'Lost' });
 export const SOURCE_LABELS = Object.freeze({
   referral: 'Referral', website: 'Our website', social: 'Social media', inbox: 'Inbox', event: 'Event', outreach: 'We reached out',
+  scraped: 'Scraped from the internet',
   cross_sell: 'Cross-sell (current client)', other: 'Other',
 });
 export const LOST_LABELS = Object.freeze({
