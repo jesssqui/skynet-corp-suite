@@ -72,7 +72,7 @@ async function walkThrough(page, context, server, label) {
   await card('wholesale').getByTestId('card-state').filter({ hasText: 'Order Manager is set up' }).waitFor(WAIT);
   await card('stock').getByTestId('card-state').filter({ hasText: 'Stockroom is set up' }).waitFor(WAIT);
   await card('savePoint').getByTestId('card-state').filter({ hasText: 'eBay isn’t connected' }).waitFor(WAIT);
-  await card('retail').getByTestId('retail-support').filter({ hasText: 'comes with the helpdesk (D14)' }).waitFor(WAIT);
+  await card('retail').getByTestId('retail-support').filter({ hasText: 'no support mailbox yet' }).waitFor(WAIT);
   await card('web').locator('[data-row="rels"]').getByText('1 website').waitFor(WAIT);
   await card('web').locator('[data-row="renewals"]').getByText(/next: Hosting for Lefty’s Vape Shop/).waitFor(WAIT);
   await card('consulting').locator('[data-row="month"]').getByText('$1,500').waitFor(WAIT);
