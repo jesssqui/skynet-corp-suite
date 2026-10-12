@@ -12,7 +12,7 @@ import { modules } from '../src/modules/index.js';
 import {
   runBackup, listBackups, pruneBackups, backupFileName, backupFileTime, readStatus, sha256File, OFFSITE_MARKER,
 } from '../src/backup/backup.js';
-import { restoreBackup, lockPathFor } from '../src/backup/restore.js';
+import { restoreBackup, lockPathFor, KEPT_TABLES } from '../src/backup/restore.js';
 import { startHeartbeat } from '../src/lib/serverLock.js';
 import { nextRunAt, needsCatchUp } from '../src/backup/schedule.js';
 import { tmpDir, dumpDb } from './helpers.js';
@@ -195,6 +195,63 @@ test('restore refuses while the server runs, then replaces the database and keep
   assert.ok(result.safetyCopy && fs.existsSync(result.safetyCopy));
   assert.deepEqual(dumpDb(result.safetyCopy), changed);
   assert.ok(!fs.existsSync(`${dbPath}.restoring`));
+});
+
+/** Every module's keepOnRestore tables, in module order. A module that adds one adds it here too. */
+const EXPECTED_KEPT = [
+  'connections_switches', 'connections_changes', 'automations_settings', 'automations_changes',
+  'wholesale_connection', 'wholesale_connection_changes', 'wholesale_held_customers', 'wholesale_held_orders', 'wholesale_held_money',
+  'wholesale_events', 'wholesale_status', 'wholesale_held_notes', 'wholesale_match_decisions',
+  'calendar_feeds', 'calendar_feed_changes', 'calendar_apple', 'calendar_apple_changes',
+  'stockroom_connection', 'stockroom_connection_changes', 'woocommerce_stores', 'woocommerce_changes', 'ebay_connection', 'ebay_changes',
+  'billing_settings', 'billing_counters', 'billing_pdfs', 'helpdesk_mailboxes', 'helpdesk_changes',
+];
+
+/** One row for any table: each NOT NULL column without a default gets a plain value of its type (null when the table refuses it). */
+function insertSomething(db, table) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  const fill = cols.filter((c) => c.pk || (c.notnull && c.dflt_value === null));
+  const value = (c) => {
+    const type = String(c.type).toUpperCase();
+    if (type.includes('INT')) return c.pk ? Math.floor(Math.random() * 1e9) : 1;
+    if (type.includes('REAL')) return 1;
+    if (type.includes('BLOB')) return Buffer.from('kept');
+    return c.pk ? newId() : `kept-${c.name}`;
+  };
+  const values = fill.map(value);
+  try {
+    db.prepare(`INSERT INTO ${table} (${fill.map((c) => c.name).join(', ')}) VALUES (${fill.map(() => '?').join(', ')})`).run(...values);
+    return db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n;
+  } catch {
+    return null;
+  }
+}
+
+test('integration: every module’s keepOnRestore tables survive a worker-made backup and its restore', async (t) => {
+  assert.deepEqual(KEPT_TABLES, EXPECTED_KEPT);
+  const dir = tmpDir(t);
+  const { db, dbPath } = await liveDb(dir);
+  const backupDir = path.join(dir, 'data', 'backups');
+  const { file } = await runBackup({ db, dir: backupDir, offsiteDir: null, keepDays: 30 });
+  // After the backup: a row in every kept table that takes a plain one, and a change the restore must undo.
+  const after = {};
+  for (const table of KEPT_TABLES) {
+    assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table), `${table} exists`);
+    after[table] = insertSomething(db, table);
+  }
+  const written = Object.entries(after).filter(([, n]) => n !== null).map(([table]) => table);
+  assert.ok(written.length >= KEPT_TABLES.length / 2, `rows written in ${written.join(', ')}`);
+  t.diagnostic(`kept tables with a row written after the backup: ${written.length} of ${KEPT_TABLES.length}`);
+  db.exec("INSERT INTO things (id, name) VALUES ('late', 'after backup')");
+  db.close();
+
+  await restoreBackup({ from: file, dbPath, backupDir });
+  const restored = openDb(dbPath);
+  t.after(() => restored.close());
+  assert.equal(restored.prepare("SELECT count(*) AS n FROM things WHERE id = 'late'").get().n, 0, 'data rolled back');
+  for (const table of written) {
+    assert.equal(restored.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, after[table], `${table}: the current rows are kept`);
+  }
 });
 
 test('restore rejects files that are not good suite databases', async (t) => {
