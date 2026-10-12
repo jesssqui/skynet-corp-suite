@@ -17,6 +17,10 @@
 // tailnet like every other signed-in read.
 import { nowIso, localDate } from '@suite/shared/time';
 import { addDays } from '@suite/shared/planner';
+import { checkTargetStep } from '@suite/shared/targets';
+import { TARGET_ENTITY } from './entities.js';
+import { createCards, CARD_IDS, ALL_BUSINESS_MONTHS } from './cards.js';
+import { createScorecard, shiftMonth } from './scorecard.js';
 
 /** At most this many items per section are sent (the count is always the full number). */
 export const MAX_ITEMS = 100;
@@ -29,9 +33,15 @@ export const ATTENTION_SECTIONS = Object.freeze(['overdue', 'balances', 'renewal
  */
 export const URGENT_SECTIONS = Object.freeze(['overdue', 'balances', 'renewals', 'lowStock', 'support', 'payments']);
 
+export { CARD_IDS };
+
 export function createOverviewService(ctx) {
   const { services, log } = ctx;
   const clock = ctx.now ?? Date.now;
+  // D15: the monthly targets, set offline on the monthly plan (only with the CRM: a target belongs to one of our businesses).
+  if (services.sync && services.crm) services.sync.registerEntity({ module: 'overview', ...TARGET_ENTITY, check: checkTargetStep });
+  const scorecard = createScorecard(ctx);
+  const cards = createCards(ctx);
 
   const businessesById = () => {
     const list = services.crm?.listBusinesses?.() ?? [];
@@ -39,8 +49,7 @@ export function createOverviewService(ctx) {
   };
 
   /** Sales per business (only those with any source or entries), in our order, and the combined total. */
-  function salesStrip(byId) {
-    const sum = services.sales?.summary?.();
+  function salesStrip(byId, sum) {
     if (!sum) return null;
     const storesOf = new Map();
     for (const s of sum.stores) {
@@ -170,36 +179,74 @@ export function createOverviewService(ctx) {
     return section('noNextStep', { count: rels.length + leads.length, items: [...rels, ...leads], relationships: rels.length, leads: leads.length });
   }
 
-  function quiet(today) {
+  function quiet(today, reads) {
     if (!services.planner?.quietClients) return section('quiet', { count: null, state: 'not_available' });
-    const rows = services.planner.quietClients(today);
+    const rows = reads.quietClients();
     return section('quiet', { count: rows.length, days: services.planner.quietDays, items: rows.map((c) => ({ id: c.id, name: c.name, since: c.since })) });
+  }
+
+  /**
+   * What one request reads, each at most once (D15: the cards, the scorecard and "To deal with" share them): the sales
+   * summary, the sales months, the recurring costs' totals, the wholesale money lines, the quiet clients.
+   */
+  function requestReads(day) {
+    const memo = new Map();
+    const once = (key, fn) => () => {
+      if (!memo.has(key)) memo.set(key, fn());
+      return memo.get(key);
+    };
+    return {
+      day,
+      summary: once('summary', () => services.sales?.summary?.() ?? null),
+      monthly: (fromMonth, toMonth) => once(`monthly:${fromMonth}:${toMonth}`, () => services.sales?.monthly?.({ fromMonth, toMonth }) ?? null)(),
+      // The months the cards show (this one and the two before), read once.
+      window: () => once('window', () => services.sales?.monthly?.({ fromMonth: shiftMonth(day.slice(0, 7), -(ALL_BUSINESS_MONTHS - 1)), toMonth: day.slice(0, 7) }) ?? null)(),
+      costs: once('costs', () => services.costs?.monthlyTotals?.() ?? null),
+      lines: once('lines', () => services.wholesale.moneyLines(day)),
+      quietClients: once('quiet', () => services.planner.quietClients(day)),
+      womState,
+    };
   }
 
   /** The whole overview for one person (`actor`: whose overdue tasks are "mine") on `today` (the device's day). */
   function overview({ today = null, actor = 'owner' } = {}) {
     const day = today ?? localDate(new Date(clock()));
     const byId = businessesById();
+    const reads = requestReads(day);
     let sales = null;
     try {
-      sales = salesStrip(byId);
+      sales = salesStrip(byId, reads.summary());
     } catch (err) {
       log?.error?.('overview: sales failed:', err);
     }
-    let memo = null;
-    const lines = () => (memo ??= services.wholesale.moneyLines(day));
     const attention = [
       guarded('overdue', () => overdue(day, actor, byId)),
-      guarded('balances', () => balances(lines)),
+      guarded('balances', () => balances(reads.lines)),
       guarded('renewals', () => renewals(day, byId)),
       guarded('lowStock', () => lowStock()),
       support(),
-      guarded('payments', () => payments(lines)),
+      guarded('payments', () => payments(reads.lines)),
       guarded('noNextStep', () => noNextStep(byId)),
-      guarded('quiet', () => quiet(day)),
+      guarded('quiet', () => quiet(day, reads)),
     ];
-    return { at: nowIso(new Date(clock())), today: day, sales, attention, urgent: URGENT_SECTIONS };
+    // D15: a card per business (each read on its own: one failing says so, never breaks the page) and the goals
+    // scorecard of this calendar month.
+    const businessCards = cards.all(reads, byId);
+    let goals;
+    try {
+      goals = scorecard.month(day.slice(0, 7), day, { reads, byId });
+    } catch (err) {
+      log?.error?.('overview: goals failed:', err);
+      goals = { state: 'error', month: day.slice(0, 7), businesses: [] };
+    }
+    return { at: nowIso(new Date(clock())), today: day, sales, attention, urgent: URGENT_SECTIONS, cards: businessCards, goals };
   }
 
-  return { overview };
+  /** D15: the targets of one month (the monthly plan's "so far" figures), measured on `today`. */
+  function targets({ month, today = null }) {
+    const day = today ?? localDate(new Date(clock()));
+    return scorecard.month(month, day, { reads: requestReads(day), byId: businessesById() });
+  }
+
+  return { overview, targets };
 }
