@@ -103,5 +103,18 @@ export function createCrmRouter(_ctx, service) {
     res.json({ batch });
   });
 
+  // ---- D8b: leads from a research / outreach CSV (leadImport.js). Needs a connection; writes via applyLocal. ----
+
+  // POST /api/crm/leads/import/preview { text, fileName? } — every row flagged; nothing written.
+  router.post('/leads/import/preview', (req, res) => {
+    res.json(service.leadImports.preview(req.body));
+  });
+
+  // POST /api/crm/leads/import/commit { batchId, text, fileName? } -> 201 { batch } (made now), or 200 { batch } when that batch id exists.
+  router.post('/leads/import/commit', (req, res) => {
+    const { batch, started } = service.leadImports.commit({ actor: req.auth.user.actor, body: req.body });
+    res.status(started ? 201 : 200).json({ batch });
+  });
+
   return router;
 }

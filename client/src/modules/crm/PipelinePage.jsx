@@ -151,9 +151,14 @@ export default function PipelinePage() {
         title="Pipeline"
         subtitle="Leads from first contact to won or lost · value = the first year"
         actions={(
-          <Button variant="primary" disabled={!data} onClick={() => setSheet({ initial: business ? { business_id: business } : {} })}>
-            <Icon name="plus" size={18} />New lead
-          </Button>
+          <>
+            <Link to="/crm/import-leads" className="crm-link-button" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <Icon name="upload" size={16} />Import leads
+            </Link>
+            <Button variant="primary" disabled={!data} onClick={() => setSheet({ initial: business ? { business_id: business } : {} })}>
+              <Icon name="plus" size={18} />New lead
+            </Button>
+          </>
         )}
       />
       <div style={{ display: 'grid', gap: 'var(--space-4)' }}>

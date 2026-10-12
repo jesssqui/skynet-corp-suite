@@ -12,6 +12,8 @@ const ImportPage = lazy(() => import('./ImportPage.jsx'));
 const PipelinePage = lazy(() => import('./PipelinePage.jsx'));
 const LeadPage = lazy(() => import('./LeadPage.jsx'));
 const CrossSellPage = lazy(() => import('./CrossSellPage.jsx'));
+// D8b: a research / outreach CSV as leads (on the server: needs a connection).
+const LeadImportPage = lazy(() => import('./LeadImportPage.jsx'));
 const loading = <p style={{ color: 'var(--text-muted)' }}>Loading…</p>;
 
 // The CRM's screens (C3b). Its record types are registered on the server (crm module, C3a) and
@@ -26,6 +28,7 @@ const loading = <p style={{ color: 'var(--text-muted)' }}>Loading…</p>;
 //   /crm/pipeline        D8: leads by stage (columns on wide screens, a stage switch on phones)
 //   /crm/leads/:id       D8: one lead — stage moves, Won… (makes the client), Lost…, next step, its timeline
 //   /crm/cross-sell      D8: current clients who could use another of our services; Make a lead
+//   /crm/import-leads    D8b: a research / outreach CSV as leads (on the server: needs a connection)
 // Pipeline and Cross-sell are tabs of the Clients entry (CrmTabs), not their own nav entries: the phone's
 // tab bar already has eight, and a lead becomes a client there.
 export default {
@@ -40,5 +43,6 @@ export default {
     { path: '/crm/pipeline', element: <Suspense fallback={loading}><PipelinePage /></Suspense> },
     { path: '/crm/leads/:id', element: <Suspense fallback={loading}><LeadPage /></Suspense> },
     { path: '/crm/cross-sell', element: <Suspense fallback={loading}><CrossSellPage /></Suspense> },
+    { path: '/crm/import-leads', element: <Suspense fallback={loading}><LeadImportPage /></Suspense> },
   ],
 };
