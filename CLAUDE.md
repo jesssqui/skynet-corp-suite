@@ -43,7 +43,10 @@ tasks with no buyer details; and in `sales`, a month's total entered by hand tha
 connected), and from **D11** sales entries and the overview (module `wholesale`: the Order Manager's sales per day in
 the shared totals, matching its own P&L; module `sales`: sales entered by hand — invoices, anything not connected,
 refunds and credit notes as negatives; module `overview`: the home screen of the business — sales per business for
-today, this week and this month with the combined total, and one list of what needs dealing with — "To deal with").
+today, this week and this month with the combined total, and one list of what needs dealing with — "To deal with"),
+and from **D15** the overview's cards and goals (same module: a card per business — wholesale, stock, web and social,
+consulting, Save Point Shop, clients, all businesses, retail stores — and the goals scorecard: monthly targets per
+business, a synced record set offline on the monthly plan, against what the month brought, with the pace).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -150,8 +153,10 @@ server/src/
                            (/api/sales: summary, totals; GET only), migrations/001_create_sales.sql (sales_daily, sales_stores)
                            D11: storeDays; sales entered by hand (addEntry/updateEntry/deleteEntry/listEntries, rebuildHand
                            into sales_daily source 'manual'), /api/sales/entries, migrations/004_entries.sql
-  modules/overview/        D11: no tables — service.js (overview(): sales strip + the attention sections, read through
-                           every other module's service), routes.js (GET /api/overview?today=)
+  modules/overview/        D11: service.js (overview(): sales strip + the attention sections, read through
+                           every other module's service), routes.js (GET /api/overview?today=); D15: cards.js (the
+                           business cards), scorecard.js (targets against actuals + priorities; GET /targets?month=),
+                           entities.js (the synced `target`), migrations/001_create_targets.sql (overview_targets)
   modules/woocommerce/     D12: client.js (the GET-only client: PATHS allowlist, Basic auth, no redirects; cleanStoreUrl,
                            storeKey, parseKeys, WooError), service.js (stores: add/verify/replaceKey/update/remove; pulls:
                            window + backfill + backoff + startPuller; lookups + orderView; the 'woocommerce' and 'woo-<id>'
@@ -215,7 +220,10 @@ client/src/
   modules/stockroom/       D16: no page — ConnectionPanel.jsx (the Stockroom card's settings: paste the code, each read,
                            Pull now, Forget; lazy, via connections/panels.js), logic.js (no React; client/test/stockroom.test.js)
   modules/overview/        D11: OverviewPage (/overview: the sales strip, To deal with; lazy; sidebar only — `nav.phone: false` —,
-                           Today links to it on phones), logic.js (no React: item lines, states, paging; client/test/overview.test.js)
+                           Today links to it on phones), logic.js (no React: item lines, states, paging; client/test/overview.test.js);
+                           D15: Cards.jsx (BusinessCards, GoalsScorecard), cards.js (no React: card rows, the money table,
+                           target lines), MonthTargets.jsx + targetForm.js (the monthly plan's targets, offline;
+                           client/test/overview-cards.test.js)
   modules/sales/           D12: SalesPage (/costs/sales: per store, per business, all together; today/week/month),
                            StorePage (/costs/sales/woo/:id: its totals + the order lookup, kept in page memory only),
                            logic.js (no React; client/test/sales.test.js), sales.css; MoneyTabs.jsx lives in costs/;
@@ -2091,7 +2099,8 @@ with `confirmed_at` and `expected_on`, the spot check's time and suggestions, op
 used when present and not needed (a Stockroom without them works as before). Tested with and without them (fake hub)
 and against a `git archive` of the hub's B10 branch and of master.
 
-**Not built / open**: Stockroom's `/summary` (the stock card on the overview is **D15**); the decisions waiting in
+**Not built / open**: Stockroom's `/summary` (D15's stock card reads the four answers already pulled instead — see
+"Overview cards and goals (D15)"); the decisions waiting in
 Stockroom's `/orders` (B8) as tasks; per-supplier or per-product overrides; editing anything in Stockroom from the suite
 (never: it stays in Stockroom). Pruning `stockroom_reorder_episodes` (one small row per supplier need).
 
@@ -2719,6 +2728,76 @@ Server `server/src/modules/overview/` (no tables), client `client/src/modules/ov
   Save Point Shop, clients, all businesses, retail, goals) go below "To deal with", reading `sales.monthly()`,
   `costs.monthlyTotals()` and the services above.
 
+## Overview cards and goals (overview module, D15)
+Server `server/src/modules/overview/cards.js`, `scorecard.js`, `entities.js`, migration `001_create_targets.sql`; small
+reads added elsewhere: `crm.liveServices()`, `stockroom.stockCard()`, `wholesale.readyToShip()` and `moneyLines(today).totals`
+(owed, payments this month, quiet regulars — same pass); shared `shared/targets.js` (`@suite/shared/targets`); client
+`client/src/modules/overview/Cards.jsx`, `cards.js`, `MonthTargets.jsx`, `targetForm.js` (+ 7 lines in the planner's
+`MonthPlanPage.jsx`). Tests `shared/test/targets.test.js`, `server/test/overview-cards.test.js` (TZ Toronto),
+`client/test/overview-cards.test.js` (two devices), `test/e2e/overview-cards.e2e.test.js` (iPhone 390/320 and Mac). The
+plan's "done when": every card shows its data or a clear "not connected", and each target shows actual against target.
+- **Still one read**: `GET /api/overview` now also returns `cards` (in `CARD_IDS` order) and `goals` (this calendar
+  month's scorecard). Each request reads the sales summary, the sales months (this month and the two before, once —
+  `reads.window()`), D6's `costs.monthlyTotals()`, the wholesale money lines and the quiet clients **once**, shared by
+  the cards, the scorecard and "To deal with" (`requestReads`). Each card is built on its own (`{ id, state: 'error' }`
+  when it throws). Every other module is read through its service and **guarded** (absent → `not_available`), so D14's
+  helpdesk or any later service plugs in without breaking anything. Measured: ~100 ms with 3,000 clients (server test).
+- **Placement**: below the sales strip and "To deal with": the goals scorecard first (what the month is judged by), then
+  the cards in the plan's order in a grid (two or three across on a Mac, the all-businesses card full width; one column
+  on a phone, no sideways scroll at 320 px).
+- **The cards (decision: content from data that exists)** — rows are data, the device words them (`cards.js`):
+  - **Wholesale**: sales this month and last month (`sales.monthly`, the Order Manager's P&L days), owed (Σ positive
+    balances, the Balances page's rule) and owed over 30 days (D3/D11's aging), **payments received this month (shown
+    only — "recorded in the Order Manager"; the suite never records one)**, quiet regulars (linked, D3's rhythm, active
+    clients only — as the flag), orders packed and not shipped (every customer's, `json_extract` on the held snapshot),
+    recurring costs a month. `not_connected` / `paused` as D11's sections.
+  - **Stock**: from the four Stockroom answers D16 already pulls (counts, differences, order-soon, deliveries): last full
+    count (+ due/overdue, % matched in 30 days), last spot check, open differences and their value, products to reorder
+    and from how many suppliers (+ out of stock), deliveries expected (tins, next day, late). **Decision: no call to
+    `/v1/suite/summary`** — it runs Stockroom's forecast (as costly as order-soon, which D16 reads once a day on
+    purpose), and every field the card needs is in the reads already pulled. States `not_connected | revoked | not_read
+    | paused | ok`.
+  - **Web and social** (GWND, kinds website + social) and **Business consulting**: active relationships (active, client
+    active; by kind), active services and what plans/retainers bring a month (yearly ÷ 12, hourly counted apart; no
+    currency on services: CAD), renewals in 30 days (+ the next one), the open pipeline (count per stage, first-year
+    value per currency, won this month), sales this month, recurring costs. Consulting stays thin (D7 skipped: says
+    its sales are the ones entered by hand).
+  - **Save Point Shop**: today / this week / this month from the summary (the month entered by hand when it fills the
+    card, marked), eBay orders waiting to ship (`ebay.store.waiting()`: count, next ship-by, past it), costs; eBay's state.
+  - **Clients**: active, new this month (made this calendar month, active), gone quiet (the Friday review's rule — the
+    same list as "To deal with"), open leads.
+  - **All businesses**: each business's Total sales for the last three calendar months beside its recurring costs a
+    month **as they are now** (D6 keeps no history), and "less costs" per month and currency (never across currencies);
+    **Personal** (the home) on its own line, left out of the together line (home costs aren't the businesses').
+  - **Retail stores**: each WooCommerce store (and retail sales by hand) with this month / today and its state; **open
+    tickets per store: "Not connected yet · comes with the helpdesk (D14)"** until a service `helpdesk` has
+    `openTicketsByStore()` → `{ <sales store key or name>: count }` (the seam; tested with a stand-in module; tickets not
+    matched to a store are counted apart).
+- **Monthly targets** — synced record `target` (`overview_targets`; create/update/delete; registered only with the CRM):
+  business_id*⇧ (one of ours), month* (the 1st, "YYYY-MM-01" — **calendar months**, as sales), measure*
+  (`sales` Total sales · `net_sales` before tax and shipping · `orders` · `new_clients` relationships with the business
+  started that month (start_date, else made that day) · `won_leads`), amount* (cents for money measures, else a count;
+  > 0), currency (money only; null = CAD), notes. `checkTargetStep` (shared): month a 1st, amount > 0, currency shape,
+  and an update may not touch business/month/measure (a different one is a new target). Two devices setting the same
+  target offline make two records (nothing refused): readers use the one changed last (`pickTargets`) and the plan
+  offers "Remove the extra".
+- **Actuals** (`scorecard.js`): sales/net/orders from `sales.monthly()` per business and currency — **totalOnly-aware**:
+  `net_sales` is "can't tell" (`reason: total_only`) when a hand entry or hand-entered month is in it (only totals are
+  known); `orders` is `partial` then; `sales` is always known. **Pace** (`targetPace`): a straight line from 0 on the 1st
+  to the target on the last day — expected by the end of today, projected at the same rate, status reached / ahead /
+  on pace (±5 %) / behind; a past month reached or missed; a future one not started.
+- **Relation to C4b's priorities (decision, no duplication)**: a priority is a piece of work ticked by hand (its own
+  `target`/`progress` are typed); a target is a number the suite measures. Both are set per business on the monthly
+  plan (targets above the priorities in each business's card) and the scorecard shows them together ("1 of 2 priorities
+  done" + their progress). Neither copies the other; `goal_id` isn't linked to targets.
+- **The monthly plan** (`/plan/month`): "+ Target" per business → the sheet (what to measure with what it counts, amount
+  in dollars or a count, currency, notes; edits send only what changed; Delete behind a confirm); works offline;
+  "so far" comes from `GET /api/overview/targets?month=YYYY-MM&today=` (server data: "needs a connection" offline) and is
+  asked again as soon as nothing is waiting to be sent.
+- **Not built / open**: costs per past month (no history in D6); targets per person; a target linked to a priority;
+  Stockroom's stock value and orders needing a decision (in `/summary`, not read — see above); the helpdesk's real
+  service (D14).
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
@@ -2831,6 +2910,10 @@ Server `server/src/modules/overview/` (no tables), client `client/src/modules/ov
   count as one line; the headline counts only urgent sections); payments with no matching order = the Order Manager's
   unmatched e-Transfers (`payments.unmatched`) and lasting credit balances. D7 (consulting invoices) skipped; support
   emails wait for D14. Next: D15's cards.
+- **D15 (overview cards and goals)**: done — see "Overview cards and goals". Cards and the scorecard come in the same
+  one read, each guarded; the stock card uses Stockroom's answers already pulled (no `/summary` call); targets are a
+  synced record of the overview module set offline on the monthly plan, measured on calendar months from
+  `sales.monthly()` (totalOnly-aware) and the CRM, with a straight-line pace; priorities stay C4b's and sit beside them.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -2846,7 +2929,7 @@ works with `--force`: carrying the switches is best effort (a warning, then the 
 copy must pass `integrity_check`. Tests that depend on local time set
 `process.env.TZ = 'America/Toronto'` at the top (automations.test.js, wholesale-automations.test.js, wholesale-notes.test.js,
 costs.test.js, stockroom.test.js, leads.test.js, sales.test.js, woocommerce.test.js, ebay.test.js, wholesale-sales.test.js,
-sales-entries.test.js, overview.test.js). automations.test.js
+sales-entries.test.js, overview.test.js, overview-cards.test.js). automations.test.js
 switches D3's two scheduled wholesale automations, D6's two renewal reminders, D8's cross-sell list and D13's eBay sign-in reminder off in its setup (they're on by default)
 so its ticks stay about C8; costs.test.js switches every other scheduled automation off. The e2e `startServer(t, { extraModules })` adds
 test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager checkout>` (D1) runs the real Order
