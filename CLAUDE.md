@@ -2764,20 +2764,36 @@ engine's tests — it reads mail but makes no tasks and registers no synced type
   UIDNEXT says nothing is new); a new UIDVALIDITY or folder name reads again from 14 days (a Message-ID already held is
   never held twice). At most 100 messages a folder a round (`MAX_PER_ROUND`), fetched 20 at a time, the first 256 KB of
   each (`BODY.PEEK[]<0.262144>`); the Sent folder (headers only) is read **only when the inbox is caught up**, so a reply
-  is never read before the email it answers (an unmatched sent email is dropped for good). Failures back off 2 … 60
-  minutes (an auth refusal says "replace the app password"); paused = no calls at all; switched on → read at once. After
-  a round with a good read: retention, then `automations.emit('helpdesk.pulled')`.
+  is normally never read before the email it answers; a sent email that answers no ticket yet is **held** (thread
+  headers and recipients only, `helpdesk_sent_waiting`) and tried again on the next `SENT_HOLD_ROUNDS` (2) reads, then
+  dropped. Failures back off 2 … 60 minutes (an auth refusal says "replace the app password"); paused = no calls at all;
+  switched on → read at once. After a round with a good read: `automations.emit('helpdesk.pulled')`. **Limits (review
+  fix)**: a whole read gives up after `HELPDESK_PULL_DEADLINE_MS` (5 min: an AbortController closes the connection,
+  connecting included); each command has its own deadline (3 × the timeout) and each wait the timeout; a literal larger
+  than asked for (+ 64 KB) or a line over 1 MB closes the connection, as do more than 20,000 answers or 48 MB to one
+  command; the reader (`ResponseReader`) is linear in the bytes received. Emails are parsed **before** the write
+  transaction; each is filed in its own savepoint.
 - **Tickets** (`helpdesk_tickets`, `helpdesk_messages`; server data, **not synced**, not kept across restores — rolled
   back and read again): a customer email (Reply-To when it isn't our own address — contact forms —, else From) joins the
   ticket of any message its In-Reply-To/References name, else the same customer + `subjectKey` (Re:/Fwd:/AW:… stripped)
-  within 30 days, else opens a new ticket (`number` = max + 1). One of our sent emails is kept (**without its body**)
-  only when it replies to a ticket (thread headers, else To + subject — a mailto reply); anything else in Sent is
-  ignored. **Never a ticket, never kept**: Auto-Submitted ≠ no, Precedence bulk/junk/list, List-Id/List-Unsubscribe,
-  mailer-daemon/postmaster/no-reply senders, the mailbox's own address, "never a ticket from" (counted as `skipped`).
+  within 30 days, else opens a new ticket (`number` from its own counter `helpdesk_meta.ticket_number`: never reused).
+  No Message-ID → an id hashed from its own headers (`fallbackMessageId`; never from where it was read, so a renumbered
+  folder doesn't hold it twice). One of our sent emails is kept (**without its body**) only when it replies to a ticket
+  (thread headers, else To + subject — a mailto reply). **Never a ticket, never kept** (`isAutomaticFor`): an email
+  whose Reply-To names someone other than the sender and us — **a contact form** (From noreply@ / wordpress@, the
+  customer as Reply-To, often through SendGrid / Mailgun with List-Unsubscribe and Precedence bulk) — is judged by that
+  Reply-To: only Auto-Submitted ≠ no, an auto-reply header or a noreply Reply-To leave it out, and its customer is the
+  Reply-To. Any other email: Auto-Submitted ≠ no, Precedence bulk/junk/list, List-Id/List-Unsubscribe, X-Autoreply,
+  mailer-daemon/postmaster/no-reply senders. Also the mailbox's own address as the customer, and "never a ticket from"
+  (`parseIgnore`/`isIgnored`: an address or @domain matches **From only**; `subject: <words>` matches the subject —
+  WooCommerce's new-order email also comes From the shop with the customer as Reply-To, so block it by subject, never
+  by the shop's address, which would block the contact form too). Counted as `skipped`.
   State (`ticketStatus`, from INTERNALDATEs): `waiting` (a customer email after the later of our last reply and a close;
   `waiting_since` = the first such), `answered`, `closed` (a person's close at or after our last reply); every move back
-  to waiting is a new **episode**. **Flagged** = waiting 24 hours or more (`FLAG_AFTER_MS`), worked out at read time.
-  Close ("no reply needed") / Reopen on the ticket page (`POST /tickets/:id/close|reopen`).
+  to waiting because the customer wrote is a new **episode** (`wait_reason: customer`). **Flagged** = waiting 24 hours or
+  more (`FLAG_AFTER_MS`), worked out at read time. Close ("no reply needed"; closed at now, never before the customer's
+  last email as the mail server timed it) / Reopen on the ticket page (`POST /tickets/:id/close|reopen`): a **reopen is
+  not a new episode** (the customer didn't write) — `reopen_count` +1, `reopened_at/_by`, `wait_reason: reopened`.
 - **Privacy** (customer emails are personal data; the stores sell age-restricted products): kept only to answer them —
   **never for marketing, never copied into the CRM, never synced to devices** (said on every Support page and the
   mailbox form). Kept: sender name and email, subject, dates, the body as **plain text** (HTML turned into text on the
@@ -2785,33 +2801,55 @@ engine's tests — it reads mail but makes no tasks and registers no synced type
   attachment **names only** (never the files), thread ids. Pages show text as text (React): no remote image is ever
   loaded (e2e: no request leaves the suite, no CSP violation). **Retention**: bodies (and attachment names) deleted 90
   days after a ticket is answered or closed (`BODY_KEEP_DAYS`), whole tickets 365 days after (`TICKET_KEEP_DAYS`);
-  waiting tickets are kept; run after each read and at start. Every route answers `no-store`; addresses carry ids only.
+  waiting tickets are kept; run on every puller look (at most hourly, `purgeIfDue` — paused or failing mailboxes too) and
+  at start. **At start** tickets, messages, folders, pulls and held sent emails of a mailbox that isn't there any more are
+  deleted (a restore keeps the current mailboxes but rolls tickets back). Every route answers `no-store`; addresses
+  carry ids only. **Linear by construction (review fix)**: every input is capped first (text parts 64 KB, HTML 256 KB,
+  400 header lines / 64 KB, 8 KB a value, 100 MIME parts) and HTML → text, text clean-up, quoted-reply trimming and
+  header parsing are single passes — tests time 256 KB of "<a", runs of spaces, thousands of "On … wrote:" and header
+  lines (the regex versions took over a minute).
 - **The order on each ticket**: `POST /api/helpdesk/tickets/:id/order` (the page calls it on open) — the order numbers
   the customer's emails mention (`orderNumbers`: "#1042", "order 1042", "Order #TX-500", "commande 2051"; at most 3), else
   the customer's email, looked up through `ctx.services.woocommerce.lookup` (D12) in the mailbox's store: shown with
-  D12's `OrderCard` (first name only), **never stored, never logged**; the route answers every error itself like D12's.
-  No store linked → 409 `no_store`.
+  D12's `OrderCard` (`sales/OrderCard.jsx`; first name only), **never stored, never logged**; the route answers every
+  error itself like D12's. No store linked → 409 `no_store`. **An order found by a number in the email may be anyone's**
+  (review fix): `woocommerce.lookup(id, { number, matchEmail })` compares the order's billing email with the ticket's
+  customer in the store module and returns only `senderMatches: true|false`; the page says "This order isn't under the
+  sender's email" when false. Orders found by the customer's email are theirs.
 - **Tasks** — automation `helpdesk-tickets` (events `helpdesk.pulled` / `helpdesk.changed` — closes, reopens, removals,
-  and once at start; **on, silent**): one task per waiting ticket per episode, key `ticket:<id>:<episode>`, on the
+  and once at start; **on, silent**): one task per waiting ticket per wait, key `ticket:<id>:<episode>` (+ `.r<n>` after
+  the n-th reopen on the page), on the
   **shared list** (`owner: 'shared'`), the mailbox's business (retail), due the (server-local) day it started waiting,
-  title **"Answer support email #12 (TinsXpress)"** (": the customer wrote again" from the second episode) and notes
+  title **"Answer support email #12 (TinsXpress)"** (": the customer wrote again" for a new episode, ": reopened" for a
+  reopen) and notes
   with the path `/helpdesk/tickets/<id>` — **no customer data** (decision: tasks sync to devices and their titles go into
   the calendar feed). The task row shows **Open the ticket** (`ticketPathIn`), so a phone reaches the ticket from Today.
   Who finished it decides: answered / closed on the page / mailbox removed → the suite finishes it saying why; a
-  **person** ticking it off (or deleting it) while the ticket waits **closes the ticket** (`task_done` / `task_deleted`),
-  never a second task; the customer writing again → a new episode, a new task. At most 25 new a run. `accept` leaves
-  no run rows when nothing changes.
+  **person** ticking it off (or deleting it) while the ticket waits **closes the ticket** (`closeFromTask`:
+  `task_done` / `task_deleted`, `closed_by` = who changed the task last — planner's `taskState` now gives `updatedBy`
+  and `deletedAt` —, **closed_at = the task's done time**, or for a deleted one its delete time — review fix: never the
+  run's time, so an email that came after the tick is a new wait with a new task, not swallowed) and adds one line to the
+  task ("… Reopen this task to reopen the ticket"); a person **reopening that task** (a mistaken tick) → the ticket waits
+  again, same episode, same task (`uncloseFromTask`). The customer writing again → a new episode, a new task. At most
+  25 new a run (planned again after the closes). `accept` leaves no run rows when nothing changes.
 - **The overview** (D11): `support` = flagged tickets (`helpdesk.supportSection()`: count, items `{ number, mailbox,
-  hours }`, `waiting`, `failing`), linking to the ticket; urgent (in the headline).
+  hours }`, `waiting`, `failing`), linking to the ticket; urgent (in the headline). **For D15**:
+  `helpdesk.openTicketsByStore()` → `{ <sales store key>: count }` — open = waiting + answered (not closed), keyed like
+  `sales_daily.store` through the woocommerce service's `storeKey` for the mailbox's `store_id`; mailboxes with no store
+  (or one no longer connected) are left out. Read-only; call it guarded.
+- **Microsoft accounts** (Microsoft 365, Outlook.com, Hotmail: host or username) are refused at once with 400
+  `microsoft` ("can't be read yet: Microsoft only allows OAuth sign-in for IMAP") — nothing is tried.
 - **Saved answers** (`saved_answer`, `helpdesk_saved_answers`, synced, offline): title, body (≤ 5000), `mailbox_id` (id,
   no ref — mailboxes aren't synced; null = every mailbox), position. On a ticket: **Copy** (`{name}` → the customer's
   first name) and **Write it in Mail** (`mailto:` with "Re: <subject>" and the body — matched later by subject and
-  address; replying to the email itself keeps the thread). Edits send only what changed.
+  address; replying to the email itself keeps the thread; it opens the device's **default** mail account, which the
+  page says to check). Edits send only what changed.
 - **Placement**: a sidebar entry **Support** (`phone: false`, order 27); phones reach tickets from their task on Today
-  and the overview. Tabs Tickets · Saved answers.
+  and the overview (the row link reads `ticketPathIn`, in `planner/links.js`, so the planner doesn't import the
+  helpdesk). Tabs Tickets · Saved answers.
 - **Not exercised here**: a real mailbox (Gmail, iCloud, a cPanel/Dovecot host) — only the fake server; real TLS
   certificates (only the test certificate); real mail apps' Sent folders and threading headers; Microsoft 365 /
-  Outlook.com, which refuse password logins over IMAP for most accounts (OAuth isn't built). **Open**: OAuth (XOAUTH2)
+  Outlook.com (refused up front: OAuth isn't built). **Open**: OAuth (XOAUTH2)
   for providers that require it; a search over tickets; IDLE; merging two tickets by hand.
 
 ## Decisions for later packages

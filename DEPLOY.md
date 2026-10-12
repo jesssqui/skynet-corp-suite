@@ -608,15 +608,23 @@ Do this once per mailbox:
      `Sent Messages`.
    - Your web host's mail (cPanel / Dovecot): usually `mail.<your domain>`, the mailbox's own password or an app
      password if the host offers one; Sent folder `Sent` or `INBOX.Sent`.
-   - Microsoft 365 / Outlook.com mostly refuse password logins over IMAP now: the suite can't read those yet.
+   - **Microsoft 365 / Outlook.com / Hotmail can't be read**: Microsoft only allows OAuth sign-in for IMAP, which the suite
+     doesn't do. The suite refuses such a mailbox at once and says so. Forward that mail to a mailbox the suite can read
+     (a Gmail or your host's), or wait for OAuth support.
 2. Make sure the mail app you answer from **saves sent mail in that mailbox's Sent folder** (it does when the account is
-   IMAP; with Gmail it always does).
+   IMAP; with Gmail it always does). **Gmail**: the suite reads the INBOX every 5 minutes — an email archived (or moved
+   out by a filter that "skips the inbox") before then is never seen. Archive after the ticket shows up, or let filters
+   label without skipping the inbox.
 3. **System → Connections → Support mailboxes → Add a mailbox…**: name ("TinsXpress support"), server, username (the
    address), app password, inbox folder (`INBOX`), Sent folder, its WooCommerce store (for the order on each ticket — add
    the store first, step 11) and our business (Retail stores). The suite logs in and opens both folders before saving;
    if the Sent folder is wrong it lists the mailbox's folders and names the one marked Sent.
-4. On the mailbox's card → **Settings…**: under *Never a ticket from*, add the store's own notification senders (e.g.
-   `wordpress@tinsxpress.com`, `orders@tinsxpress.com`) so order notifications don't become tickets.
+4. On the mailbox's card → **Settings…** → *Never a ticket from*: keep the store's own notifications out **by subject**,
+   e.g. `subject: New order, subject: Low stock` — **don't** add `wordpress@<your shop>` (or the shop's noreply address):
+   the store's contact form is sent From that same address with the customer as Reply-To, and blocking it would lose
+   every contact-form email. (WooCommerce's new-order email also has the customer as Reply-To — that's why it is told
+   apart by its subject.) Addresses and `@domains` here match who an email is From; use them for senders that are never
+   customers (a supplier's notification address, say).
 5. Check: send a test email to the mailbox from another address → within 5 minutes it shows on **Support** (sidebar) and
    as "Answer support email #1 (…)" on Today's shared list; reply to it from your mail app → within 5 minutes the ticket
    says *Answered* and the task is done.
