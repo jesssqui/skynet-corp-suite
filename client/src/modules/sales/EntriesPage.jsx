@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { newId } from '@suite/shared/ids';
 import { byHandAllowed, BY_HAND_WARNING } from '@suite/shared/sales';
+import { invoicedHereNote } from '@suite/shared/billing';
 import { api } from '../../api/client.js';
 import { useServerData } from '../../api/useServerData.js';
 import { PageHeader, Card, Notice, EmptyState, Button, TextField, SelectField, TextAreaField, Segmented, Sheet, Badge } from '../../ui/index.js';
@@ -111,6 +112,7 @@ function EntrySheet({ entry, businesses, initialBusiness, offline, onClose, onSa
           options={[{ value: '', label: 'Pick one…' }, ...options]} error={errorFor('businessId')}
           hint="Not Wholesale or Save Point Shop: their sales come from the Order Manager and eBay (they would count twice)." />
         {BY_HAND_WARNING[form.businessId] ? <div data-testid="entry-warning"><Notice tone="warn">{BY_HAND_WARNING[form.businessId]}.</Notice></div> : null}
+        {invoicedHereNote(form.businessId) ? <div data-testid="entry-invoiced-note"><Notice tone="info">{invoicedHereNote(form.businessId)}.</Notice></div> : null}
         <TextField id="entry-day" label="Day" type="date" value={form.day} onChange={(e) => set('day')(e.target.value)} error={errorFor('day')} />
         <div className="sales-entry-money">
           <TextField id="entry-amount" label="Amount" inputMode="decimal" placeholder="1234.56" value={form.amount}

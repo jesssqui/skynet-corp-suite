@@ -25,6 +25,7 @@ import { LeadForm } from './leadForms.jsx';
 import { WonTwice } from './LeadNotices.jsx';
 import { ClientFilesCard, AccountFilesLink } from '../files/ClientFilesCard.jsx';
 import { ClientProjectsCard } from '../playbooks/ClientProjectsCard.jsx';
+import { ClientBillingCard } from '../billing/cards.jsx';
 import './crm.css';
 
 // One client on one screen (/crm/clients/:id): who they are, their businesses (accounts) with
@@ -616,6 +617,7 @@ function ClientScreen({ clientId }) {
           />
           <ClientFilesCard clientId={client.id} />
           <ClientProjectsCard clientId={client.id} />
+          <ClientBillingCard clientId={client.id} />
         </div>
         <div className="crm-col">
           <ClientTasksCard

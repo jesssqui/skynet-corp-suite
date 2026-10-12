@@ -20,7 +20,8 @@
     "./sales": "./sales.js",
     "./ebay": "./ebay.js",
     "./files": "./files.js",
-    "./playbooks": "./playbooks.js"
+    "./playbooks": "./playbooks.js",
+    "./billing": "./billing.js"
   },
   "scripts": {
     "test": "node --test \"test/*.test.js\""

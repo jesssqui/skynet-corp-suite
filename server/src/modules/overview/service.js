@@ -22,12 +22,12 @@ import { addDays } from '@suite/shared/planner';
 export const MAX_ITEMS = 100;
 /** Renewals and retainers due within this many days (the Friday review's window). */
 export const RENEWAL_DAYS = 30;
-export const ATTENTION_SECTIONS = Object.freeze(['overdue', 'balances', 'renewals', 'lowStock', 'support', 'payments', 'noNextStep', 'quiet']);
+export const ATTENTION_SECTIONS = Object.freeze(['overdue', 'balances', 'invoices', 'renewals', 'lowStock', 'support', 'payments', 'noNextStep', 'quiet']);
 /**
  * Review fix: the sections the page's headline adds up — the urgent ones. "No next step" and "Clients gone quiet" are
  * standing lists (thousands at scale) shown with their own counts but left out of the headline.
  */
-export const URGENT_SECTIONS = Object.freeze(['overdue', 'balances', 'renewals', 'lowStock', 'support', 'payments']);
+export const URGENT_SECTIONS = Object.freeze(['overdue', 'balances', 'invoices', 'renewals', 'lowStock', 'support', 'payments']);
 
 export function createOverviewService(ctx) {
   const { services, log } = ctx;
@@ -107,6 +107,14 @@ export function createOverviewService(ctx) {
       totalCents: rows.reduce((a, r) => a + r.overdueCents, 0),
       items: rows.map((r) => ({ id: r.uid, name: r.name, overdueCents: r.overdueCents, orders: r.orders, oldestDate: r.oldestDate, clientId: r.clientId })),
     });
+  }
+
+  /** D18: the suite's own invoices still owing after their due date (billing.overdueInvoices), oldest due first. */
+  function invoices(today) {
+    const b = services.billing;
+    if (!b?.overdueInvoices) return section('invoices', { count: null, state: 'not_available' });
+    const items = b.overdueInvoices(today);
+    return section('invoices', { count: items.length, items, totalCents: items.reduce((a, i) => a + i.owingCents, 0) });
   }
 
   function renewals(today, byId) {
@@ -191,6 +199,7 @@ export function createOverviewService(ctx) {
     const attention = [
       guarded('overdue', () => overdue(day, actor, byId)),
       guarded('balances', () => balances(lines)),
+      guarded('invoices', () => invoices(day)),
       guarded('renewals', () => renewals(day, byId)),
       guarded('lowStock', () => lowStock()),
       support(),

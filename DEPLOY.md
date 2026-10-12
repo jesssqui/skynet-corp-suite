@@ -656,6 +656,22 @@ restore, open that client's Files tab and download it: the same file.
 app; *Open* (a PDF) opens a new browser tab, which on some iOS versions doesn't share the app's sign-in — sign in there
 once, or use *Download*.
 
+## 15. Quotes, invoices and credit notes (D17/D18)
+Nothing to install. Once, in the suite: **Money → Billing → Business details** — for Great White North Design, Business
+consulting (and Retail stores if they invoice outside WooCommerce): the name as it should print, the address, **the HST
+number** (`123456789 RT0001`), email, phone, website, **how to pay** (printed on invoices: e-Transfer address, cheque
+payee…), the number prefix (GWND, BC… — the first number is …-0001; set it before the first document if the business
+already has numbering of its own, e.g. a prefix that continues it), quotes valid for and invoices due in (days), usual terms.
+Then check once:
+- A quote for a test lead: **Look at the PDF** (a draft copy), **Approve and send** → number …-Q-0001, the lead is
+  *Quoted*, a follow-up task 7 days out on Today. **Declined…** it (the lead is lost; delete the test lead after).
+- The suite sends no email: *Email it…* shares or downloads the PDF and opens a drafted email in your own mail app.
+- An invoice paid by hand shows on **Money → Sales** (*Invoices · <business>*) and in the overview's sales on the day
+  it was paid. If a business's invoices were also entered by hand under *Sales entered by hand* (D11), stop doing that
+  for invoices made here (they would count twice).
+- **After restoring the suite from a backup**: the business details, the number counters and the issued PDFs are kept;
+  Money → Billing lists documents issued after the backup (their PDF kept, their record gone) to enter again.
+
 ## Troubleshooting
 
 Offline:
