@@ -39,6 +39,11 @@ services:
       # C6a: the suite's ts.net address for calendar links (DEPLOY.md step 7); empty = the address used.
       SUITE_URL: ${SUITE_URL:-}
       CALENDAR_TIME_ZONE: ${CALENDAR_TIME_ZONE:-}
+      # D10: file uploads — per file, all files together (they are in the database, so in every backup), days a
+      # deleted file's bytes are kept.
+      FILES_MAX_MB: ${FILES_MAX_MB:-25}
+      FILES_MAX_TOTAL_MB: ${FILES_MAX_TOTAL_MB:-1024}
+      FILES_PURGE_DAYS: ${FILES_PURGE_DAYS:-30}
     volumes:
       # Live database: a Docker named volume (inside Docker's Linux VM), which is
       # where SQLite's WAL locking is reliable. Not a folder on the Mac.

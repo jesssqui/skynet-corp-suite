@@ -311,7 +311,9 @@ export function createAuthService({ db, config, log, services, now = Date.now })
     const problem = originProblem(req);
     if (problem) return next(fail(403, 'bad_origin', problem));
     const hasBody = Number(req.headers['content-length'] ?? 0) > 0 || req.headers['transfer-encoding'] !== undefined;
-    if (!SAFE_METHODS.has(req.method) && hasBody && !req.is('application/json')) {
+    // D10: the one exception is a raw upload path a module declared (`rawUploads`), with that type only.
+    const rawOk = req.rawUpload === true && req.method === 'POST' && req.is('application/octet-stream');
+    if (!SAFE_METHODS.has(req.method) && hasBody && !req.is('application/json') && !rawOk) {
       return next(fail(415, 'json_only', 'Send JSON (Content-Type: application/json)'));
     }
     const token = readCookie(req, COOKIE_NAME);

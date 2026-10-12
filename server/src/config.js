@@ -176,6 +176,14 @@ export function loadConfig(env = process.env) {
       // The pull loop: on by default in production; "Pull now" on the card works either way.
       scheduled: bool(env.EBAY_PULL_ENABLED, production),
     },
+    files: {
+      // D10: uploads (their bytes live in the database, so every nightly backup holds them all — see
+      // DEPLOY.md for the backup size this means). Per file, all files together, and how long a deleted
+      // file's bytes are kept (so a delete undone through a sync clash still has them).
+      maxFileBytes: int(env.FILES_MAX_MB, 25, 'FILES_MAX_MB') * 1024 * 1024,
+      maxTotalBytes: int(env.FILES_MAX_TOTAL_MB, 1024, 'FILES_MAX_TOTAL_MB') * 1024 * 1024,
+      purgeDays: int(env.FILES_PURGE_DAYS, 30, 'FILES_PURGE_DAYS'),
+    },
     automations: {
       // The minute scheduler (C8): on by default in production only, like the backup schedule.
       // "Run now" on the Automations page works either way.
