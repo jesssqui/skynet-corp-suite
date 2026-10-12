@@ -11,7 +11,8 @@
 // A module with no nav entry (connections, automations, wholesale, calendar) is reached from another's page;
 // stockroom (D16) has no page at all: only its card's settings on Connections. sales (D12) has the Sales tab under
 // Money (costs' nav entry); woocommerce (D12) only its cards' settings on Connections; ebay (D13) its card's settings
-// and the page eBay sends the browser back to after a sign-in (/ebay/accepted).
+// and the page eBay sends the browser back to after a sign-in (/ebay/accepted); helpdesk (D14) the Support pages (a
+// sidebar entry only: on a phone a ticket opens from its task or the overview) and its mailboxes' cards on Connections.
 import health from './health/index.jsx';
 import auth from './auth/index.jsx';
 import sync from './sync/index.jsx';
@@ -27,8 +28,9 @@ import sales from './sales/index.jsx';
 import woocommerce from './woocommerce/index.jsx';
 import ebay from './ebay/index.jsx';
 import overview from './overview/index.jsx';
+import helpdesk from './helpdesk/index.jsx';
 
-export const modules = [overview, planner, crm, costs, health, connections, automations, wholesale, auth, calendar, sync, stockroom, sales, woocommerce, ebay];
+export const modules = [overview, planner, crm, costs, health, connections, automations, wholesale, auth, calendar, sync, stockroom, sales, woocommerce, ebay, helpdesk];
 
 export const navItems = modules
   .flatMap((m) => (Array.isArray(m.nav) ? m.nav : m.nav ? [m.nav] : [])

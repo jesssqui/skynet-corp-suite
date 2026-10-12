@@ -63,9 +63,9 @@ test('item lines: overdue tasks, balances, renewals, low stock, payments, no nex
   assert.equal(itemLine('quiet', { id: 'cl2', name: 'New', since: null }, { date }).detail, 'Nothing logged yet');
 });
 
-test('states: not connected (the helpdesk names D14), paused, not read, revoked, an error', () => {
+test('states: not connected, paused, not read, revoked, an error', () => {
   assert.equal(stateNote({ id: 'overdue', state: 'ok' }), null);
-  assert.equal(stateNote({ id: 'support', state: 'not_connected', comesWith: 'the helpdesk (D14)' }), 'Not connected yet · comes with the helpdesk (D14).');
+  assert.equal(stateNote({ id: 'support', state: 'not_connected' }), 'Not connected: add each store’s support mailbox on System → Connections.');
   assert.match(stateNote({ id: 'balances', state: 'not_connected' }), /Order Manager is set up on System → Connections/);
   assert.match(stateNote({ id: 'lowStock', state: 'not_connected' }), /Stockroom is set up/);
   assert.match(stateNote({ id: 'payments', state: 'paused' }), /last figures it sent/);

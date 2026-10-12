@@ -15,7 +15,7 @@ import './sales.css';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
 
-function OrderCard({ o }) {
+export function OrderCard({ o }) {
   const st = orderStatus(o.status);
   return (
     <li data-testid="sales-order" data-number={o.number}>

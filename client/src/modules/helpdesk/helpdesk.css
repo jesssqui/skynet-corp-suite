@@ -1,0 +1,29 @@
+/* The Support pages (D14): the ticket's emails beside its order and saved answers on wide screens; one column on phones. */
+.helpdesk-layout {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 1000px) {
+  .helpdesk-layout { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+}
+/* An email's text: plain text, line breaks kept, long words and links wrapped (never a sideways scroll). */
+.helpdesk-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--text-md);
+  line-height: 1.5;
+}
+.helpdesk-link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 550;
+  text-decoration: none;
+}
