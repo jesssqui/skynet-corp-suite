@@ -185,6 +185,11 @@ server/src/
                            shipView, shipEndedWhy), service.js (keyset, sign-in with state, tokens, pulls + backfill +
                            backoff + startPuller, the 'ebay' Connections row, the sales source), plans.js + automations.js
                            (ebay-orders-to-ship, ebay-sign-in), routes.js (/api/ebay…), migrations/001_create_ebay.sql
+  modules/files/           D10: entities.js (the synced `file`: upload, link or password pointer on a client, account or task),
+                           service.js (bytes in 512 KB pieces in its own tables, usage, purge), routes.js (/api/files:
+                           upload — the one raw body —, download, usage), migrations/001..002 (see "Files")
+  modules/playbooks/       D9: entities.js (playbook, playbook_step, playbook_run, run_step), service.js (checks, reads:
+                           activeRuns…), automations.js (playbook-months), migrations/001; the planner's 004_task_run.sql
   modules/billing/         D17/D18: entities.js (quote, invoice, credit_note + their lines, invoice_payment; SERVER_FIELDS,
                            CONTENT_FIELDS), service.js (checks, business details, approve = number + PDF + record in one
                            transaction, the lead to Quoted, void, the archive), document.js (what a document looks like)
@@ -260,6 +265,10 @@ client/src/
   modules/ebay/            D13: ConnectionPanel.jsx (the eBay card: keyset, Sign in to eBay, the pasted address, zone,
                            Pull now, Forget), AcceptedPage (/ebay/accepted: where eBay sends the browser back), logic.js
                            (client/test/ebay.test.js); the sales module's EbayPage (/costs/sales/ebay: months + entry by hand)
+  modules/files/           D10: FilesPage (/crm/clients/:id/files), ClientFilesCard.jsx, FilesPanel.jsx, TaskFiles.jsx (in
+                           the task sheet), upload.js, data.js, logic.js; index.jsx sets D9's setFileHref (see "Files")
+  modules/playbooks/       D9: PlaybooksPage, PlaybookPage, RunPage, ClientProjectsCard.jsx (client page), forms.jsx,
+                           parts.jsx (StepLinks, RunRow; the setFileHref seam), data.js, logic.js (no React)
   modules/billing/         D17/D18: BillingPage (/costs/billing: Quotes · Invoices · Credit notes, New quote / invoice),
                            DocumentPage (/costs/billing/quotes|invoices|credit-notes/:id), SettingsPage (/costs/billing/
                            settings: business details, online), forms.jsx (the sheets: new, line, details, approve, email,
@@ -3062,8 +3071,10 @@ Server `server/src/modules/playbooks/` (`entities.js`, `service.js` — checks a
   - `checkStepFields` checks the offset/unit pair when either changes alone; `stepDate` clamps to the unit's limit.
   - Run… is off for an archived business; the Run sheet ignores a second tap while saving (a ref).
 - **Linked files**: `links` is text — web addresses, words, and `file:<id>` lines, the **seam for D10** (no D10 code is
-  used): `parseLinks` reads them, a task's notes list them, and `StepLinks` shows a file line as a link once D10 sets
-  `setFileHref((id) => …)` (`client/src/modules/playbooks/parts.jsx`), plain text until then.
+  used): `parseLinks` reads them, a task's notes list them, and `StepLinks` shows a file line as a link: the files
+  module sets `setFileHref` (`client/src/modules/files/index.jsx` → `/api/files/<id>/download`, a plain download link,
+  needs a connection; integration). Only an **upload**'s id downloads (a link or password pointer's id answers 404); the
+  Files tab doesn't show ids yet, so such lines are typed by hand (open: a file picker in the step form).
 - **Done / stopped / delete**: a person marks a run done (offered when every task is), stops a retainer ("Stop
   repeating"), or reopens either; Delete (for a run made by mistake) removes the run and its **open** tasks — done
   tasks, renewal dates and a relationship it added stay (tidy by hand).
@@ -3171,7 +3182,8 @@ D17 and D18 built together; D7 (consulting engagements) is skipped, so "engageme
   arrived or a credit note was issued, kept = min(paid so far, total − credited so far); the day counts the change. So a
   payment counts on its day; a credit note on a paid invoice takes its amount off on its own day (money given back); a
   credit note before payment only lowers what is owed (never counted twice); an overpayment beyond the total isn't a sale;
-  void counts nothing. Each change is split into before-tax and HST in the invoice's proportion. Written again (only days
+  void counts nothing. Each change is split into before-tax and HST in the invoice's proportion; `orders` counts an
+  invoice once, on the day its first money came in (D15's orders target adds it up). Written again (only days
   that differ, zeros for days with nothing left) after every change that reaches the server — a device's push (the sync
   module's additive `onChange` hook: listeners told which record types a push or a settled clash changed) or an issue /
   void — and at start (`sales_daily` isn't kept across restores; the billing records are data and roll back with it). They
@@ -3376,8 +3388,9 @@ plan's "done when": every card shows its data or a clear "not connected", and ea
   - **Web and social** (GWND, kinds website + social) and **Business consulting**: active relationships (active, client
     active; by kind), active services and what plans/retainers bring a month (yearly ÷ 12, hourly counted apart; no
     currency on services: CAD), renewals in 30 days (+ the next one), the open pipeline (count per stage, first-year
-    value per currency, won this month), sales this month, recurring costs. Consulting stays thin (D7 skipped: says
-    its sales are the ones entered by hand — only while no `invoices` sales source is registered: D18).
+    value per currency, won this month), sales this month, recurring costs. Consulting's sales include its invoices (D18's
+    `invoices` source, registered whenever the billing module is — so its old "sales here are the ones entered by hand"
+    note no longer shows; it would only come back without the billing module).
   - **Save Point Shop**: today / this week / this month from the summary (the month entered by hand when it fills the
     card, marked), eBay orders waiting to ship (`ebay.store.waiting()`: count, next ship-by, past it), costs; eBay's state.
   - **Clients**: active, **clients added this month** (made in the suite this calendar month, active — imports included,
@@ -3388,10 +3401,13 @@ plan's "done when": every card shows its data or a clear "not connected", and ea
     only the share of its days completed — elapsed ÷ days), and "less costs" per month and currency (never across currencies);
     **Personal** (the home) on its own line, left out of the together line (home costs aren't the businesses').
   - **Retail stores**: each WooCommerce store (and retail sales by hand) with this month / today and its state; **open
-    tickets per store: "Not connected yet · comes with the helpdesk (D14)"** until the `helpdesk` service has
-    `openTicketsByStore()` → `{ <sales store key>: open tickets (waiting + answered) }`. That call is guarded on its own
-    (a failure → the support line says it couldn't be read; the stores still show); tickets for a key no WooCommerce
-    store has are counted apart. The server test stands it in on `ctx.services.helpdesk` (never a second module).
+    tickets per store** from D14's `helpdesk.openTicketsByStore()` → `{ <WooCommerce store key>: open tickets (waiting +
+    answered) }` (the same key as the store's sales rows; mailboxes with no store are left out). No support mailbox yet
+    (`helpdesk.supportSection().state === 'not_connected'`) → "no support mailbox yet · add each store's on System →
+    Connections → Support mailboxes" (`support.setUp`); no helpdesk module → "Not connected yet · comes with the
+    helpdesk (D14)". The call is guarded on its own (a failure → the support line says it couldn't be read; the stores
+    still show); tickets for a key no retail store has are counted apart. The server test reads the real helpdesk (fake
+    IMAP server + fake WooCommerce).
 - **Monthly targets** — synced record `target` (`overview_targets`; create/update/delete; registered only with the CRM):
   business_id*⇧ (one of ours), month* (the 1st, "YYYY-MM-01" — **calendar months**, as sales), measure*
   (`sales` Total sales · `net_sales` before tax and shipping · `orders` · `new_clients` "New clients (first relationship
@@ -3403,8 +3419,9 @@ plan's "done when": every card shows its data or a clear "not connected", and ea
   readers use the one changed last (`pickTargets`: pulled times; on a device a change still waiting to be sent counts as
   newest; without times, the ids) and the plan offers "Remove the extra…" behind a confirm.
 - **Orders and D18**: `orders` is Σ the `orders` column of `sales_daily` as each source writes it. D18's `invoices`
-  source should write **one order per invoice on its own day** (not one per payment day) for the target to mean invoices
-  issued; whatever it writes is what the target counts.
+  source writes **one order per invoice**, on the day its first money came in (integration fix: it used to count one per
+  payment day, so an invoice paid in two parts was two orders) — the same day its sale starts counting, as a store's
+  order counts with its sale.
 - **Actuals** (`scorecard.js`): sales/net/orders from `sales.monthly()` per business and currency — **totalOnly-aware**:
   `net_sales` is "can't tell" (`reason: total_only`) when a hand entry or hand-entered month is in it (only totals are
   known); `orders` is `partial` then; `sales` is always known. **Pace** (`targetPace`): a straight line from 0 on the 1st
@@ -3420,8 +3437,7 @@ plan's "done when": every card shows its data or a clear "not connected", and ea
   "so far" comes from `GET /api/overview/targets?month=YYYY-MM&today=` (server data: "needs a connection" offline) and is
   asked again as soon as nothing is waiting to be sent.
 - **Not built / open**: costs per past month (no history in D6); targets per person; a target linked to a priority;
-  Stockroom's stock value and orders needing a decision (in `/summary`, not read — see above); the helpdesk's real
-  service (D14).
+  Stockroom's stock value and orders needing a decision (in `/summary`, not read — see above).
 
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
@@ -3550,7 +3566,8 @@ plan's "done when": every card shows its data or a clear "not connected", and ea
   once) and copy their steps (`run_step`), so editing a playbook changes only future runs; a run makes tasks with owners
   and dates, renewal dates on the client's services (D6 reminds) and offers only where D8's rule allows; retainers' later
   months come from the `playbook-months` automation keyed per run and month; links are text with a `file:<id>` seam for
-  D10; tasks carry `run_id`/`run_step_id` (plain ids). Next: D10 sets `setFileHref`; D15 reads `activeRuns()`.
+  D10 (set by the files module since the integration: a download link); tasks carry `run_id`/`run_step_id` (plain ids).
+  Next: D15 reads `activeRuns()`.
 - **D17/D18 (quotes, invoices and credit notes)**: done — see "Quotes, invoices and credit notes". One module `billing`;
   drafts are synced (offline), numbers are given by the server when a person approves a draft (per business and kind,
   gap-free, kept across restores with the issued PDFs), PDFs are hand-rolled (no dependency, deterministic) and stored for
