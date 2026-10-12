@@ -176,6 +176,20 @@ export function loadConfig(env = process.env) {
       // The pull loop: on by default in production; "Pull now" on the card works either way.
       scheduled: bool(env.EBAY_PULL_ENABLED, production),
     },
+    helpdesk: {
+      // D14: the key that encrypts each support mailbox's app password in the database — a file in the data folder,
+      // like D12's (never in the database or the backups). Made on first use.
+      keyFile: path.resolve(env.HELPDESK_KEY_FILE || path.join(dataDir, 'helpdesk-secret.key')),
+      // Each mail server call (connect, login, a fetch) gives up after this long.
+      timeoutMs: int(env.HELPDESK_TIMEOUT_MS, 30_000, 'HELPDESK_TIMEOUT_MS'),
+      // How often each mailbox is read for new mail.
+      everyMinutes: int(env.HELPDESK_PULL_EVERY_MIN, 5, 'HELPDESK_PULL_EVERY_MIN'),
+      // The pull loop: on by default in production; "Pull now" on a mailbox's card works either way.
+      scheduled: bool(env.HELPDESK_PULL_ENABLED, production),
+      // Tests only: a mail server on this machine may be reached over plain TCP on any port. Never in production —
+      // there it is always TLS on port 993.
+      plainLocalhost: !production && bool(env.HELPDESK_TEST_PLAIN_LOCALHOST, false),
+    },
     automations: {
       // The minute scheduler (C8): on by default in production only, like the backup schedule.
       // "Run now" on the Automations page works either way.

@@ -7,7 +7,7 @@
 //              Straight from sales.summary().
 //   attention  one list of what needs dealing with, in the plan's order: overdue tasks (both people and the shared
 //              list), wholesale balances owing over 30 days, renewals and retainers in the next 30 days, low stock,
-//              support emails (not connected yet: D14), payments with no order to go against, relationships and leads
+//              support emails waiting 24 hours or more (D14's helpdesk), payments with no order to go against, relationships and leads
 //              with no next step, clients gone quiet. Each section: { id, count, items (at most MAX_ITEMS), state }.
 //              Items are data (ids, names, days, cents); the device words them (client/src/modules/overview/logic.js).
 //
@@ -134,8 +134,17 @@ export function createOverviewService(ctx) {
     });
   }
 
-  // The helpdesk is D14: nothing reads a support mailbox yet.
-  const support = () => section('support', { count: null, state: 'not_connected', comesWith: 'the helpdesk (D14)' });
+  /**
+   * D14: support emails waiting on us for 24 hours or more (the helpdesk's flag), from its own read of the mailboxes:
+   * not_connected until a mailbox is added; paused when every mailbox is. `waiting` = every ticket waiting, flagged or not.
+   */
+  function support() {
+    const h = services.helpdesk;
+    if (!h?.supportSection) return section('support', { count: null, state: 'not_connected' });
+    const s = h.supportSection(clock());
+    if (s.state === 'not_connected') return section('support', { count: null, state: 'not_connected' });
+    return section('support', { count: s.count, state: s.state, items: s.items, waiting: s.waiting, failing: s.failing });
+  }
 
   /**
    * Payments with no matching order — both kinds (owner's decision): the Order Manager's e-Transfers that matched no
@@ -193,7 +202,7 @@ export function createOverviewService(ctx) {
       guarded('balances', () => balances(lines)),
       guarded('renewals', () => renewals(day, byId)),
       guarded('lowStock', () => lowStock()),
-      support(),
+      guarded('support', () => support()),
       guarded('payments', () => payments(lines)),
       guarded('noNextStep', () => noNextStep(byId)),
       guarded('quiet', () => quiet(day)),
