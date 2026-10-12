@@ -2,7 +2,7 @@
 // offline (the synced `target` record) — each with what the month has brought so far when the suite server can be
 // reached (GET /api/overview/targets: sales live only on the server). The priorities below stay C4b's: the targets are
 // the numbers the month is judged by, the priorities the work meant to get there; the overview's scorecard shows both.
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon, Notice, SelectField, TextAreaField, TextField } from '../../ui/index.js';
 import { store, useRecords, useRecord } from '../../sync/index.js';
 import { useServerData } from '../../api/useServerData.js';
@@ -24,13 +24,21 @@ export function TargetsProvider({ month, children }) {
   const { records } = useRecords('target', { where: (r) => r.month === month }, [month]);
   const today = localDate();
   const { data, offline, reload } = useServerData(`/api/overview/targets?month=${month.slice(0, 7)}&today=${today}`, { everyMs: 60_000 });
-  // A target set or changed here reaches the server with the next sync (about a second and a half later): ask again then.
-  const signature = records.map((r) => `${r.id}:${r.amount}:${r.currency ?? ''}`).sort().join('|');
+  // A target set or changed here reaches the server with the next sync: once nothing is waiting to be sent any more,
+  // ask the server again (so "so far" follows a new or changed target at once, not at the next minute).
+  const signature = records.map((r) => `${r.id}:${r.amount}:${r.currency ?? ''}:${r._sync?.pending ? 'p' : ''}`).sort().join('|');
+  const pending = records.some((r) => r._sync?.pending);
+  const seen = useRef(null);
   useEffect(() => {
-    if (!signature) return undefined;
-    const timer = setTimeout(() => reload?.(), 3000);
+    if (seen.current === null) {
+      seen.current = signature;
+      return undefined;
+    }
+    if (pending || seen.current === signature) return undefined;
+    seen.current = signature;
+    const timer = setTimeout(() => reload?.(), 300);
     return () => clearTimeout(timer);
-  }, [signature]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [signature, pending]); // eslint-disable-line react-hooks/exhaustive-deps
   const value = useMemo(() => {
     const actuals = new Map();
     for (const b of data?.businesses ?? []) for (const t of b.targets) actuals.set(t.id, t);
