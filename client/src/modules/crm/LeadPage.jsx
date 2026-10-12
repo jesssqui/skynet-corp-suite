@@ -22,6 +22,7 @@ import {
 import { LeadForm, LostSheet, WinSheet, LeadActivityForm } from './leadForms.jsx';
 import { WonTwice, StageClash, NeedsLook } from './LeadNotices.jsx';
 import CrmTabs from './CrmTabs.jsx';
+import { LeadQuotesCard } from '../billing/cards.jsx';
 import './crm.css';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
@@ -156,7 +157,7 @@ function LeadScreen({ leadId }) {
               <Button disabled={busy} onClick={() => move(reopenStage(activities))}>Reopen ({STAGE_LABELS[reopenStage(activities)]})</Button>
             ) : null}
           </div>
-          {open ? <p style={{ ...muted, margin: 0 }}>Quoted is set by hand when you send a quote (quotes in the suite come later).</p> : null}
+          {open ? <p style={{ ...muted, margin: 0 }}>Sending a quote (Quotes, below) moves it to Quoted; accepting the quote wins it.</p> : null}
           {error ? <p role="alert" style={{ color: 'var(--danger)', margin: 0 }}>{error}</p> : null}
           {/* Two devices at once (review fix): a lead won twice, a stage moved on both (settled as one), a row
               that doesn't add up. The stage set's clashes are settled together there, not field by field. */}
@@ -195,6 +196,7 @@ function LeadScreen({ leadId }) {
             ) : <p style={{ ...muted, margin: 0 }}>No open tasks for this lead.</p>}
             {doneCount ? <p style={{ ...muted, margin: 'var(--space-2) 0 0' }}>{doneCount} done</p> : null}
           </Card>
+          <LeadQuotesCard lead={lead} />
           <Card>
             <div style={sectionHead}><h2 style={h2}>Details</h2></div>
             <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: 'var(--space-1) var(--space-3)' }}>

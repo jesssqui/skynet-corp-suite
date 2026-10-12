@@ -23,6 +23,7 @@ import { resoldLine } from '../costs/logic.js';
 import { STAGE_LABELS, clientLeads, leadTimelineItems, leadValueText, nextStepOf, isOpenLead } from './leads.js';
 import { LeadForm } from './leadForms.jsx';
 import { WonTwice } from './LeadNotices.jsx';
+import { ClientBillingCard } from '../billing/cards.jsx';
 import './crm.css';
 
 // One client on one screen (/crm/clients/:id): who they are, their businesses (accounts) with
@@ -611,6 +612,7 @@ function ClientScreen({ clientId }) {
             today={today}
             onNew={() => open({ kind: 'lead' })}
           />
+          <ClientBillingCard clientId={client.id} />
         </div>
         <div className="crm-col">
           <ClientTasksCard

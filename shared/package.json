@@ -18,7 +18,8 @@
     "./costs": "./costs.js",
     "./leads": "./leads.js",
     "./sales": "./sales.js",
-    "./ebay": "./ebay.js"
+    "./ebay": "./ebay.js",
+    "./billing": "./billing.js"
   },
   "scripts": {
     "test": "node --test \"test/*.test.js\""
