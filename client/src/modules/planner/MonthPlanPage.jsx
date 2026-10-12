@@ -1,4 +1,5 @@
-// The monthly plan (/plan/month?month=YYYY-MM): one to three priorities per business with progress
+// The monthly plan (/plan/month?month=YYYY-MM): each business's targets for the month (D15: numbers the suite measures,
+// set here offline, "so far" from the server) and one to three priorities per business with progress
 // against their targets (more than three is warned about, never refused), the week goals of that
 // month under each business (a week belongs to the month its Thursday is in), and last month's
 // unfinished priorities offered for carrying over. Built for the Mac, works on a phone.
@@ -18,6 +19,8 @@ import { TaskSheet, newTaskInitial } from './forms.jsx';
 import { GoalSheet, GoalItem, GoalTick, CarryOver, CarriedTwice } from './goals.jsx';
 import { PlanTabs } from './planParts.jsx';
 import { PeriodNav } from './WeekPlanPage.jsx';
+// D15: each business's monthly targets (the overview module's synced `target`), above its priorities.
+import { TargetsProvider, BusinessTargets } from '../overview/MonthTargets.jsx';
 
 export default function MonthPlanPage() {
   const { data, loading } = usePlannerData();
@@ -55,7 +58,7 @@ export default function MonthPlanPage() {
   const rowProps = { data, me, today, onEdit: (g) => setSheet({ kind: 'goal', record: g }), onAddTask: addTask, onOpenTask: (t) => setSheet({ kind: 'task', record: t }) };
 
   return (
-    <>
+    <TargetsProvider month={first}>
       <PageHeader
         title="Monthly plan"
         subtitle={monthLabel(first)}
@@ -97,6 +100,7 @@ export default function MonthPlanPage() {
                         <Icon name="plus" size={14} />Priority
                       </TextButton>
                     </div>
+                    <BusinessTargets business={b} />
                     {over ? (
                       <Notice tone="warn"><span data-testid="priority-overflow">{over} priorities this month: one to three works best. Finish or move one.</span></Notice>
                     ) : null}
@@ -144,6 +148,6 @@ export default function MonthPlanPage() {
         <GoalSheet record={sheet.record} initial={sheet.initial} siblings={view?.priorities ?? []} businesses={data?.businesses ?? []} onClose={close} onDone={close} />
       ) : null}
       {sheet?.kind === 'task' ? <TaskSheet record={sheet.record} initial={sheet.initial} onClose={close} onDone={close} onDeleted={close} /> : null}
-    </>
+    </TargetsProvider>
   );
 }
