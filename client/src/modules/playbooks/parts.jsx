@@ -10,7 +10,7 @@ import { dueLabel } from '../planner/logic.js';
 import { runChecklist, progressText } from './logic.js';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
-const STATUS_TONES = { active: 'accent', done: 'ok', stopped: 'neutral' };
+const STATUS_TONES = { active: 'accent', done: 'ok', stopped: 'neutral', starting: 'warn' };
 
 /**
  * Where a suite file opens (D10's seam): null until the files module says. D10 can set it with
@@ -51,13 +51,13 @@ export function RunStatusBadge({ run }) {
 }
 
 /** One run in a list: its name (→ its page), client, progress and the next open task. */
-export function RunRow({ run, runSteps, tasks, clientName = null, today }) {
+export function RunRow({ run, runSteps, tasks, clientName = null, today, twice = false }) {
   const c = runChecklist(runSteps, tasks);
   return (
     <li data-run-id={run.id} style={{ display: 'grid', gap: 2, padding: 'var(--space-2) 0', borderTop: '1px solid var(--border)' }}>
       <span style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
         <Link to={`/playbooks/runs/${run.id}`} style={{ fontWeight: 600, color: 'var(--text)', overflowWrap: 'anywhere' }}>{run.name}</Link>
-        <Badges record={run}><RunStatusBadge run={run} /></Badges>
+        <Badges record={run}><RunStatusBadge run={run} />{twice ? <Badge tone="warn">Run twice</Badge> : null}</Badges>
       </span>
       <span style={muted} data-testid="run-progress">
         {clientName ? `${clientName} · ` : ''}{progressText(c)}

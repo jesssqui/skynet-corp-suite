@@ -60,7 +60,7 @@ export default function PlaybookPage() {
           </div>
           <span style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
             <Button onClick={() => setSheet({ kind: 'edit' })}>Edit</Button>
-            <Button variant="primary" disabled={!steps.length || playbook.archived} onClick={() => setSheet({ kind: 'run' })}>Run…</Button>
+            <Button variant="primary" disabled={!steps.length || playbook.archived || business?.archived} onClick={() => setSheet({ kind: 'run' })}>Run…</Button>
           </span>
         </header>
         {playbook.description ? <p style={{ ...muted, margin: 'var(--space-2) 0 0', whiteSpace: 'pre-wrap' }}>{playbook.description}</p> : null}

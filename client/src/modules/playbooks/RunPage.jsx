@@ -8,15 +8,77 @@ import { REPEAT_LABELS, repeatOf, runStatus, monthLabel } from '@suite/shared/pl
 import { Card, Button, Badge, EmptyState, Icon, Notice } from '../../ui/index.js';
 import { formatDate, formatDateTime } from '../../ui/format.js';
 import { useAuth } from '../../auth/session.jsx';
-import { store } from '../../sync/index.js';
+import { newId } from '@suite/shared/ids';
+import { store, useSyncEngine, useSyncStatus } from '../../sync/index.js';
 import { BusinessChip, Badges, RecordSync, useAction } from '../crm/parts.jsx';
 import { useToday } from '../planner/parts.jsx';
 import { usePlaybooksData } from './data.js';
-import { runChecklist, progressText } from './logic.js';
+import {
+  runChecklist, progressText, duplicateRuns, extraRunPlan, removeExtraRuns, keptRunFor, keptRunIds, planRun, applyRun, forgetRunIds,
+} from './logic.js';
 import { RunChecklist, RunStatusBadge } from './parts.jsx';
 import { RunEditForm } from './forms.jsx';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
+const storage = () => { try { return window.localStorage; } catch { return null; } };
+
+/**
+ * A run made twice (two devices ran the same playbook for the same account and day, offline): which one is
+ * kept, and "Delete the extra" — its untouched open tasks, the services and relationship it added if
+ * untouched and unused, then the run (removeExtraRuns: syncs first, re-reads after; needs a connection).
+ */
+function RunTwice({ run, data }) {
+  const engine = useSyncEngine();
+  const status = useSyncStatus();
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(null);
+  const [error, setError] = useState(null);
+  const group = duplicateRuns(data.runs).get(run.id);
+  if (!group && !done) return null;
+  if (done) {
+    return (
+      <Notice tone="info">
+        <span data-testid="run-twice-done">
+          {done.removed.length ? `Deleted the extra (${done.removed.map((r) => r.name).join(', ')}).` : 'Nothing was deleted.'}
+          {done.left.length ? ` ${done.left.join(' ')}` : ''}
+        </span>
+      </Notice>
+    );
+  }
+  const offline = status?.phase === 'offline';
+  const d = { runs: data.runs, tasks: data.allTasks, relationships: data.relationships, services: data.services, costs: [] };
+  const plans = group.extras.map((x) => extraRunPlan(x, d));
+  const fix = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setDone(await removeExtraRuns(engine, run.id));
+    } catch (err) {
+      setError(err?.message ?? String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Notice tone="warn">
+      <div style={{ display: 'grid', gap: 'var(--space-2)' }} data-testid="run-twice">
+        <strong>Run twice</strong>
+        <span>
+          This playbook was run twice for the same client and day (on two devices at once).{' '}
+          {group.kept.id === run.id ? 'This one is kept; ' : <>The one kept is <Link to={`/playbooks/runs/${group.kept.id}`}>{group.kept.name}</Link>; </>}
+          the extra: {group.extras.map((x, i) => <span key={x.id}>{i ? ', ' : ''}{x.id === run.id ? 'this one' : <Link to={`/playbooks/runs/${x.id}`}>{x.name}</Link>}</span>)}.
+        </span>
+        <span style={muted}>Delete the extra takes back its open tasks and what it added to the client — only what nobody changed or used since; anything else stays and is listed.</span>
+        {plans.flatMap((p) => p.left).map((text) => <span key={text} style={muted}>{text}</span>)}
+        <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
+          <Button variant="primary" disabled={busy || offline} onClick={fix}>Delete the extra</Button>
+          {offline ? <span style={muted}>Needs a connection.</span> : null}
+        </div>
+        {error ? <span role="alert" style={{ color: 'var(--danger)' }}>{error}</span> : null}
+      </div>
+    </Notice>
+  );
+}
 
 export default function RunPage() {
   const { id } = useParams();
@@ -43,6 +105,18 @@ export default function RunPage() {
   const account = run.account_id ? data.accountsById.get(run.account_id) : null;
   const openTasks = tasks.filter((t) => !t.done_at);
   const setStatus = (s) => action.run(() => store.update('playbook_run', run.id, { status: s }));
+  // An unfinished run started on this device: its kept ids and choices (review fix: "Finish it").
+  const kept = status === 'starting' && run.playbook_id ? keptRunFor(storage(), run.playbook_id, run.id) : null;
+  const finish = () => action.run(async () => {
+    const pb = data.playbooksById.get(run.playbook_id);
+    const steps = data.stepsOf(run.playbook_id);
+    if (!pb) throw new Error('Its playbook was deleted: delete this run instead.');
+    const ids = keptRunIds(storage(), pb.id, kept.choice, steps.map((x) => x.id), newId);
+    const plan = planRun({ playbook: pb, steps, choice: kept.choice, me, ids, data });
+    if (Object.keys(plan.problems).length) throw new Error(Object.values(plan.problems).join(' '));
+    await applyRun(store, plan);
+    forgetRunIds(storage(), pb.id);
+  });
   const remove = () => action.run(async () => {
     for (const t of openTasks) await store.remove('task', t.id);
     await store.remove('playbook_run', run.id);
@@ -70,6 +144,19 @@ export default function RunPage() {
         </header>
       </div>
       <RecordSync record={run} what="run" />
+      <RunTwice run={run} data={data} />
+      {status === 'starting' ? (
+        <Notice tone="warn">
+          <div style={{ display: 'grid', gap: 'var(--space-2)' }} data-testid="run-unfinished">
+            <strong>This run didn’t finish saving.</strong>
+            <span>{kept ? 'Finish it (it carries on where it stopped, making nothing twice) or delete it.' : 'It was started on another device, or this one forgot it: finish it there, or delete it.'}</span>
+            <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+              {kept ? <Button variant="primary" disabled={action.busy} onClick={finish}>Finish it</Button> : null}
+              <Button variant="ghost" style={{ color: 'var(--danger)' }} onClick={() => setConfirmDelete(true)}>Delete the unfinished run…</Button>
+            </div>
+          </div>
+        </Notice>
+      ) : null}
 
       <Card title="Progress">
         <p style={{ margin: 0, fontWeight: 600 }} data-testid="run-progress-line">{progressText(c)}</p>

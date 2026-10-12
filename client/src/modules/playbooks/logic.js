@@ -6,7 +6,7 @@
 import {
   PLAYBOOK_REPEATS, STEP_ACTIONS, OFFSET_UNITS, STEP_OWNERS, MAX_STEPS, PLAYBOOK_NAME_MAX, STEP_TITLE_MAX, STAGE_MAX, RUN_NAME_MAX,
   STEP_COPY_FIELDS, OFFSET_LIMITS, stepDate, stepOwner, offerSkipReason, stepTaskFields, actionOf, repeatOf, monthLabel, byPosition,
-  stagesOf, runStatus, isActiveRun, unitOf, hasOfferCondition,
+  stagesOf, runStatus, isActiveRun, isOpenRun, unitOf, hasOfferCondition,
 } from '@suite/shared/playbooks';
 import { ESTIMATE_MAX_MINUTES } from '@suite/shared/planner';
 import { formatDate } from '../../ui/format.js';
@@ -14,7 +14,7 @@ import { KIND_LABELS, PERIOD_LABELS, parseDollars, centsToInput, textOrNull } fr
 
 export const OFFSET_UNIT_LABELS = Object.freeze({ days: 'days', weeks: 'weeks', months: 'months', years: 'years' });
 export const ACTION_LABELS = Object.freeze({ task: 'A task', renewal: 'Set a renewal date on the client’s service' });
-export { stagesOf, byPosition, runStatus, isActiveRun };
+export { stagesOf, byPosition, runStatus, isActiveRun, isOpenRun };
 
 const ok = (fields) => ({ fields, problems: {} });
 const intOrNull = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
@@ -150,10 +150,19 @@ export function keptRunIds(storage, playbookId, choice, stepIds, newId, memory =
   try { kept = JSON.parse(storage?.getItem(runStoreKey(playbookId)) ?? 'null'); } catch { kept = null; }
   kept ??= memory.get(playbookId) ?? null;
   const fresh = kept?.key === key && kept.ids?.run ? kept : { key, ids: { run: newId(), relationship: newId(), steps: {} } };
+  fresh.choice = { ...choice }; // so an unfinished run can be finished from its page
   for (const sid of stepIds) fresh.ids.steps[sid] ??= { runStep: newId(), task: newId(), service: newId() };
   memory.set(playbookId, fresh);
   try { storage?.setItem(runStoreKey(playbookId), JSON.stringify(fresh)); } catch { /* best effort: memory still has them */ }
   return fresh.ids;
+}
+
+/** The kept ids and choice of an unfinished run on this device (its page offers "Finish it"), or null. */
+export function keptRunFor(storage, playbookId, runId) {
+  try {
+    const kept = JSON.parse(storage?.getItem(runStoreKey(playbookId)) ?? 'null');
+    return kept?.ids?.run === runId && kept.choice ? kept : null;
+  } catch { return null; }
 }
 
 export function forgetRunIds(storage, playbookId, memory = new Map()) {
@@ -162,6 +171,11 @@ export function forgetRunIds(storage, playbookId, memory = new Map()) {
 }
 
 const kindText = (k) => KIND_LABELS[k] ?? k;
+/** The latest change among records (their pulled `updatedAt`), or null — a run's "as of" (the playbook and its steps). */
+export function latestChange(records) {
+  const times = records.map((r) => r?._sync?.updatedAt).filter(Boolean).sort();
+  return times.at(-1) ?? null;
+}
 const sameName = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
 const OPEN_SERVICE = (s) => !['done', 'cancelled'].includes(s.status);
 
@@ -199,6 +213,7 @@ export function planRun({ playbook, steps, choice, me, ids, data }) {
   const businessName = (id) => data.businessesById.get(id)?.name ?? 'that business';
   const start = choice.startDate;
   const writes = [];
+  const made = []; // what the run makes or changes in the client's records (the run's `made`: to take back an extra)
 
   // The relationship the run works on: the account's with our business (and the playbook's kind) —
   // an active one first; a paused or ended one is made active again; none and a kind known → a new one.
@@ -210,9 +225,19 @@ export function planRun({ playbook, steps, choice, me, ids, data }) {
     const found = mine.find((r) => r.status === 'active') ?? mine[0] ?? null;
     if (found) {
       relationship = found;
-      relPreview = { action: found.status === 'active' ? 'use' : 'restart', kind: found.kind, businessId: found.business_id };
-      if (found.status !== 'active') writes.push({ op: 'update', entity: 'relationship', id: found.id, fields: { status: 'active' } });
+      if (found.id === ids.relationship) {
+        // Made by an earlier try of this same run (a retry): still this run's own.
+        relPreview = { action: 'create', kind: found.kind, businessId: found.business_id };
+        made.push(`relationship:${found.id}`);
+      } else {
+        relPreview = { action: found.status === 'active' ? 'use' : 'restart', kind: found.kind, businessId: found.business_id };
+        if (found.status !== 'active') {
+          writes.push({ op: 'update', entity: 'relationship', id: found.id, fields: { status: 'active' } });
+          made.push(`restarted:relationship:${found.id}`);
+        }
+      }
     } else if (playbook.kind) {
+      made.push(`relationship:${ids.relationship}`);
       relationship = { id: ids.relationship, account_id: account.id, business_id: playbook.business_id, kind: playbook.kind, status: 'active', start_date: start };
       relPreview = { action: 'create', kind: playbook.kind, businessId: playbook.business_id };
       writes.push({
@@ -226,8 +251,9 @@ export function planRun({ playbook, steps, choice, me, ids, data }) {
   const runFields = {
     playbook_id: playbook.id, name, business_id: playbook.business_id, repeat: monthly ? 'monthly' : 'once',
     client_id: forClient ? choice.clientId : null, account_id: account?.id ?? null, relationship_id: relationship?.id ?? null,
-    start_date: start, end_date: monthly ? (choice.endDate || null) : null, owner: choice.owner || null, runner: me, status: 'active',
-    playbook_as_of: playbook._sync?.updatedAt ?? null, notes: null,
+    // Created `starting`; the LAST write makes it active (review fix): a save that stopped part-way shows as unfinished.
+    start_date: start, end_date: monthly ? (choice.endDate || null) : null, owner: choice.owner || null, runner: me, status: 'starting',
+    playbook_as_of: latestChange([playbook, ...ordered]), playbook_name: playbook.name, notes: null, made: null,
   };
   const run = { id: ids.run, ...runFields };
   writes.push({ op: 'create', entity: 'playbook_run', id: ids.run, fields: runFields });
@@ -251,10 +277,22 @@ export function planRun({ playbook, steps, choice, me, ids, data }) {
       } else {
         outcome = 'renewal';
         const existing = services.find((s) => sameName(s.name, step.service_name));
-        note = `${existing ? 'Sets' : 'Adds'} ${step.service_name}, renewing on ${formatDate(date)}`;
-        if (existing) {
-          if (existing.renewal_date !== date) after.push({ op: 'update', entity: 'service', id: existing.id, fields: { renewal_date: date } });
+        const ours = existing && existing.id === sid.service; // made by an earlier try of this run
+        const from = existing && !ours ? existing.renewal_date ?? null : null;
+        // A later date already on their service is left alone unless the person chooses to move it (review fix).
+        const keepLater = Boolean(from && from > date && !choice.moveLaterRenewals);
+        note = !existing || ours ? `Adds ${step.service_name}, renewing on ${formatDate(date)}`
+          : keepLater ? `${step.service_name} already renews on ${formatDate(from)} (later): left as it is`
+            : from && from !== date ? `Moves ${step.service_name}’s renewal from ${formatDate(from)} to ${formatDate(date)}`
+              : `Sets ${step.service_name}, renewing on ${formatDate(date)}`;
+        if (ours) made.push(`service:${existing.id}`);
+        else if (existing) {
+          if (!keepLater && existing.renewal_date !== date) {
+            after.push({ op: 'update', entity: 'service', id: existing.id, fields: { renewal_date: date } });
+            made.push(`renewal:${existing.id}:${from ?? 'none'}`);
+          }
         } else {
+          made.push(`service:${sid.service}`);
           const svc = {
             relationship_id: relationship.id, name: step.service_name, status: 'active',
             billing: step.service_amount_cents !== null && step.service_amount_cents !== undefined ? 'flat' : null,
@@ -263,7 +301,10 @@ export function planRun({ playbook, steps, choice, me, ids, data }) {
           services.push({ id: sid.service, ...svc });
           after.push({ op: 'create', entity: 'service', id: sid.service, fields: svc });
         }
-        items.push({ stepId: step.id, title: step.title, stage: step.stage ?? '', kind: 'renewal', date, service: step.service_name, existing: Boolean(existing) });
+        items.push({
+          stepId: step.id, title: step.title, stage: step.stage ?? '', kind: 'renewal', date, service: step.service_name,
+          existing: Boolean(existing && !ours), from: from && from !== date ? from : null, keptLater: keepLater,
+        });
       }
     } else {
       const why = offerSkipReason(step, { account, relationships: relsForOffers, businessName, kindLabel: kindText });
@@ -274,7 +315,7 @@ export function planRun({ playbook, steps, choice, me, ids, data }) {
       } else {
         outcome = 'task';
         const owner = stepOwner(step, { runner: me, business, override: choice.owner || null });
-        const fields = stepTaskFields({ step: { ...copy, id: sid.runStep }, run, owner, cycle, playbookName: playbook.name });
+        const fields = stepTaskFields({ step: { ...copy, id: sid.runStep }, run, owner, cycle, playbookName: playbook.name, businessName });
         after.push({ op: 'create', entity: 'task', id: sid.task, fields });
         items.push({ stepId: step.id, title: fields.title, stage: step.stage ?? '', kind: 'task', date, owner });
       }
@@ -283,7 +324,10 @@ export function planRun({ playbook, steps, choice, me, ids, data }) {
   }
   // Services before tasks: a task names the relationship, which exists by then either way.
   after.sort((a, b) => (a.entity === 'task') - (b.entity === 'task'));
-  return { problems: {}, writes: [...writes, ...runStepWrites, ...after], preview: { relationship: relPreview, items } };
+  runFields.made = made.length ? made.join(' ') : null;
+  // The last write: the run is under way only once everything before it is saved.
+  const finish = { op: 'update', entity: 'playbook_run', id: ids.run, fields: { status: 'active' } };
+  return { problems: {}, writes: [...writes, ...runStepWrites, ...after, finish], preview: { relationship: relPreview, items } };
 }
 
 /**
@@ -371,3 +415,141 @@ export function clientRuns(runs, clientId) {
 }
 
 export { STEP_ACTIONS };
+
+// ---- runs made twice (review fix) --------------------------------------------------------------------
+
+/** Open runs (under way or not finished) of this playbook for this account — "Already under way" on the Run sheet. */
+export function runsUnderWay(runs, playbookId, accountId) {
+  if (!accountId) return [];
+  return runs.filter((r) => r.playbook_id === playbookId && r.account_id === accountId && isOpenRun(r))
+    .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)));
+}
+
+/**
+ * Runs made twice: live runs of the same playbook for the same account and start day (two devices running
+ * it offline at once — on one device the ids kept per choice prevent it). The first made (UUIDv7 order) is
+ * kept; the others are the extras. → Map<run id, { kept, extras }> for every run in such a group.
+ */
+export function duplicateRuns(runs) {
+  const groups = new Map();
+  for (const r of runs) {
+    if (!r.playbook_id || !r.account_id) continue;
+    const k = `${r.playbook_id}|${r.account_id}|${r.start_date}`;
+    groups.set(k, [...(groups.get(k) ?? []), r]);
+  }
+  const out = new Map();
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    const sorted = [...list].sort((a, b) => (a.id < b.id ? -1 : 1));
+    const g = { kept: sorted[0], extras: sorted.slice(1) };
+    for (const r of list) out.set(r.id, g);
+  }
+  return out;
+}
+
+/** "relationship:<id> service:<id> restarted:relationship:<id> renewal:<id>:<old>" → [{ kind, entity, id, old }]. */
+export function runMade(run) {
+  return String(run?.made ?? '').split(/\s+/).filter(Boolean).map((t) => {
+    const p = t.split(':');
+    if (p[0] === 'restarted') return { kind: 'restarted', entity: p[1], id: p[2] };
+    if (p[0] === 'renewal') return { kind: 'renewal', entity: 'service', id: p[1], old: p[2] === 'none' ? null : p[2] };
+    return { kind: 'made', entity: p[0], id: p[1] };
+  });
+}
+
+// Edited since it was made (D8's rule): on the server (pulled times differ), or a change here not sent yet.
+const changedSince = (r) => Boolean(r?._sync?.pending || r?._sync?.local
+  || (r?._sync?.updatedAt && r?._sync?.createdAt && r._sync.updatedAt !== r._sync.createdAt));
+
+/**
+ * What taking back an extra run does (D8's extraWinPlan in spirit), on the device's copy: its open tasks
+ * that nobody changed, the services it added and the relationship it added — each only while untouched and
+ * unused by anything else (another run, a task not its own, a service it didn't add, a resold cost) —
+ * then the run itself (its copies of the steps go with it). Whatever stays is listed with why. Pure.
+ * d: { runs, tasks, relationships, services, costs } (live records).
+ * → { remove: [{ entity, id, name }], left: [string] }
+ */
+export function extraRunPlan(run, d) {
+  const remove = [];
+  const left = [];
+  const made = runMade(run);
+  const byId = (list, id) => (list ?? []).find((r) => r.id === id) ?? null;
+  const own = (d.tasks ?? []).filter((t) => t.run_id === run.id);
+  const keepTasks = own.filter((t) => t.done_at || changedSince(t));
+  for (const t of own) if (!keepTasks.includes(t)) remove.push({ entity: 'task', id: t.id, name: `the task “${t.title}”` });
+  if (keepTasks.length) left.push(`${keepTasks.length} of its tasks stay: done or changed since (${keepTasks.map((t) => `“${t.title}”`).join(', ')}).`);
+  const madeServices = made.filter((m) => m.kind === 'made' && m.entity === 'service').map((m) => byId(d.services, m.id)).filter(Boolean);
+  const keptServices = [];
+  for (const svc of madeServices) {
+    if (changedSince(svc)) {
+      keptServices.push(svc);
+      left.push(`The service “${svc.name}” stays: it was edited.`);
+    } else remove.push({ entity: 'service', id: svc.id, name: `the service “${svc.name}”` });
+  }
+  for (const m of made.filter((x) => x.kind === 'made' && x.entity === 'relationship')) {
+    const rel = byId(d.relationships, m.id);
+    if (!rel) continue;
+    const why = [];
+    if (changedSince(rel)) why.push('it was edited');
+    for (const r of (d.runs ?? []).filter((x) => x.id !== run.id && x.relationship_id === rel.id)) why.push(`the run “${r.name}” works on it`);
+    for (const svc of (d.services ?? []).filter((x) => x.relationship_id === rel.id && !madeServices.includes(x))) why.push(`the service “${svc.name}”`);
+    for (const svc of keptServices) why.push(`the service “${svc.name}”`);
+    for (const c of (d.costs ?? []).filter((x) => x.relationship_id === rel.id)) why.push(`the resold cost “${c.name}”`);
+    for (const t of (d.tasks ?? []).filter((x) => x.relationship_id === rel.id && x.run_id !== run.id)) why.push(`the task “${t.title}”`);
+    for (const t of keepTasks.filter((x) => x.relationship_id === rel.id)) why.push(`its task “${t.title}”`);
+    const reasons = [...new Set(why)];
+    if (reasons.length) left.push(`The relationship it added stays: ${reasons.join(', ')}.`);
+    else remove.push({ entity: 'relationship', id: rel.id, name: 'the relationship it added' });
+  }
+  if (made.some((m) => m.kind === 'restarted')) left.push('A relationship it made active again stays active.');
+  for (const m of made.filter((x) => x.kind === 'renewal')) {
+    const svc = byId(d.services, m.id);
+    if (svc) left.push(`The renewal date it set on “${svc.name}” stays (${svc.renewal_date ?? 'none'}${m.old ? `; it was ${m.old}` : ''}).`);
+  }
+  remove.push({ entity: 'playbook_run', id: run.id, name: `the run “${run.name}”` });
+  return { remove, left };
+}
+
+const FIX_ENTITIES = ['playbook_run', 'task', 'relationship', 'service', 'recurring_cost'];
+/** What extraRunPlan reads, from the device's copy (unsent changes included). */
+export async function runFixData(engine) {
+  const l = await engine.listMany(FIX_ENTITIES);
+  return { runs: l.playbook_run, tasks: l.task, relationships: l.relationship, services: l.service, costs: l.recurring_cost };
+}
+
+/**
+ * Delete the extra of a run made twice (`runId` = any run of the group). First syncs and re-reads (so what
+ * the other device and this one did meanwhile counts), plans each extra and removes what it may, syncs
+ * again and re-reads each removed record: one the server kept (changed on the other device: a
+ * delete-vs-edit clash keeps it) is reported "Kept". Needs a connection to be sure; offline it still
+ * removes what it may and the re-read reports nothing kept.
+ * @returns {Promise<{ removed: object[], kept: object[], left: string[] }>}
+ */
+export async function removeExtraRuns(engine, runId) {
+  await engine.syncNow('run-twice');
+  const d = await runFixData(engine);
+  const group = duplicateRuns(d.runs).get(runId);
+  const out = { removed: [], kept: [], left: [] };
+  if (!group) return out;
+  const done = [];
+  for (const run of group.extras) {
+    const plan = extraRunPlan(run, d);
+    const removed = [];
+    for (const r of plan.remove) {
+      try {
+        await engine.remove(r.entity, r.id);
+        removed.push(r);
+      } catch (err) {
+        if (err?.code !== 'not_found') throw err; // already gone (hidden with something removed before it)
+      }
+    }
+    done.push({ plan, removed });
+  }
+  await engine.syncNow('run-twice');
+  for (const { plan, removed } of done) {
+    for (const r of removed) ((await engine.get(r.entity, r.id)) ? out.kept : out.removed).push(r);
+    out.left.push(...plan.left);
+  }
+  out.left.push(...out.kept.map((r) => `Kept: ${r.name} was changed on the other device.`));
+  return out;
+}

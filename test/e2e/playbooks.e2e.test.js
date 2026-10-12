@@ -97,8 +97,16 @@ async function walkThrough(page, context, server, { today, ids }, label) {
   const followUp = await until(() => server.db.prepare("SELECT * FROM planner_tasks WHERE run_id = ? AND title LIKE 'Follow up%'").get(launchRun), 'the follow-up');
   assert.deepEqual([followUp.due_date, followUp.owner, followUp.client_id, followUp.business_id], [addDays(today, 14), 'owner', ids.client, AGENCY]);
 
-  // Edit the playbook's follow-up step: the run keeps its own copy.
+  // Running it again for the same client says it is already under way.
   await page.goto(playbookUrl);
+  await page.getByRole('button', { name: 'Run…' }).click();
+  await sheet.locator('#run-find').fill('bakery');
+  await sheet.locator('#run-client').selectOption({ label: 'Test Bakery' });
+  await sheet.getByTestId('run-under-way').getByText('Already under way: Website launch — Test Bakery').waitFor(WAIT);
+  await sheet.getByRole('button', { name: 'Cancel' }).click();
+  await sheet.waitFor({ state: 'detached', ...WAIT });
+
+  // Edit the playbook's follow-up step: the run keeps its own copy.
   await page.getByRole('button', { name: 'Edit step Follow up: how is the new site working for them?' }).click();
   const step = page.getByTestId('step-form');
   await step.locator('#step-title').fill('Follow up by phone');

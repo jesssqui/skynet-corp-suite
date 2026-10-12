@@ -2742,7 +2742,10 @@ Server `server/src/modules/playbooks/` (`entities.js`, `service.js` — checks a
   name*, business_id*⇧, repeat, client_id→, account_id→, relationship_id→, start_date*, end_date (monthly: no month
   starts after it; `checkRun`: not before the start), owner (`OWNERS`: everything to one person / the shared list;
   null = as each step says), runner* (who ran it: each step's "whoever runs it", later months too), status
-  (`active|done|stopped`, null = active), playbook_as_of (the playbook's last change when copied), notes.
+  (`active|done|stopped|starting`, null = active), playbook_as_of (the latest change to the playbook **or its steps**
+  when copied), playbook_name (its name then: later months' notes use it), made (what it made or changed in the
+  client's records: `relationship:<id> service:<id> restarted:relationship:<id> renewal:<service id>:<old date>`;
+  migration 002), notes.
 - `run_step` (`playbooks_run_steps`; **append-only**): run_id*⇧, step_id (no ref), every step field copied, outcome
   (`task|skipped|renewal`) + outcome_note (why it was left out, what date it set).
 - `task.run_id` + `task.run_step_id` (planner migration 004): **plain ids with no `ref`** (decision: the planner is
@@ -2786,6 +2789,25 @@ Server `server/src/modules/playbooks/` (`entities.js`, `service.js` — checks a
   (task steps only: renewal dates are set once), owner by the same rule (`runner` = the run's runner), the offer
   re-checked each month. Nothing for a run done or stopped, a client closed or deleted, or an archived business (the run
   log says "waiting: … — its client is closed"). Not capped (one person's runs, a few tasks a month each).
+- **Review fixes**:
+  - **Unfinished runs**: a run is created `starting` and its **last write** sets it `active`, so a save that stopped
+    part-way is never "under way" (the automation skips it). Its page says "This run didn't finish saving": **Finish it**
+    on the device that kept its ids and choice (`keptRunFor`; nothing made twice) or **Delete the unfinished run**.
+  - **Run twice**: the Run sheet says "Already under way: <run>, started <date>" for an open run of the same playbook
+    and account (`runsUnderWay`). Runs of the same playbook, account and start day (two devices offline at once —
+    on one device the kept ids prevent it) are flagged "Run twice" (`duplicateRuns`; the first made is kept) and the run
+    page offers **Delete the extra** (`extraRunPlan` → `removeExtraRuns`, D8's pattern: sync and re-read first; the
+    extra's open, unchanged tasks, the services and relationship it added while unchanged and unused by anything else —
+    another run, a task not its own, a resold cost —, then the run; sync again and re-read: "Kept: … was changed on the
+    other device"). A relationship it restarted and renewal dates it moved stay (listed).
+  - **Renewal dates**: an earlier (or no) date on their service is moved — the preview says "moves from X to Y"; a
+    **later** one is left alone unless the person ticks "Also move renewal dates that are later than the playbook's".
+  - **Retainers** wait while the run's relationship is paused, ended or deleted (or its account deleted), as D6's
+    reminders do; an **offer is made once per run** (the first month made it — its copy's outcome `task` — or a later
+    month did: key `<run id>:offer:<run step id>`).
+  - Offer tasks say whose email consent counts ("only if <business> has their email consent"), as D8's cross-sell.
+  - `checkStepFields` checks the offset/unit pair when either changes alone; `stepDate` clamps to the unit's limit.
+  - Run… is off for an archived business; the Run sheet ignores a second tap while saving (a ref).
 - **Linked files**: `links` is text — web addresses, words, and `file:<id>` lines, the **seam for D10** (no D10 code is
   used): `parseLinks` reads them, a task's notes list them, and `StepLinks` shows a file line as a link once D10 sets
   `setFileHref((id) => …)` (`client/src/modules/playbooks/parts.jsx`), plain text until then.
@@ -2804,7 +2826,8 @@ Server `server/src/modules/playbooks/` (`entities.js`, `service.js` — checks a
   projects ›") and the client page's **Projects** card (runs with progress, "Run a playbook").
 - **Reads for others**: `ctx.services.playbooks.activeRuns()` / `run(id)` / `runSteps(id)` / `repeatingRuns()` (D15's
   overview cards can show projects under way).
-- **Not built / open**: updating a running run to its playbook's new steps; a playbook's own attachments beyond links;
+- **Not built / open**: "Run twice" can't tell two devices from one person running the same playbook for the same
+  client and day on purpose (it offers, never acts on its own); updating a running run to its playbook's new steps; a playbook's own attachments beyond links;
   per-step dependencies ("after the previous one is done" — every date is from the start); weekly repeats; a
   `recurring_cost` from a renewal step; quotes (D17) starting a run on acceptance; pruning done runs (the pull scope).
 

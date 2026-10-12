@@ -28,6 +28,7 @@ export function usePlaybooksData() {
       runsOf: (playbookId) => runs.where('playbook_id', playbookId),
       runStepsOf: (runId) => runSteps.where('run_id', runId),
       tasksOf: (runId) => tasks.where('run_id', runId),
+      allTasks: tasks.records,
     };
   }, [], { entities: ENTITIES });
   return { data: data ?? null, loading, error };

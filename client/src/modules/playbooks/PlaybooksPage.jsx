@@ -4,7 +4,7 @@
 // playbooks. Read from and written to the device's offline copy, so all of it works with no connection.
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { EXAMPLE_PLAYBOOKS, REPEAT_LABELS, repeatOf, isActiveRun } from '@suite/shared/playbooks';
+import { EXAMPLE_PLAYBOOKS, REPEAT_LABELS, repeatOf, isOpenRun } from '@suite/shared/playbooks';
 import { PageHeader, Card, Button, Badge, EmptyState, Notice } from '../../ui/index.js';
 import { useAuth } from '../../auth/session.jsx';
 import { store } from '../../sync/index.js';
@@ -12,7 +12,7 @@ import { BusinessChip, Badges, useAction } from '../crm/parts.jsx';
 import { KIND_LABELS } from '../crm/logic.js';
 import { useToday } from '../planner/parts.jsx';
 import { usePlaybooksData } from './data.js';
-import { exampleRecords } from './logic.js';
+import { exampleRecords, duplicateRuns } from './logic.js';
 import { RunRow } from './parts.jsx';
 import { PlaybookForm, RunSheet } from './forms.jsx';
 
@@ -44,10 +44,11 @@ export default function PlaybooksPage() {
       .map((b) => ({ business: b, playbooks: data.playbooks.filter((p) => p.business_id === b.id && (showArchived || !p.archived)).sort((x, y) => String(x.name).localeCompare(String(y.name))) }))
       .filter((g) => g.playbooks.length);
   }, [data, showArchived]);
-  const runs = useMemo(() => (data ? data.runs.filter((r) => showFinished || isActiveRun(r))
+  const runs = useMemo(() => (data ? data.runs.filter((r) => showFinished || isOpenRun(r))
     .sort((a, b) => String(b.start_date).localeCompare(String(a.start_date)) || (a.id < b.id ? 1 : -1)) : []), [data, showFinished]);
-  const finishedCount = data ? data.runs.filter((r) => !isActiveRun(r)).length : 0;
+  const finishedCount = data ? data.runs.filter((r) => !isOpenRun(r)).length : 0;
   const client = forClient && data ? data.clientsById.get(forClient) : null;
+  const twice = useMemo(() => (data ? duplicateRuns(data.runs) : new Map()), [data]);
 
   const addExample = (example) => adding.run(async () => {
     const { playbook, steps } = exampleRecords(example);
@@ -73,7 +74,7 @@ export default function PlaybooksPage() {
         {!data ? <p style={muted}>Loading…</p> : runs.length ? (
           <ul style={list} data-testid="runs-list">
             {runs.map((r) => (
-              <RunRow key={r.id} run={r} runSteps={data.runStepsOf(r.id)} tasks={data.tasksOf(r.id)} clientName={r.client_id ? data.clientsById.get(r.client_id)?.name ?? 'Deleted client' : null} today={today} />
+              <RunRow key={r.id} run={r} runSteps={data.runStepsOf(r.id)} tasks={data.tasksOf(r.id)} clientName={r.client_id ? data.clientsById.get(r.client_id)?.name ?? 'Deleted client' : null} today={today} twice={twice.has(r.id)} />
             ))}
           </ul>
         ) : <p style={{ ...muted, margin: 0 }}>Nothing under way. Run a playbook below.</p>}
@@ -101,7 +102,7 @@ export default function PlaybooksPage() {
                     </span>
                     <Badges record={p}>{p.archived ? <Badge>Archived</Badge> : null}</Badges>
                   </span>
-                  <Button disabled={!steps || p.archived || (client && !p.for_client)} onClick={() => setSheet({ kind: 'run', playbook: p })}>Run…</Button>
+                  <Button disabled={!steps || p.archived || business.archived || (client && !p.for_client)} onClick={() => setSheet({ kind: 'run', playbook: p })}>Run…</Button>
                 </li>
               );
             })}

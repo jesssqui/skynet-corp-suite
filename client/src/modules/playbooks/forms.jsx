@@ -1,7 +1,7 @@
 // The playbook screens' sheets (D9): a playbook's details, one step, a run's details, and Run (the
 // choices, a preview of everything it will make, then one save). Every write goes through the offline
 // store, so all of it works with no connection; an edit sends only what changed (the CRM's useForm).
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { RELATIONSHIP_KINDS, SERVICE_PERIODS } from '@suite/shared/crm';
 import { OWNERS } from '@suite/shared/actors';
@@ -19,7 +19,7 @@ import { pickableBusinesses, KIND_LABELS, PERIOD_LABELS, fold } from '../crm/log
 import { ownerLabel } from '../planner/logic.js';
 import {
   playbookForm, stepForm, runForm, ACTION_LABELS, OFFSET_UNIT_LABELS, planRun, applyRun, keptRunIds, forgetRunIds, defaultRunName,
-  relationshipLine,
+  relationshipLine, runsUnderWay,
 } from './logic.js';
 
 const row = { display: 'grid', gap: 'var(--space-3)', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' };
@@ -167,11 +167,17 @@ export function RunSheet({ playbook, data, me, initialClientId = '', onClose }) 
   const [endDate, setEndDate] = useState('');
   const [owner, setOwner] = useState('');
   const [name, setName] = useState(null); // null = the default name (follows the client)
+  const [moveLater, setMoveLater] = useState(false);
+  const saving = useRef(false); // a second tap while saving does nothing (review fix)
   const { busy, error, run } = useAction();
   const [tried, setTried] = useState(false);
   const account = accountId ? data.accountsById.get(accountId) : null;
   const runName = name ?? defaultRunName(playbook, account);
-  const choice = { name: runName, startDate, clientId: forClient ? clientId : '', accountId: forClient ? accountId : '', owner, endDate: monthly ? endDate : '' };
+  const choice = {
+    name: runName, startDate, clientId: forClient ? clientId : '', accountId: forClient ? accountId : '', owner, endDate: monthly ? endDate : '',
+    moveLaterRenewals: moveLater,
+  };
+  const underWay = forClient && accountId ? runsUnderWay(data.runs, playbook.id, accountId) : [];
   const crm = { businessesById: data.businessesById, accountsById: data.accountsById, relationships: data.relationships, services: data.services };
   const previewIds = useMemo(() => keptRunIds(null, `preview:${playbook.id}`, {}, steps.map((s) => s.id), newId), [playbook.id, steps]);
   const plan = planRun({ playbook, steps, choice, me, ids: previewIds, data: crm });
@@ -184,13 +190,15 @@ export function RunSheet({ playbook, data, me, initialClientId = '', onClose }) 
 
   const save = async () => {
     setTried(true);
-    if (Object.keys(plan.problems).length || busy) return;
+    if (Object.keys(plan.problems).length || busy || saving.current) return;
+    saving.current = true;
     const ids = keptRunIds(storage(), playbook.id, choice, steps.map((s) => s.id), newId);
     const real = planRun({ playbook, steps, choice, me, ids, data: crm });
     const ok = await run(async () => {
       await applyRun(store, real);
       forgetRunIds(storage(), playbook.id);
     });
+    saving.current = false;
     if (ok) navigate(`/playbooks/runs/${ids.run}`);
   };
 
@@ -242,6 +250,12 @@ export function RunSheet({ playbook, data, me, initialClientId = '', onClose }) 
           options={[{ value: '', label: 'As each step says' }, ...OWNERS.map((o) => ({ value: o, label: o === 'shared' ? 'Shared list' : o === me ? 'Me' : 'My partner' }))]} />
       </div>
       {p.steps ? <Notice tone="warn">{p.steps}</Notice> : null}
+      {underWay.map((r) => (
+        <Notice key={r.id} tone="warn"><span data-testid="run-under-way">Already under way: {r.name}, started {formatDate(r.start_date)}.</span></Notice>
+      ))}
+      {plan.preview?.items.some((i) => i.keptLater) || (moveLater && plan.preview?.items.some((i) => i.from)) ? (
+        <CheckboxField id="run-move-later" label="Also move renewal dates that are later than the playbook’s" checked={moveLater} onChange={setMoveLater} />
+      ) : null}
       {plan.preview ? <RunPreview preview={plan.preview} me={me} businessName={businessName} monthly={monthly} startDate={startDate} /> : null}
       {error ? <Notice tone="danger">{error}</Notice> : null}
     </Sheet>
@@ -258,7 +272,11 @@ function RunPreview({ preview, me, businessName, monthly, startDate }) {
         {preview.items.map((i) => (
           <li key={i.stepId} data-preview-kind={i.kind} style={{ fontSize: 'var(--text-sm)', overflowWrap: 'anywhere', color: i.kind === 'skipped' ? 'var(--text-muted)' : 'var(--text)' }}>
             {i.kind === 'task' ? <>{formatDate(i.date)} · {i.title} <span style={muted}>({ownerLabel(i.owner, me)})</span></> : null}
-            {i.kind === 'renewal' ? <>{i.service} renews on {formatDate(i.date)}{i.existing ? ' (their service)' : ' (added)'}</> : null}
+            {i.kind === 'renewal' ? (
+              i.keptLater ? <>{i.service} already renews on {formatDate(i.from)} (later): left as it is</>
+                : i.from ? <>{i.service}’s renewal moves from {formatDate(i.from)} to {formatDate(i.date)}</>
+                  : <>{i.service} renews on {formatDate(i.date)}{i.existing ? ' (their service)' : ' (added)'}</>
+            ) : null}
             {i.kind === 'skipped' ? <>Left out: {i.title} — {i.why}</> : null}
           </li>
         ))}

@@ -3,7 +3,7 @@
 // client). Done and stopped runs are counted, shown on request. Offline, from the device's copy.
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { isActiveRun } from '@suite/shared/playbooks';
+import { isOpenRun } from '@suite/shared/playbooks';
 import { Card } from '../../ui/index.js';
 import { useToday } from '../planner/parts.jsx';
 import { useClientRunsData } from './data.js';
@@ -18,8 +18,8 @@ export function ClientProjectsCard({ clientId }) {
   const [all, setAll] = useState(false);
   if (!data) return null;
   const runs = clientRuns(data.runs, clientId);
-  const shown = all ? runs : runs.filter(isActiveRun);
-  const finished = runs.length - runs.filter(isActiveRun).length;
+  const shown = all ? runs : runs.filter(isOpenRun);
+  const finished = runs.length - runs.filter(isOpenRun).length;
   return (
     <Card title="Projects">
       <div data-testid="client-projects">
