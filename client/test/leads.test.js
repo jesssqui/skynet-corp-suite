@@ -579,3 +579,22 @@ test('lastContactByLead: the newest email, call or meeting per lead; notes and s
   assert.equal(map.has('b'), false);
   assert.equal(map.has('c'), false);
 });
+
+test('parseLeadNotes: the import lines become labelled rows; what a person typed stays as notes', async () => {
+  const { parseLeadNotes } = await import('../src/modules/crm/leads.js');
+  const n = parseLeadNotes([
+    'Imported from “x.csv” (row 11).',
+    'Beauty / esthetics · Delhi, ON',
+    'Website: https://a.ca · Website status: no standalone site identified',
+    'Google Maps: https://maps.example/x · rating 4.8 (12 reviews)',
+    'Email consent (CASL): not cleared. Get it, or use another channel, before sending marketing email.',
+    'Called her on Monday',
+  ].join('\n'));
+  assert.equal(n.imported, 'Imported from “x.csv” (row 11).');
+  assert.deepEqual(n.rows.map((r) => r.label), ['About', 'Website', 'Website status', 'Google Maps', 'Email consent (CASL)']);
+  assert.equal(n.rows[0].value, 'Beauty / esthetics · Delhi, ON');
+  assert.equal(n.rows[3].value, 'https://maps.example/x · rating 4.8 (12 reviews)');
+  assert.equal(n.rows[4].warn, true);
+  assert.deepEqual(n.loose, ['Called her on Monday']);
+  assert.deepEqual(parseLeadNotes(null), { rows: [], loose: [], imported: null });
+});

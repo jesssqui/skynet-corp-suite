@@ -17,7 +17,7 @@ import { useLeadPageData } from './data.js';
 import { BusinessChip, Badges, RecordSync, TextButton, useAction } from './parts.jsx';
 import { KIND_LABELS, actorLabel } from './logic.js';
 import {
-  STAGE_LABELS, SOURCE_LABELS, LOST_LABELS, LEAD_ACTIVITY_LABELS, LEAD_STAGE_FIELDS, leadWins, stageClashes, stageChange, saveStageChange, leadValueText, daysInStage, nextStepOf,
+  STAGE_LABELS, SOURCE_LABELS, LOST_LABELS, LEAD_ACTIVITY_LABELS, LEAD_STAGE_FIELDS, leadWins, stageClashes, stageChange, saveStageChange, leadValueText, daysInStage, nextStepOf, parseLeadNotes,
 } from './leads.js';
 import { CampaignsCard } from './CampaignsCard.jsx';
 import { LeadForm, LostSheet, WinSheet, LeadActivityForm } from './leadForms.jsx';
@@ -31,6 +31,43 @@ const sectionHead = { display: 'flex', alignItems: 'center', justifyContent: 'sp
 const ICONS = { note: 'note', call: 'call', email: 'mail', meeting: 'meeting', stage: 'flag' };
 const STAGE_TONES = { lead: 'neutral', talking: 'accent', quoted: 'accent', won: 'ok', lost: 'danger' };
 const ownerText = (owner, me) => (!owner || owner === 'shared' ? 'Shared' : owner === me ? 'Mine' : 'My partner’s');
+
+const LINK_RE = /^https?:\/\/\S+$/;
+const factLabel = { ...muted, paddingTop: 2 };
+
+/** The notes as people read them: a labelled list (links clickable, the email-consent warning marked), what a
+ *  person typed as plain text, and the import's own line in small print. */
+function LeadNotes({ notes }) {
+  const { rows, loose, imported } = useMemo(() => parseLeadNotes(notes), [notes]);
+  if (!rows.length && !loose.length && !imported) return null;
+  const rule = { borderTop: '1px solid var(--border)', marginTop: 'var(--space-3)', paddingTop: 'var(--space-3)' };
+  return (
+    <div data-testid="lead-notes">
+      {rows.length ? (
+        <div style={rule}>
+          <h3 style={{ ...h2, marginBottom: 'var(--space-2)' }}>From the research</h3>
+          <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: 'minmax(6.5rem, auto) minmax(0, 1fr)', gap: 'var(--space-2) var(--space-3)', lineHeight: 1.45 }}>
+            {rows.map((r, i) => (
+              <div key={i} style={{ display: 'contents' }}>
+                <dt style={factLabel}>{r.label}</dt>
+                <dd style={{ margin: 0, overflowWrap: 'anywhere', ...(r.warn ? { color: 'var(--warn)', fontWeight: 600 } : null) }}>
+                  {LINK_RE.test(r.value) ? <a href={r.value} target="_blank" rel="noopener noreferrer">{r.value.replace(/^https?:\/\/(www\.)?/, '')}</a> : r.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ) : null}
+      {loose.length ? (
+        <div style={rule}>
+          <h3 style={{ ...h2, marginBottom: 'var(--space-2)' }}>Notes</h3>
+          {loose.map((l, i) => <p key={i} style={{ margin: '0 0 var(--space-2)', overflowWrap: 'anywhere', lineHeight: 1.45 }}>{l}</p>)}
+        </div>
+      ) : null}
+      {imported ? <p style={{ ...muted, margin: 'var(--space-3) 0 0', fontSize: 'var(--text-xs)', overflowWrap: 'anywhere' }}>{imported}</p> : null}
+    </div>
+  );
+}
 
 /** The stage a lost lead goes back to: the one it was lost from (its last "→ Lost" row), else Lead. */
 function reopenStage(activities) {
@@ -207,7 +244,7 @@ function LeadScreen({ leadId }) {
               <dt style={muted}>Whose</dt><dd style={{ margin: 0 }}>{ownerText(lead.owner, me)}</dd>
               {lead._sync?.createdAt ? <><dt style={muted}>Added</dt><dd style={{ margin: 0 }}>{formatDay(lead._sync.createdAt)}</dd></> : null}
             </dl>
-            {lead.notes ? <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', margin: 'var(--space-3) 0 0' }}>{lead.notes}</p> : null}
+            <LeadNotes notes={lead.notes} />
           </Card>
         </div>
         <div className="crm-col">

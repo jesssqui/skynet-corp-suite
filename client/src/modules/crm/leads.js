@@ -614,3 +614,37 @@ export function leadTimelineItems(leadActivities, leadsById, relationshipsById =
     };
   });
 }
+
+// ---- reading a lead's notes -------------------------------------------------------------------------
+// The leads import writes its research as plain "Label: value" lines (shared/leadImport.js). The lead page
+// shows them as a labelled list instead of one block of text; anything a person typed stays as it was.
+const NOTE_LABEL = /^([A-Z][A-Za-z()’'/ -]{1,40}?):\s+(.+)$/;
+const WARN_LABEL = /consent|do not email|eligibility/i;
+
+/** @returns {{ rows: {label: string, value: string, warn: boolean}[], loose: string[], imported: string|null }} */
+export function parseLeadNotes(text) {
+  const rows = [];
+  const loose = [];
+  let imported = null;
+  for (const raw of String(text ?? '').split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^Imported from /.test(line)) { imported = line; continue; }
+    const parts = line.split(' · ');
+    const labelled = parts.map((p) => NOTE_LABEL.exec(p));
+    if (parts.length > 1 && labelled.some(Boolean)) {
+      parts.forEach((part, i) => {
+        const m = labelled[i];
+        if (m) rows.push({ label: m[1], value: m[2], warn: WARN_LABEL.test(m[1]) });
+        else if (rows.length) rows[rows.length - 1].value += ` · ${part}`;
+      });
+      continue;
+    }
+    const m = NOTE_LABEL.exec(line);
+    if (m) { rows.push({ label: m[1], value: m[2], warn: WARN_LABEL.test(m[1]) }); continue; }
+    // The import's line about the business ("Beauty / esthetics · Delhi, ON") comes first, before any label.
+    if (!rows.length && imported && parts.length <= 2 && !loose.length) { rows.push({ label: 'About', value: line, warn: false }); continue; }
+    loose.push(line);
+  }
+  return { rows, loose, imported };
+}
