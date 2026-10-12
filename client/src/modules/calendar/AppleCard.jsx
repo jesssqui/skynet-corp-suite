@@ -14,6 +14,40 @@ const stack = { display: 'grid', gap: 'var(--space-3)' };
 const row = { display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' };
 const steps = { margin: 0, paddingLeft: '1.2em', display: 'grid', gap: 'var(--space-1)', fontSize: 'var(--text-sm)' };
 
+/** After connecting: which calendars to read, chosen before anything is read (review fix). */
+function ChooseCalendars({ calendars, busy, offline, onConfirm }) {
+  const [off, setOff] = useState(() => new Set());
+  return (
+    <div style={stack} data-testid="apple-choose">
+      <p style={{ ...muted, margin: 0 }}>Connected. Choose which calendars the suite reads — nothing is read until you do.</p>
+      {calendars.length ? (
+        <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'grid', gap: 0 }}>
+          <legend style={{ ...muted, fontWeight: 600, marginBottom: 4 }}>Calendars to read</legend>
+          {calendars.map((c) => (
+            <CheckboxField
+              key={c.url}
+              id={`choose-${c.url}`}
+              label={c.name}
+              checked={!off.has(c.url)}
+              onChange={(v) => setOff((prev) => {
+                const next = new Set(prev);
+                if (v) next.delete(c.url);
+                else next.add(c.url);
+                return next;
+              })}
+            />
+          ))}
+        </fieldset>
+      ) : <p style={muted}>No calendars with events were found in this iCloud account.</p>}
+      <div style={row}>
+        <Button variant="primary" disabled={busy || offline} onClick={() => onConfirm([...off].sort())} data-testid="apple-confirm">
+          {busy ? 'Reading…' : 'Read these calendars'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function ConnectForm({ busy, offline, onSubmit, onCancel, appleId: initialId = '' }) {
   const [appleId, setAppleId] = useState(initialId);
   const [password, setPassword] = useState('');
@@ -76,7 +110,10 @@ export default function AppleCard() {
             <span style={state.tone === 'danger' ? { ...muted, color: 'var(--danger)' } : muted}>{state.text}</span>
           </div>
           {offline ? <Notice tone="warn">No connection to the suite: this can’t be changed right now (meetings already on this device still show on Today).</Notice> : null}
-          {!info.connected || editing || info.refusedAt ? (
+          {info.connected && !info.confirmed && !editing && !info.refusedAt ? (
+            <ChooseCalendars calendars={info.calendars} busy={busy} offline={offline}
+              onConfirm={(excluded) => run(() => api.put('/api/calendar/apple/calendars', { excluded }))} />
+          ) : !info.connected || editing || info.refusedAt ? (
             <>
               {!info.connected ? (
                 <p style={{ ...muted, margin: 0 }}>
@@ -132,8 +169,10 @@ export default function AppleCard() {
           )}
           {problem ? <p role="alert" style={{ color: 'var(--danger)', margin: 0 }} data-testid="apple-problem">{problem}</p> : null}
           <p style={{ ...muted, margin: 0, fontSize: 'var(--text-xs)' }}>
-            Kept in the suite: each meeting’s title, time and calendar — not its notes, place or who’s invited. Every device holds both
-            people’s meetings (like tasks); each of you sees only your own. Your tasks never go back into these calendars this way.
+            Kept in the suite: each meeting’s title, time and calendar — not its notes, place or who’s invited. Today, the plan and
+            the load show each of you only your own meetings, but both people’s are on every signed-in device (synced like tasks),
+            so the other person could find them there (Offline data). Titles also stay in the suite’s sync history and in its
+            backups, even after a meeting is deleted or the connection forgotten. Your tasks never go back into these calendars this way.
           </p>
         </div>
       )}

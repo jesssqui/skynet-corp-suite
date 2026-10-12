@@ -37,6 +37,8 @@ export async function startFakeCaldav(t, { appleId = APPLE_ID, password = APP_PA
     appleId,
     password,
     revoked: false,
+    /** Other addresses of the Apple ID (calendar-user-address-set). */
+    aliases: [],
     requests: [],
     /** path → { status, times } */
     fail: {},
@@ -89,7 +91,11 @@ export async function startFakeCaldav(t, { appleId = APPLE_ID, password = APP_PA
         return send(207, ms(ok('/', `<current-user-principal><href>${PRINCIPAL}</href></current-user-principal>`)));
       }
       if (req.method === 'PROPFIND' && url.pathname === PRINCIPAL) {
-        return send(207, ms(ok(PRINCIPAL, `<calendar-home-set xmlns="urn:ietf:params:xml:ns:caldav"><href xmlns="DAV:">http://localhost:${port}${HOME}</href></calendar-home-set>`)));
+        // calendar-user-address-set: the Apple ID's addresses (aliases), as iCloud lists them (mailto: and others).
+        const addrs = [`mailto:${dav.appleId}`, ...dav.aliases.map((a) => `mailto:${a}`), 'urn:uuid:0d1e2f00-0000-4000-8000-000000000000']
+          .map((a) => `<href xmlns="DAV:">${esc(a)}</href>`).join('');
+        return send(207, ms(ok(PRINCIPAL, `<calendar-home-set xmlns="urn:ietf:params:xml:ns:caldav"><href xmlns="DAV:">http://localhost:${port}${HOME}</href></calendar-home-set>`
+          + `<calendar-user-address-set xmlns="urn:ietf:params:xml:ns:caldav">${addrs}</calendar-user-address-set>`)));
       }
       if (req.method === 'PROPFIND' && url.pathname === HOME) {
         const parts = [

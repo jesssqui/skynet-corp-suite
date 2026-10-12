@@ -47,7 +47,8 @@ export const FIRST_LOOK_MS = 25_000;
 /** After n failures in a row: wait min(2^n, 60) minutes. */
 export const backoffMs = (failures) => Math.min(2 ** Math.max(1, failures), 60) * MINUTE;
 
-const APPLE_ID_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// No ":" (HTTP Basic splits the user name there).
+const APPLE_ID_RE = /^[^\s@:]+@[^\s@:]+\.[^\s@:]+$/;
 const APP_PASSWORD_RE = /^([a-z]{4})-?([a-z]{4})-?([a-z]{4})-?([a-z]{4})$/;
 
 /** The record type devices see. Written by the server only. */
@@ -131,10 +132,13 @@ export function createAppleService(ctx) {
   const q = {
     conn: db.prepare('SELECT * FROM calendar_apple WHERE actor = ?'),
     conns: db.prepare('SELECT * FROM calendar_apple'),
-    put: db.prepare(`INSERT INTO calendar_apple (actor, conn_id, apple_id, password_enc, home_url, excluded, set_at, set_device, refused_at)
-      VALUES (@actor, @connId, @appleId, @enc, @home, '[]', @at, @device, NULL)
+    put: db.prepare(`INSERT INTO calendar_apple (actor, conn_id, apple_id, password_enc, home_url, excluded, addresses, set_at, set_device, confirmed_at, refused_at)
+      VALUES (@actor, @connId, @appleId, @enc, @home, @excluded, @addresses, @at, @device, @confirmedAt, NULL)
       ON CONFLICT (actor) DO UPDATE SET conn_id = excluded.conn_id, apple_id = excluded.apple_id, password_enc = excluded.password_enc,
-        home_url = excluded.home_url, excluded = '[]', set_at = excluded.set_at, set_device = excluded.set_device, refused_at = NULL`),
+        home_url = excluded.home_url, excluded = excluded.excluded, addresses = excluded.addresses, set_at = excluded.set_at,
+        set_device = excluded.set_device, confirmed_at = excluded.confirmed_at, refused_at = NULL`),
+    confirm: db.prepare('UPDATE calendar_apple SET confirmed_at = ? WHERE actor = ? AND confirmed_at IS NULL'),
+    setAddresses: db.prepare('UPDATE calendar_apple SET addresses = ? WHERE actor = ? AND conn_id = ?'),
     setHome: db.prepare('UPDATE calendar_apple SET home_url = ? WHERE actor = ? AND conn_id = ?'),
     setExcluded: db.prepare('UPDATE calendar_apple SET excluded = ? WHERE actor = ?'),
     refuse: db.prepare('UPDATE calendar_apple SET refused_at = ? WHERE actor = ? AND conn_id = ? AND refused_at IS NULL'),
@@ -167,11 +171,12 @@ export function createAppleService(ctx) {
     dropObject: db.prepare('DELETE FROM calendar_apple_objects WHERE actor = ? AND url = ?'),
     dropCalendarObjects: db.prepare('DELETE FROM calendar_apple_objects WHERE actor = ? AND calendar_url = ?'),
     clearObjects: db.prepare('DELETE FROM calendar_apple_objects WHERE actor = ?'),
+    adoptObjects: db.prepare('UPDATE calendar_apple_objects SET conn_id = ? WHERE actor = ?'),
+    adoptCalendars: db.prepare('UPDATE calendar_apple_calendars SET conn_id = ? WHERE actor = ?'),
     staleObjects: db.prepare('DELETE FROM calendar_apple_objects WHERE actor = ? AND conn_id <> ?'),
     staleCalendars: db.prepare('DELETE FROM calendar_apple_calendars WHERE actor = ? AND conn_id <> ?'),
     meetings: db.prepare('SELECT * FROM calendar_meetings WHERE actor = ? AND deleted_at IS NULL ORDER BY created_at, id'),
     meetingCount: db.prepare('SELECT COUNT(*) AS n FROM calendar_meetings WHERE actor = ? AND deleted_at IS NULL'),
-    meetingsByCalendar: db.prepare('SELECT calendar_name AS name, COUNT(*) AS n FROM calendar_meetings WHERE actor = ? AND deleted_at IS NULL GROUP BY calendar_name'),
   };
   const at = () => nowIso(new Date(clock()));
   const excludedOf = (row) => {
@@ -199,10 +204,20 @@ export function createAppleService(ctx) {
     } catch (err) {
       log?.error?.(`can't read the calendar key file: ${err.message}`);
     }
-    secretCache.set(row.actor, { enc: row.password_enc, password });
+    // A null (no key file, or another machine's) isn't remembered: the key file may come back.
+    if (password !== null) secretCache.set(row.actor, { enc: row.password_enc, password });
     return password;
   }
-  const clientFor = (appleId, password) => createCaldavClient({ appleId, password, baseUrl: cfg.baseUrl, timeoutMs: cfg.timeoutMs });
+  const clientFor = (appleId, password) => createCaldavClient({ appleId, password, baseUrl: cfg.baseUrl, timeoutMs: cfg.timeoutMs, maxBytes: cfg.maxBytes });
+  /** The Apple ID and its aliases (the principal's calendar-user-address-set), lowercase: who "I" am in invitations. */
+  const addressesOf = (row) => {
+    try {
+      const v = JSON.parse(row?.addresses ?? '[]');
+      return [row.apple_id, ...(Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [])];
+    } catch {
+      return [row.apple_id];
+    }
+  };
 
   // ---- what the Account page shows (never the password) ---------------------------------------------
   function info(actor) {
@@ -216,15 +231,21 @@ export function createAppleService(ctx) {
     };
     if (!row) return { ...base, appleId: null, calendars: [], meetingCount: 0 };
     const excluded = excludedOf(row);
-    const counts = new Map(q.meetingsByCalendar.all(actor).map((r) => [r.name, r.n]));
+    let counts = new Map();
+    try {
+      counts = desiredMeetings(actor).byCalendar; // per calendar address (two calendars may share a name)
+    } catch (err) {
+      log?.warn?.(`Apple Calendar: couldn't count meetings per calendar: ${err.message}`);
+    }
     return {
       ...base,
       appleId: row.apple_id,
+      confirmed: Boolean(row.confirmed_at),
       setAt: row.set_at,
       refusedAt: row.refused_at,
       readable: passwordOf(row) !== null,
       calendars: q.calendars.all(actor, row.conn_id).map((c) => ({
-        url: c.url, name: c.name, color: c.color, included: !excluded.has(c.url), meetings: excluded.has(c.url) ? 0 : (counts.get(c.name) ?? 0),
+        url: c.url, name: c.name, color: c.color, included: !excluded.has(c.url), meetings: excluded.has(c.url) ? 0 : (counts.get(c.url) ?? 0),
       })),
       meetingCount: q.meetingCount.get(actor).n,
       lastSuccessAt: pull?.conn_id === row.conn_id ? pull.fetched_at : null,
@@ -239,17 +260,21 @@ export function createAppleService(ctx) {
   // ---- connect / choose calendars / forget ------------------------------------------------------------
   /**
    * Connect (or replace) this person's Apple Calendar: the Apple ID and app-specific password are checked
-   * against iCloud first (its calendar home and calendars), and saved only when iCloud accepts them.
+   * against iCloud first (its calendar home and calendars), and saved only when iCloud accepts them. Nothing is
+   * read from the calendars yet: the person first chooses which ones count (setCalendars confirms) — except a new
+   * password for the same Apple ID, which keeps the choice made before (and reads at once).
    */
   async function connect(actor, input, { deviceId = null } = {}) {
     checkActor(actor);
     if (handle.isPaused()) throw refused(409, 'paused', 'Apple Calendar is switched off on System → Connections: switch it on, then connect');
     const { appleId, password } = cleanCredentials(input);
     let homeUrl;
+    let addresses;
+    let calendars;
     try {
       const client = clientFor(appleId, password);
-      ({ homeUrl } = await client.discover());
-      await client.listCalendars(homeUrl);
+      ({ homeUrl, addresses } = await client.discover());
+      calendars = await client.listCalendars(homeUrl);
     } catch (err) {
       if (!(err instanceof CaldavError)) throw err;
       if (err.code === 'unauthorized') throw refused(400, 'refused', `${err.message}. Nothing was saved.`);
@@ -258,10 +283,22 @@ export function createAppleService(ctx) {
     }
     const enc = encryptSecret(loadKey(cfg.keyFile), password);
     const before = q.conn.get(actor);
+    // The same Apple ID with a new password keeps which calendars were left out (and that they were chosen);
+    // another Apple ID starts over, unconfirmed: nothing is read until its calendars are chosen.
+    const same = before?.apple_id === appleId;
     const connId = newId();
     const when = at();
     db.transaction(() => {
-      q.put.run({ actor, connId, appleId, enc, home: homeUrl, at: when, device: deviceId });
+      q.put.run({
+        actor, connId, appleId, enc, home: homeUrl, at: when, device: deviceId,
+        excluded: same ? before.excluded : '[]', addresses: JSON.stringify(addresses ?? []), confirmedAt: same ? before.confirmed_at : null,
+      });
+      if (same) {
+        // Same calendars: what was read stays (no churn of meetings on devices); the read right after refreshes it.
+        q.adoptObjects.run(connId, actor);
+        q.adoptCalendars.run(connId, actor);
+      }
+      for (const c of calendars) q.putCalendar.run({ actor, connId, url: c.url, name: c.name, color: c.color });
       q.staleObjects.run(actor, connId);
       q.staleCalendars.run(actor, connId);
       q.clearPull.run(actor);
@@ -269,6 +306,8 @@ export function createAppleService(ctx) {
     })();
     secretCache.set(actor, { enc, password });
     log?.info?.(`Apple Calendar ${before ? 'replaced' : 'connected'} for ${actor}`);
+    project(actor); // another Apple ID: the old one's meetings go now
+    if (!q.conn.get(actor).confirmed_at) return { ...info(actor), firstRead: 'choose_calendars' };
     const first = await pullRound({ force: true, actor }).catch((err) => {
       log?.error?.('the first Apple Calendar read failed:', err);
       return null;
@@ -276,7 +315,10 @@ export function createAppleService(ctx) {
     return { ...info(actor), firstRead: first?.people?.[actor] ?? null };
   }
 
-  /** Which calendars count: `excluded` = calendar URLs left out (any others, and new ones, count). */
+  /**
+   * Which calendars count: `excluded` = calendar URLs left out (any others, and new ones, count). The first call
+   * after connecting confirms the choice: only then are events read.
+   */
   async function setCalendars(actor, { excluded } = {}, { deviceId = null } = {}) {
     checkActor(actor);
     const row = q.conn.get(actor);
@@ -287,8 +329,10 @@ export function createAppleService(ctx) {
     const known = new Set(q.calendars.all(actor, row.conn_id).map((c) => c.url));
     const next = [...new Set(excluded.filter((u) => known.has(u)))].sort();
     const before = excludedOf(row);
+    const first = !row.confirmed_at;
     db.transaction(() => {
       q.setExcluded.run(JSON.stringify(next), actor);
+      q.confirm.run(at(), actor);
       for (const url of next) {
         if (before.has(url)) continue;
         q.dropCalendarObjects.run(actor, url); // left out: what was read from it goes (privacy), read again if ticked
@@ -297,9 +341,9 @@ export function createAppleService(ctx) {
       q.change.run(newId(), actor, at(), deviceId, 'calendars', row.apple_id);
     })();
     project(actor);
-    // A calendar ticked again has nothing read yet: read it now (in the background, when calls are allowed).
-    if ([...before].some((u) => !next.includes(u)) && !handle.isPaused()) {
-      pullRound({ force: true, actor }).catch((err) => log?.error?.('Apple Calendar read failed (tried again later):', err));
+    // The first choice, or a calendar ticked again (nothing read from it yet): read now, when calls are allowed.
+    if ((first || [...before].some((u) => !next.includes(u))) && !handle.isPaused()) {
+      await pullRound({ force: true, actor }).catch((err) => log?.error?.('Apple Calendar read failed (tried again later):', err));
     }
     return info(actor);
   }
@@ -324,7 +368,7 @@ export function createAppleService(ctx) {
 
   // ---- pulls --------------------------------------------------------------------------------------------
   function due(row, pull, nowMs, force) {
-    if (!row || row.refused_at) return false;
+    if (!row || row.refused_at || !row.confirmed_at) return false;
     if (pull?.conn_id === row.conn_id && pull?.next_try_at && Date.parse(pull.next_try_at) > nowMs && !force) return false;
     if (force) return true;
     if (pull?.conn_id !== row.conn_id || !pull?.fetched_at) return true;
@@ -378,7 +422,7 @@ export function createAppleService(ctx) {
         for (const f of fetched) {
           let minimal;
           try {
-            minimal = minimalCalendar(f.data, { me: row.apple_id });
+            minimal = minimalCalendar(f.data, { me: addressesOf(row) });
           } catch (err) {
             log?.warn?.(`Apple Calendar: an event couldn't be read (${err.message}); left out`);
             continue;
@@ -393,6 +437,7 @@ export function createAppleService(ctx) {
 
   let running = null;
   let forcedNext = null;
+  let forcedWanted = null; // { all, actors }: every forced request made while a round ran (review fix: none is lost)
   /**
    * One round: each connected person whose read is due (all, or just `actor`, with `force`). Never throws for
    * iCloud's problems (recorded per person). → { skipped?, people: { actor: 'read' | 'failed' | 'refused' | … } }
@@ -404,9 +449,16 @@ export function createAppleService(ctx) {
       return running;
     }
     if (!opts.force) return running;
+    forcedWanted ??= { all: false, actors: new Set() };
+    if (opts.actor) forcedWanted.actors.add(opts.actor);
+    else forcedWanted.all = true;
     forcedNext ??= running.catch(() => {}).then(() => {
+      const wanted = forcedWanted;
       forcedNext = null;
-      return pullRound(opts);
+      forcedWanted = null;
+      // One person asked: just them; both (or "everyone"): everyone.
+      const actor = !wanted.all && wanted.actors.size === 1 ? [...wanted.actors][0] : null;
+      return pullRound({ force: true, actor });
     });
     return forcedNext;
   }
@@ -419,6 +471,7 @@ export function createAppleService(ctx) {
       if (handle.isPaused()) break;
       const pull = q.pull.get(row.actor);
       if (row.refused_at) { people[row.actor] = 'refused'; continue; }
+      if (!row.confirmed_at) { people[row.actor] = 'not_confirmed'; continue; }
       if (!due(row, pull, clock(), force)) { people[row.actor] = 'not_due'; continue; }
       try {
         const done = await readPerson(row, { force });
@@ -455,6 +508,7 @@ export function createAppleService(ctx) {
     const row = q.conn.get(actor);
     if (!row) throw refused(409, 'not_set_up', 'Connect Apple Calendar first');
     if (row.refused_at) throw refused(409, 'refused', 'Apple refused the app-specific password: enter a new one');
+    if (!row.confirmed_at) throw refused(409, 'not_confirmed', 'Choose which calendars to read first');
     if (handle.isPaused()) throw refused(409, 'paused', 'Apple Calendar is switched off on System → Connections');
     const round = await pullRound({ force: true, actor });
     return { round, ...info(actor) };
@@ -478,7 +532,8 @@ export function createAppleService(ctx) {
   function desiredMeetings(actor) {
     const row = q.conn.get(actor);
     const out = new Map();
-    if (!row) return { desired: out, unsupported: 0 };
+    const byCalendar = new Map(); // calendar address -> meetings
+    if (!row) return { desired: out, unsupported: 0, byCalendar };
     const excluded = excludedOf(row);
     const names = new Map(q.calendars.all(actor, row.conn_id).map((c) => [c.url, c.name]));
     const objects = [];
@@ -497,8 +552,9 @@ export function createAppleService(ctx) {
       const key = sourceKey(actor, inst.ref, inst.uid, inst.key);
       if (out.has(key)) continue; // the same UID in two objects of one calendar: the first counts
       out.set(key, meetingFields(inst, { actor, calendarName: names.get(inst.ref) ?? null, zone, key }));
+      byCalendar.set(inst.ref, (byCalendar.get(inst.ref) ?? 0) + 1);
     }
-    return { desired: out, unsupported: unsupported.length };
+    return { desired: out, unsupported: unsupported.length, byCalendar };
   }
 
   const asStored = (k, v) => (MEETING_FIELDS[k]?.type === 'boolean' ? (v === null || v === undefined ? null : v ? 1 : 0) : v);

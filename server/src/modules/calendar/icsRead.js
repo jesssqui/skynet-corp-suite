@@ -534,6 +534,8 @@ const mailOf = (v) => String(v ?? '').replace(/^mailto:/i, '').trim().toLowerCas
  * `me`: the person's Apple ID (their attendee row says whether they declined).
  */
 export function minimalCalendar(text, { me = null } = {}) {
+  // `me`: the Apple ID, or a list of it and its aliases (the principal's calendar-user-address-set).
+  const mes = new Set((Array.isArray(me) ? me : [me]).filter(Boolean).map(mailOf));
   const root = parseIcs(text);
   const events = [];
   const usedTzids = new Set();
@@ -541,7 +543,7 @@ export function minimalCalendar(text, { me = null } = {}) {
     const uid = propOf(ev, 'UID')?.value?.trim();
     const start = propOf(ev, 'DTSTART');
     if (!uid || !start || uid.endsWith(OWN_UID_SUFFIX)) continue;
-    const mine = me ? propsOf(ev, 'ATTENDEE').find((a) => mailOf(a.value) === mailOf(me) || mailOf(a.params.EMAIL) === mailOf(me)) : null;
+    const mine = mes.size ? propsOf(ev, 'ATTENDEE').find((a) => mes.has(mailOf(a.value)) || mes.has(mailOf(a.params.EMAIL))) : null;
     const e = {
       uid,
       title: unescapeText(propOf(ev, 'SUMMARY')?.value ?? '').trim().slice(0, 300),
@@ -603,8 +605,11 @@ export function expandSeries({ master = null, overrides = [] }, { window, zones 
   const overrideByKey = new Map();
   for (const o of overrides) {
     const r = instantOf(o.rid, zones, fallback);
-    if (r) overrideByKey.set(keyOf(r), o);
+    if (r) overrideByKey.set(keyOf(r), { o, r });
   }
+  // Is an override's original start an instance of the series (review fix)? Not when EXDATE removed it, nor
+  // past UNTIL / COUNT, nor a date the rule never makes. Without a master, nothing to check against.
+  let isInstance = () => true;
   const pushInstance = (ev, startInst, key, recurring) => {
     if (ev.status === 'CANCELLED' || ev.declined) return;
     const inst = instanceOf(ev, startInst, { zones, fallback, key, recurring });
@@ -617,13 +622,16 @@ export function expandSeries({ master = null, overrides = [] }, { window, zones 
     if (start) {
       const recurring = Boolean(master.rrule || master.rdates?.length);
       const starts = [];
+      let rule = null;
+      let zone = null;
+      let baseWall = null;
       if (master.rrule) {
-        const rule = parseRrule(master.rrule);
+        rule = parseRrule(master.rrule);
         if (!rule || rule.unsupported.length) unsupported = rule ? rule.unsupported.join(', ') : 'unreadable rule';
         // Expand in the start's own wall clock (all-day: dates) up to a little past the window's end.
-        const zone = start.zone ?? (start.date ? null : UTC_ZONE);
+        zone = start.zone ?? (start.date ? null : UTC_ZONE);
         const limitWall = start.date ? wallOfYmd(window.toDate) : (zone.wallOf(window.toMs) + DAY);
-        const baseWall = start.date ? wallOfYmd(start.date) : start.wall;
+        baseWall = start.date ? wallOfYmd(start.date) : start.wall;
         // A rule with UNTIL in UTC is compared on the instant: turn it into this wall clock.
         if (rule?.until && rule.until.utc && zone) rule.untilWall = zone.wallOf(rule.until.wall);
         // Starts that end before the window are skipped (with room for the event's own length).
@@ -652,7 +660,7 @@ export function expandSeries({ master = null, overrides = [] }, { window, zones 
         const key = keyOf(s);
         if (ex.has(key)) continue;
         if (exDates.has(s.date ?? '') || (!s.date && exDates.size && exDates.has(ymdOf(s.wall)))) continue;
-        const override = overrideByKey.get(key);
+        const override = overrideByKey.get(key)?.o;
         if (override) {
           overrideByKey.delete(key);
           const os = instantOf(override.start, zones, fallback);
@@ -661,10 +669,22 @@ export function expandSeries({ master = null, overrides = [] }, { window, zones 
         }
         pushInstance(master, s, recurring ? key : '', recurring);
       }
+      const rdateKeys = new Set((master.rdates ?? []).map((rd) => instantOf(rd, zones, fallback)).filter(Boolean).map(keyOf));
+      isInstance = (r) => {
+        const key = keyOf(r);
+        if (ex.has(key)) return false;
+        const wall = r.date ? wallOfYmd(r.date) : (zone ?? start.zone ?? UTC_ZONE).wallOf(r.utc);
+        if (exDates.has(r.date ?? ymdOf(wall))) return false;
+        if (rdateKeys.has(key) || key === keyOf(start)) return true;
+        if (!rule || rule.unsupported.length) return false;
+        const want = r.date ? wallOfYmd(r.date) : zone.wallOf(r.utc);
+        return ruleStarts(rule, baseWall, { limitWall: want, fromWall: want, max: 2 }).includes(want);
+      };
     }
   }
   // Overrides whose original instance wasn't made here (outside the expansion, or no master): their own time counts.
-  for (const [key, o] of overrideByKey) {
+  for (const [key, { o, r }] of overrideByKey) {
+    if (!isInstance(r)) continue;
     const os = instantOf(o.start, zones, fallback);
     if (os) pushInstance(o, os, key, true);
   }

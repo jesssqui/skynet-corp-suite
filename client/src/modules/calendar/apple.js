@@ -25,6 +25,7 @@ export function appleState(info, fmt = (x) => x) {
   if (info.paused) return { tone: 'warn', text: 'Switched off on System → Connections: meetings stay as last read.' };
   if (info.refusedAt) return { tone: 'danger', text: 'Apple refused the app-specific password (revoked, or the Apple ID changed): enter a new one.' };
   if (info.readable === false) return { tone: 'danger', text: 'The password can’t be read on this Mac (its key file is missing): enter it again.' };
+  if (!info.confirmed) return { tone: 'warn', text: 'Connected: choose which calendars to read.' };
   if (info.lastError) return { tone: 'warn', text: `Last read failed ${fmt(info.lastErrorAt)}: ${info.lastError}` };
   if (info.lastSuccessAt) {
     const n = info.meetingCount ?? 0;

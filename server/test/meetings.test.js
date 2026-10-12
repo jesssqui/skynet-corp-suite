@@ -20,7 +20,7 @@ import { restoreBackup, KEPT_TABLES } from '../src/backup/restore.js';
 import {
   parseIcs, parseLine, parseRrule, minimalCalendar, expandObjects, expandSeries, resolveZone, ruleStarts, wallOfYmd, readDuration,
 } from '../src/modules/calendar/icsRead.js';
-import { allowedUrl, createCaldavClient, CaldavError, isIcloudUrl, multistatus, READ_METHODS } from '../src/modules/calendar/caldav.js';
+import { allowedUrl, createCaldavClient, CaldavError, isIcloudUrl, multistatus, parseXml, READ_METHODS } from '../src/modules/calendar/caldav.js';
 import { cleanCredentials, meetingWindow, backoffMs, WINDOW_FUTURE_DAYS, WINDOW_PAST_DAYS } from '../src/modules/calendar/apple.js';
 import { startFakeCaldav, ics, APPLE_ID, APP_PASSWORD } from './fixtures/caldavFake.js';
 import { tmpDir, testConfig, startApp, ensureTestUsers, sessionFor, testClock, capturingLog } from './helpers.js';
@@ -184,7 +184,8 @@ test('declined invitations, cancelled events and the suite\'s own task feed are 
 test('the client reads only: PROPFIND and REPORT, iCloud https hosts only, no queries, redirects only to iCloud', async (t) => {
   assert.deepEqual(READ_METHODS, ['PROPFIND', 'REPORT']);
   for (const ok of ['https://caldav.icloud.com/', 'https://p42-caldav.icloud.com:443/1234567/calendars/']) assert.ok(isIcloudUrl(new URL(ok)), ok);
-  for (const bad of ['http://caldav.icloud.com/', 'https://icloud.com.evil.net/', 'https://evil.net/caldav.icloud.com', 'https://user:pw@caldav.icloud.com/']) {
+  for (const bad of ['http://caldav.icloud.com/', 'https://icloud.com.evil.net/', 'https://evil.net/caldav.icloud.com', 'https://user:pw@caldav.icloud.com/',
+    'https://www.icloud.com/', 'https://evil.caldav.icloud.com/', 'https://p42-contacts.icloud.com/', 'https://icloud.com/']) {
     assert.ok(!isIcloudUrl(new URL(bad)), bad);
   }
   assert.throws(() => allowedUrl('https://caldav.icloud.com/x?y=1'), (e) => e.code === 'bad_host');
@@ -262,6 +263,9 @@ async function setup(t, { start = at('2026-10-12 08:00'), connect = true, dav = 
   if (connect) {
     const r = await call('PUT', '/api/calendar/apple', { body: { appleId: APPLE_ID, password: APP_PASSWORD } });
     assert.equal(r.status, 200, r.text);
+    // Nothing is read until the calendars are chosen; choosing all of them reads at once.
+    const c = await call('PUT', '/api/calendar/apple/calendars', { body: { excluded: [] } });
+    assert.equal(c.status, 200, c.text);
   }
   return s;
 }
@@ -345,6 +349,13 @@ test('connecting: checked with iCloud before anything is saved; the password is 
   assert.equal(ok.status, 200, ok.text);
   assert.equal(ok.body.connected, true);
   assert.deepEqual(ok.body.calendars.map((c) => [c.name, c.included]), [['Home', true], ['Work', true]]);
+  // Chosen before anything is read: no event was fetched, no meeting made, no read due.
+  assert.equal(ok.body.confirmed, false);
+  assert.equal(ok.body.firstRead, 'choose_calendars');
+  assert.ok(!s.dav.requests.some((q) => q.method === 'REPORT'), 'no events read before the calendars are chosen');
+  assert.deepEqual((await s.svc.pullRound({ force: true })).people, { owner: 'not_confirmed' });
+  assert.equal((await s.call('POST', '/api/calendar/apple/pull', { body: {} })).body.code, 'not_confirmed');
+  assert.throws(() => cleanCredentials({ appleId: 'jes:sy@icloud.com', password: APP_PASSWORD }), (e) => e.code === 'bad_apple_id', 'no ":" (HTTP Basic)');
   const row = s.db.prepare('SELECT * FROM calendar_apple').get();
   assert.match(row.password_enc, /^v1:/);
   const everything = JSON.stringify(s.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()
@@ -436,6 +447,7 @@ test('devices can\'t write meetings; forgetting takes the person\'s meetings off
   dav2.put('home', 'p', ics(['UID:p', 'SUMMARY:Sam’s yoga', 'DTSTART:20261013T230000Z', 'DTEND:20261014T000000Z']));
   s.config.calendar.apple.baseUrl = dav2.url;
   assert.equal((await s.call('PUT', '/api/calendar/apple', { session: s.partner, body: { appleId: 'sam@icloud.com', password: APP_PASSWORD } })).status, 200);
+  assert.equal((await s.call('PUT', '/api/calendar/apple/calendars', { session: s.partner, body: { excluded: [] } })).status, 200);
   assert.deepEqual(s.meetings('partner').map((m) => m.title), ['Sam’s yoga']);
   const [m] = s.meetings('owner');
   const push = await s.call('POST', '/api/sync/push', {
@@ -481,4 +493,126 @@ test('restores: the connection is kept (a password forgotten after the backup st
   s = await setup(t, { dav, config, connect: false });
   assert.equal(s.db.prepare('SELECT COUNT(*) AS n FROM calendar_apple').get().n, 0, 'the forgotten connection doesn\'t come back');
   assert.deepEqual(s.meetings(), [], 'the restored meeting is taken off at start (its connection is gone)');
+});
+
+// ---- review fixes ------------------------------------------------------------------------------------------
+
+test('a new password for the same Apple ID keeps the calendars left out (and reads at once); another Apple ID chooses again', async (t) => {
+  const dav = await startFakeCaldav(t);
+  dav.put('home', 'h', ics(['UID:h', 'SUMMARY:Therapy', 'DTSTART:20261013T220000Z', 'DTEND:20261013T230000Z']));
+  dav.put('work', 'w', ics(['UID:w', 'SUMMARY:Client call', 'DTSTART:20261013T140000Z', 'DTEND:20261013T150000Z']));
+  const s = await setup(t, { dav });
+  const homeUrl = (await s.call('GET', '/api/calendar/apple')).body.calendars.find((c) => c.name === 'Home').url;
+  await s.call('PUT', '/api/calendar/apple/calendars', { body: { excluded: [homeUrl] } });
+  const callId = s.meetings()[0].id;
+  dav.password = 'wxyz-wxyz-wxyz-wxyz';
+  const r = await s.call('PUT', '/api/calendar/apple', { body: { appleId: APPLE_ID, password: 'wxyz-wxyz-wxyz-wxyz' } });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.body.confirmed, true);
+  assert.deepEqual(r.body.calendars.map((c) => [c.name, c.included]), [['Home', false], ['Work', true]], 'Home stays left out');
+  assert.deepEqual(s.meetings().map((m) => [m.title, m.id]), [['Client call', callId]], 'no therapy, and no churn of the record');
+  assert.ok(!dav.requests.slice(-6).some((q) => q.path.includes('/home/') && q.method === 'REPORT'));
+  // Another Apple ID: its calendars are chosen afresh, nothing read before, the old one's meetings gone.
+  dav.appleId = 'other@icloud.com';
+  const other = await s.call('PUT', '/api/calendar/apple', { body: { appleId: 'other@icloud.com', password: 'wxyz-wxyz-wxyz-wxyz' } });
+  assert.equal(other.body.confirmed, false);
+  assert.ok(other.body.calendars.every((c) => c.included));
+  assert.deepEqual(s.meetings(), []);
+});
+
+test('two people forcing a read while one runs: both are read (neither request is lost)', async (t) => {
+  const s = await setup(t);
+  const dav2 = await startFakeCaldav(t, { appleId: 'sam@icloud.com' });
+  dav2.put('home', 'p', ics(['UID:p', 'SUMMARY:Sam’s yoga', 'DTSTART:20261013T230000Z', 'DTEND:20261014T000000Z']));
+  s.config.calendar.apple.baseUrl = dav2.url;
+  await s.call('PUT', '/api/calendar/apple', { session: s.partner, body: { appleId: 'sam@icloud.com', password: APP_PASSWORD } });
+  await s.call('PUT', '/api/calendar/apple/calendars', { session: s.partner, body: { excluded: [] } });
+  dav2.put('home', 'q', ics(['UID:q', 'SUMMARY:Sam’s dentist', 'DTSTART:20261014T150000Z', 'DTEND:20261014T160000Z']));
+  // A round is running (plain look); then the owner and the partner each tap Read now.
+  s.advance(15 * 60_000);
+  const plain = s.svc.pullRound();
+  const owner = s.svc.pullRound({ force: true, actor: 'owner' });
+  const partner = s.svc.pullRound({ force: true, actor: 'partner' });
+  await plain;
+  const [a, b] = await Promise.all([owner, partner]);
+  assert.equal(a, b, 'one chained round for both');
+  assert.equal(a.people.partner, 'read');
+  assert.ok('owner' in a.people);
+  assert.deepEqual(s.meetings('partner').map((m) => m.title), ['Sam’s yoga', 'Sam’s dentist']);
+});
+
+test('an EXDATE’d or out-of-series override doesn’t show; one past COUNT or UNTIL neither', () => {
+  const win = WIN('2026-10-12', '2026-11-30');
+  const text = ics(
+    ['UID:s', 'SUMMARY:Sync', 'DTSTART;TZID=America/Toronto:20261012T100000', 'DTEND;TZID=America/Toronto:20261012T110000',
+      'RRULE:FREQ=WEEKLY;COUNT=3', 'EXDATE;TZID=America/Toronto:20261019T100000'],
+    // Removed by EXDATE, though an override for it is still there (moved to a day in the window).
+    ['UID:s', 'RECURRENCE-ID;TZID=America/Toronto:20261019T100000', 'SUMMARY:Sync (moved)', 'DTSTART;TZID=America/Toronto:20261021T100000', 'DTEND;TZID=America/Toronto:20261021T110000'],
+    // Past COUNT=3 (Oct 12, 19, 26): left behind when the series was shortened.
+    ['UID:s', 'RECURRENCE-ID;TZID=America/Toronto:20261102T100000', 'SUMMARY:Sync (stale)', 'DTSTART;TZID=America/Toronto:20261103T100000', 'DTEND;TZID=America/Toronto:20261103T110000'],
+    // Not a Monday at all: not an instance of this series.
+    ['UID:s', 'RECURRENCE-ID;TZID=America/Toronto:20261014T100000', 'SUMMARY:Sync (stray)', 'DTSTART;TZID=America/Toronto:20261014T100000', 'DTEND;TZID=America/Toronto:20261014T110000'],
+  );
+  assert.deepEqual(expand(text, win).instances.map((i) => i.title), ['Sync', 'Sync']);
+  const until = ics(
+    ['UID:u', 'SUMMARY:Class', 'DTSTART:20260901T140000Z', 'DTEND:20260901T150000Z', 'RRULE:FREQ=WEEKLY;UNTIL=20261013T235959Z'],
+    // Moved into the window from before it: a real instance (Sep 29), so it shows.
+    ['UID:u', 'RECURRENCE-ID:20260929T140000Z', 'SUMMARY:Class (moved)', 'DTSTART:20261015T140000Z', 'DTEND:20261015T150000Z'],
+    ['UID:u', 'RECURRENCE-ID:20261020T140000Z', 'SUMMARY:Class (after UNTIL)', 'DTSTART:20261021T140000Z', 'DTEND:20261021T150000Z'],
+  );
+  assert.deepEqual(expand(until, win).instances.map((i) => i.title), ['Class', 'Class (moved)']);
+  // An override with no master (invited to one instance) still shows.
+  const lone = ics(['UID:l', 'RECURRENCE-ID:20261020T140000Z', 'SUMMARY:One time', 'DTSTART:20261020T140000Z', 'DTEND:20261020T150000Z']);
+  assert.deepEqual(expand(lone, win).instances.map((i) => i.title), ['One time']);
+  // A zero-length event at a time that doesn't exist (the spring-forward gap) is kept, at 3:30 daylight time.
+  const gap = expand(ics(['UID:g', 'SUMMARY:Reminder', 'DTSTART;TZID=America/Toronto:20260308T023000', 'DTEND;TZID=America/Toronto:20260308T023000']), WIN('2026-03-08', '2026-03-09'));
+  assert.deepEqual(gap.instances.map((i) => [iso(i.startMs), i.endMs - i.startMs]), [['2026-03-08T07:30:00.000Z', 0]]);
+});
+
+test('declined under an alias: the principal’s calendar-user-address-set counts as “me”', async (t) => {
+  const dav = await startFakeCaldav(t);
+  dav.aliases = ['jessy.r@me.com'];
+  dav.put('work', 'inv', ics(['UID:inv', 'SUMMARY:Declined via alias', 'DTSTART:20261013T150000Z', 'DTEND:20261013T160000Z', 'ATTENDEE;PARTSTAT=DECLINED:mailto:Jessy.R@me.com']));
+  dav.put('work', 'acc', ics(['UID:acc', 'SUMMARY:Accepted', 'DTSTART:20261013T170000Z', 'DTEND:20261013T180000Z', 'ATTENDEE;PARTSTAT=ACCEPTED:mailto:jessy.r@me.com']));
+  const s = await setup(t, { dav });
+  assert.deepEqual(s.meetings().map((m) => m.title), ['Accepted']);
+  assert.deepEqual(JSON.parse(s.db.prepare('SELECT addresses FROM calendar_apple').get().addresses), [APPLE_ID, 'jessy.r@me.com']);
+  assert.equal(minimalCalendar(ics(['UID:x', 'DTSTART:20261013T150000Z', 'ATTENDEE;PARTSTAT=DECLINED:mailto:b@x.ca']), { me: ['a@x.ca', 'B@x.ca'] }).events[0].declined, true);
+});
+
+test('meetings per calendar are counted by calendar, not by name (two calendars called “Work”)', async (t) => {
+  const dav = await startFakeCaldav(t);
+  dav.addCalendar('work2', { name: 'Work' });
+  dav.put('work', 'a', ics(['UID:a', 'SUMMARY:A', 'DTSTART:20261013T130000Z', 'DTEND:20261013T140000Z']));
+  dav.put('work2', 'b', ics(['UID:b', 'SUMMARY:B', 'DTSTART:20261013T150000Z', 'DTEND:20261013T160000Z']));
+  dav.put('work2', 'c', ics(['UID:c', 'SUMMARY:C', 'DTSTART:20261013T170000Z', 'DTEND:20261013T180000Z']));
+  const s = await setup(t, { dav });
+  const counts = (await s.call('GET', '/api/calendar/apple')).body.calendars.filter((c) => c.name === 'Work').map((c) => c.meetings).sort();
+  assert.deepEqual(counts, [1, 2]);
+});
+
+test('the XML reader is linear: unterminated comments, CDATA, PIs and tags stop the reading instead of scanning again', () => {
+  const big = 200_000;
+  const t0 = performance.now();
+  for (const bad of ['<!--', '<![CDATA[', '<?', '<!DOCTYPE', '<a x="', '<a ']) parseXml(`<m>${bad.repeat(big)}`);
+  parseXml(`${'<a>'.repeat(20_000)}${'x'.repeat(big)}`);
+  const ms = performance.now() - t0;
+  assert.ok(ms < 1500, `took ${Math.round(ms)} ms`);
+  const r = parseXml('<d:a x="1>2"><!-- c --><?pi?><b/><![CDATA[q<]]>&amp;<!--unterminated');
+  assert.deepEqual([r.children[0].attrs.x, r.children[0].children[0].name, r.children[0].text], ['1>2', 'b', 'q<&']);
+});
+
+test('answers over the size cap are stopped while being read, counted in bytes (not characters)', async () => {
+  const body = (text, headers = {}) => async () => new Response(text, { status: 207, headers });
+  // 600 "é" = 600 characters but 1,200 bytes: over a 1,000-byte cap.
+  const client = createCaldavClient({ appleId: APPLE_ID, password: APP_PASSWORD, maxBytes: 1000, fetchImpl: body(`<multistatus xmlns="DAV:">${'é'.repeat(600)}</multistatus>`) });
+  await assert.rejects(client.request('PROPFIND', 'https://caldav.icloud.com/', { depth: 0, body: '' }), (e) => e.code === 'too_big');
+  // A stream that never ends is cut at the cap (it would otherwise run the server out of memory).
+  let pulled = 0;
+  const endless = new ReadableStream({ pull(c) { pulled += 1; c.enqueue(new Uint8Array(512)); } });
+  const c2 = createCaldavClient({ appleId: APPLE_ID, password: APP_PASSWORD, maxBytes: 4096, fetchImpl: async () => new Response(endless, { status: 207 }) });
+  await assert.rejects(c2.request('REPORT', 'https://p1-caldav.icloud.com/x/', { depth: 1, body: '' }), (e) => e.code === 'too_big');
+  assert.ok(pulled < 20, `stopped after ${pulled} chunks`);
+  const ok = createCaldavClient({ appleId: APPLE_ID, password: APP_PASSWORD, maxBytes: 1000, fetchImpl: body('<multistatus xmlns="DAV:"></multistatus>') });
+  assert.equal((await ok.request('PROPFIND', 'https://caldav.icloud.com/', { depth: 0, body: '' })).status, 207);
 });

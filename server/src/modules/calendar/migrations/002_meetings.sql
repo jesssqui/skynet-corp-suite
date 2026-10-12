@@ -13,8 +13,10 @@ CREATE TABLE calendar_apple (
   password_enc  TEXT NOT NULL,              -- v1:<iv>:<tag>:<ciphertext>
   home_url      TEXT,                       -- the calendar home iCloud gave (its partition host)
   excluded      TEXT NOT NULL DEFAULT '[]', -- JSON: calendar URLs left out (new calendars are read)
+  addresses     TEXT NOT NULL DEFAULT '[]', -- JSON: the Apple ID's calendar addresses (mailto: aliases), for "declined"
   set_at        TEXT NOT NULL,
   set_device    TEXT,
+  confirmed_at  TEXT,                       -- the person chose which calendars to read: no events are read before
   refused_at    TEXT                        -- Apple refused the password: no calls until a new one is entered
 );
 

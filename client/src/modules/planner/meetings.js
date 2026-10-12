@@ -4,13 +4,17 @@
 //
 // Days are the device's local calendar days, like tasks': a timed meeting's instants (start_at, end_at)
 // are placed with the device's clock; an all-day one by its dates (start_date … end_date, inclusive).
-// The load counts **busy timed** meetings only — all-day events (a holiday, a trip) and ones shown as
-// "free" are listed but add nothing — and overlapping meetings count once (the time they cover, not
-// the sum), clipped to the day (a meeting past midnight counts on each day for its part).
+// The load counts **busy timed** meetings only — all-day events (a holiday, a trip), ones shown as
+// "free", and (review decision) timed events lasting 24 hours or more (a conference or trip entered with
+// times: like all-day ones, they would otherwise fill whole days) are listed but add nothing — and overlapping
+// meetings count once (the time they cover, not the sum), clipped to the day (a meeting past midnight counts
+// on each day for its part).
 import { parseLocalDate } from '@suite/shared/time';
 import { addDays } from '@suite/shared/planner';
 
 const MIN = 60_000;
+/** A timed event this long or longer counts like an all-day one (listed, not in the load). */
+export const LONG_EVENT_MS = 24 * 60 * MIN;
 /** [start, end) of a local day in ms (23 or 25 hours across DST). */
 export function dayBounds(day) {
   return [parseLocalDate(day).getTime(), parseLocalDate(addDays(day, 1)).getTime()];
@@ -58,7 +62,7 @@ export function busyMinutes(meetings, { me, day }) {
   for (const m of myMeetings(meetings, me)) {
     if (!m.busy) continue;
     const span = meetingSpan(m);
-    if (!span) continue;
+    if (!span || span[1] - span[0] >= LONG_EVENT_MS) continue;
     const s = Math.max(span[0], a);
     const e = Math.min(span[1], b);
     if (e > s) spans.push([s, e]);
@@ -80,7 +84,10 @@ export function busyMinutes(meetings, { me, day }) {
 /** Busy minutes per day from `from` to `to` (inclusive): Map<day, minutes> (days with none left out). */
 export function busyMinutesByDay(meetings, { me, from, to }) {
   const out = new Map();
-  const mine = myMeetings(meetings, me).filter((m) => m.busy && meetingSpan(m));
+  const mine = myMeetings(meetings, me).filter((m) => {
+    const span = m.busy && meetingSpan(m);
+    return span && span[1] - span[0] < LONG_EVENT_MS;
+  });
   if (!mine.length) return out;
   const days = new Set();
   for (const m of mine) {

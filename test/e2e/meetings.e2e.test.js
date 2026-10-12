@@ -47,6 +47,10 @@ test('Mac: connect Apple Calendar, then Today shows the meetings and counts them
   await page.getByRole('alert').filter({ hasText: 'four groups of four letters' }).waitFor(WAIT);
   await page.getByLabel('App-specific password').fill(APP_PASSWORD.toUpperCase().replace(/-/g, ' '));
   await page.getByTestId('apple-connect').click();
+  // Connected, nothing read yet: choose the calendars first.
+  await page.getByTestId('apple-choose').waitFor(WAIT);
+  assert.equal(server.ctx.services.calendar.apple.info('owner').meetingCount, 0);
+  await page.getByTestId('apple-confirm').click();
   await page.getByTestId('apple-state').filter({ hasText: '3 meetings' }).waitFor(WAIT);
   await page.getByTestId('apple-calendars').getByText('Home').waitFor(WAIT);
   assert.ok(!(await page.content()).includes(APP_PASSWORD), 'the password is never shown again');
@@ -94,6 +98,7 @@ test('Mac: connect Apple Calendar, then Today shows the meetings and counts them
 test('iPhone: Today and Plan my day show the meetings, in airplane mode too', async (t) => {
   const { server, apple } = await setup(t);
   await apple.connect('owner', { appleId: APPLE_ID, password: APP_PASSWORD });
+  await apple.setCalendars('owner', { excluded: [] });
   const browser = await launch(t);
   const context = await browser.newContext(iphone());
   const errors = await watch(context);

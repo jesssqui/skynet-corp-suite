@@ -363,7 +363,7 @@ One folder per module on each side, same name on both (`server/src/modules/healt
     and the refresh token; the access token stays in memory). No buyer details are kept (no username, name, address,
     email or phone): totals, and for orders to ship only their id, items, total and ship-by date.
   - **Apple Calendar** (C6b): iCloud's CalDAV hosts only (`https://caldav.icloud.com` and its `p<NN>-caldav.icloud.com`
-    partition hosts — any `*.icloud.com`, https), HTTP Basic with each person's Apple ID and **app-specific password**;
+    partition hosts, https), HTTP Basic with each person's Apple ID and **app-specific password**;
     PROPFIND and REPORT only (they only read; their XML bodies are fixed templates), redirects followed only to another
     iCloud host. Key file `calendar-secret.key`. Kept: meeting titles, times, calendar names, free/busy — no notes,
     places or attendees.
@@ -1865,25 +1865,33 @@ load — is proved against the fake (server, device and browser). **Real iCloud 
   four groups of four letters — is required, so the Apple ID's own password is refused before anything is sent).
   `PUT /api/calendar/apple { appleId, password }` checks it with iCloud first (find the calendar home, list the
   calendars; 401 → 400 `refused`, unreachable → 502, paused → 409) and only then saves it in `calendar_apple` (one row
-  per person): the password **AES-256-GCM-sealed** with the key file `config.calendar.apple.keyFile`
+  per person) with the calendars it lists — **nothing is read from them yet** (review fix: the person chooses first;
+  `confirmed_at` is set by the first `PUT /apple/calendars`, which then reads at once): the password **AES-256-GCM-sealed** with the key file `config.calendar.apple.keyFile`
   (`<data>/calendar-secret.key`, `CALDAV_KEY_FILE`; `lib/sealed.js`) — never in the database or backups in usable form,
-  **never sent back** (`GET /apple` has no password), never logged (tests check the database, answers and log). A new
-  password replaces the old (a new `conn_id`: what was read for the old one goes). `PUT /apple/calendars { excluded }`
+  **never sent back** (`GET /apple` has no password), never logged (tests check the database, answers and log); an Apple
+  ID with ":" is refused (HTTP Basic). A new password **for the same Apple ID** keeps the calendars left out, the
+  choice and what was read (no churn on devices) and reads at once (review fix: it used to tick every calendar again);
+  **another Apple ID** starts over (a new `conn_id`: what was read for the old one and its meetings go; choose again).
+  The principal's `calendar-user-address-set` (its mailto: aliases) is kept in `addresses`, so an invitation declined
+  under an alias is left out too. `PUT /apple/calendars { excluded }`
   — every event calendar counts except the ones unticked (a calendar added later is read; one left out has its events
   forgotten and its meetings taken off). `POST /apple/pull` (Read now), `DELETE /apple` (Forget: the connection, what
   was read and this person's meetings on devices). Changes in `calendar_apple_changes` (connected / replaced /
   calendars / forgotten / refused). Both tables are **keepOnRestore** (like Stockroom's: a password replaced or
   forgotten after a backup never comes back).
 - **Read only by construction** (`caldav.js`): `request()` is the one network call; methods **PROPFIND and REPORT**
-  only (anything else throws before a request), XML bodies from fixed templates, https to `*.icloud.com` only
-  (`caldav.icloud.com` gives each Apple ID a partition host `p<NN>-caldav.icloud.com`, followed; a redirect to any other
-  host is refused before the password is sent), no query strings, a time-out (`CALDAV_TIMEOUT_MS`, 20 s), answers
-  over 20 MB refused. Tests: every request the fake saw was PROPFIND/REPORT, and the module's sources hold one `fetch`
+  only (anything else throws before a request), XML bodies from fixed templates, https to `caldav.icloud.com` and
+  iCloud's partition hosts `p<NN>-caldav.icloud.com` only (review fix: not any `*.icloud.com`; the partition host
+  is followed, a redirect to any other host is refused before the password is sent), no query strings, a time-out
+  (`CALDAV_TIMEOUT_MS`, 20 s), answers read as a stream and **stopped at 20 MB counted in bytes** (`maxBytes`; the
+  request is aborted). The XML reader is one linear pass (`indexOf` for comments, CDATA, PIs; it stops where a
+  terminator is missing — review fix for a quadratic regex; tested with a time budget). Tests: every request the fake saw was PROPFIND/REPORT, and the module's sources hold one `fetch`
   (in caldav.js) and no other HTTP client. Only for tests, the base address (`config.calendar.apple.baseUrl`, not an env
   setting) may be the fake's local port.
 - **Pulls** (`startPuller`, from `src/index.js` when `CALDAV_PULL_ENABLED`, on in production; one look a minute): each
   connected person every `CALDAV_PULL_EVERY_MIN` (15) minutes, one round at a time (Read now chains one forced round).
-  **Window**: today − 7 … today + 60 days in the suite's zone (`WINDOW_PAST_DAYS` / `WINDOW_FUTURE_DAYS`: the week
+  Several forced requests while a round runs share one chained round, for every person asked (review fix: the second
+  person's Read now was lost). **Window**: today − 7 … today + 60 days in the suite's zone (`WINDOW_PAST_DAYS` / `WINDOW_FUTURE_DAYS`: the week
   strip's Monday to two months of planning). Each read lists the calendars (PROPFIND Depth 1: name, colour, CTag,
   components — reminders-only lists, the inbox and outbox are left out); a calendar whose **CTag** and window are as
   last read is skipped; otherwise a `calendar-query` REPORT gets its objects' **ETags** in the window and a
@@ -1905,7 +1913,8 @@ load — is proved against the fake (server, device and browser). **Real iCloud 
   BYSETPOS, WKST — everything Apple Calendar's repeat options write — expanded in the event's own wall clock (a weekly
   10:00 stays 10:00 across DST), starts before the window counted (COUNT) but not kept; then EXDATE, RDATE, and each
   **override** (same UID + RECURRENCE-ID) in its original's place — moved, retitled, or `STATUS:CANCELLED` (gone); an
-  override moved into the window from outside shows. A rule with parts it doesn't read (BYHOUR, BYWEEKNO, BYYEARDAY,
+  override moved into the window from outside shows, but not one whose original EXDATE removed, nor one past
+  UNTIL / COUNT or on a day the rule never makes (review fix; checked with `ruleStarts`). A rule with parts it doesn't read (BYHOUR, BYWEEKNO, BYYEARDAY,
   HOURLY…) keeps only its first instance and is counted (`unsupported`, shown on the card) — never guessed. Left out:
   cancelled events, invitations this person **declined** (their ATTENDEE row matched by the Apple ID), and events whose
   UID ends `@skynet-corp-suite` — **the suite's own task feed (C6a), never read back as meetings** (were it ever
@@ -1919,11 +1928,16 @@ load — is proved against the fake (server, device and browser). **Real iCloud 
   differs and deletes what is gone (extras with one key too), in 200-step transactions; the start hook projects again
   (not while paused), so a restore's rolled-back meetings are put right at once and fully at the next read.
   **Decision — synced records, not a server read API**: Today, the morning plan and the load work offline on the phone.
-  Every device holds **both people's** meetings (like tasks); screens show each person only their own.
+  **What that means for privacy, plainly** (review fix): every signed-in device holds **both people's** meetings (like
+  tasks). Today, the plan, the load and the plain records view (`/sync/data/meeting`, which lists only your own and
+  says how many of your partner's are on the device) show each person only their own — but the other person could
+  read them from the device's offline copy. Titles also stay in the sync log (`sync_steps`, never pruned yet) and in
+  every backup, after a meeting is deleted in Apple Calendar or the connection forgotten. The card says so.
 - **On devices** (`client/src/modules/planner/meetings.js`, the device's local days like tasks): `meetingsOn` (mine,
   on the day — a meeting past midnight is on both days; all-day by its dates — all-day first, then by start),
   `busyMinutes` (**busy timed meetings only**, overlaps counted once, clipped to the day; all-day and free ones add
-  nothing), `meetingTimeText` ("9:00 AM – 10:00 AM", "All day", "Until …", "From …"). **Load**: `dayLoad` and
+  nothing, nor — review decision — **timed events of 24 hours or more** (`LONG_EVENT_MS`: a conference or trip
+  entered with times would otherwise fill whole days; listed like all-day ones)), `meetingTimeText` ("9:00 AM – 10:00 AM", "All day", "Until …", "From …"). **Load**: `dayLoad` and
   `loadsByDay` (C4b) take `meetings` and add their busy minutes (`minutes` = tasks + meetings; `taskMinutes`,
   `meetingMinutes` and the day's `meetings` beside); **`pushSuggestions` never suggests a meeting** (they are not in
   `load.tasks`; other days' meetings leave less room in `nextDayWithRoom`; meetings alone over the day → every
@@ -1936,7 +1950,7 @@ load — is proved against the fake (server, device and browser). **Real iCloud 
   "Jessy: 2 calendars · Sam: not connected" / "password refused"; its panel links to Account → Calendar.
 - **The task feed (C6a) never sends meetings back**: it reads tasks only (`planner.feedTasks`); tested.
 - **Not built / open**: real iCloud (shared calendars someone else owns, delegated calendars, huge accounts, Apple's
-  rate limits); RRULE parts above; RANGE=THISANDFUTURE overrides (Apple splits a series instead); an Apple ID that is a
+  rate limits); RRULE parts above; pruning meeting titles out of the sync log; RANGE=THISANDFUTURE overrides (Apple splits a series instead); an Apple ID that is a
   phone number (email only); a meeting's place or video link; meetings in the overview (D15) or the Friday review; the
   pull scope (meetings leave devices as the window moves, so they don't pile up).
 
@@ -2879,8 +2893,9 @@ Server `server/src/modules/overview/` (no tables), client `client/src/modules/ov
 - **C6b (meetings from Apple Calendar)**: done — see "Meetings from Apple Calendar". CalDAV pull per person with an
   app-specific password (sealed, checked first, kept across restores), PROPFIND/REPORT only to iCloud hosts; a
   hand-rolled iCalendar reader (no dependency); meetings are server-written, read-only synced records (one per
-  instance, a week back to two months ahead), so Today, the plan and the load have them offline; busy timed meetings
-  count in `dayLoad`/`loadsByDay` and are never pushed; the task feed never echoes them.
+  instance, a week back to two months ahead), so Today, the plan and the load have them offline (both people's on every
+  device; titles stay in the sync log and backups); calendars are chosen before anything is read; busy timed meetings
+  under 24 h count in `dayLoad`/`loadsByDay` and are never pushed; the task feed never echoes them.
 - **D6 (renewals and recurring costs)**: done — see "Renewals and recurring costs". One module `costs` for the synced
   `recurring_cost` and both reminder automations (client services 30 days ahead, our costs 14 days), sharing one engine
   keyed by record + renewal date; reminders are made on their day (or today when late), capped at 20 new a run, silent by

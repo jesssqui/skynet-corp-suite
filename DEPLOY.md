@@ -374,13 +374,15 @@ password — and only reads (it can't change or add anything in your calendars).
 2. In the suite: **Account → Calendar → Meetings from Apple Calendar** → your Apple ID (the email you sign in to iCloud
    with) and the app-specific password → **Connect**. The suite checks it with iCloud first (nothing is saved if Apple
    refuses it), keeps it encrypted with a key file in the data volume (`calendar-secret.key`, like the other connections'
-   keys — never in the database or the backups in usable form) and never shows it again.
-3. Untick any calendar you don't want counted (a shared family calendar, say). Check: a meeting you add in Calendar on the
+   keys — never in the database or the backups in usable form) and never shows it again. Nothing is read yet.
+3. Untick any calendar you don't want read (a shared family calendar, say) → **Read these calendars**. Check: a meeting you add in Calendar on the
    iPhone or Mac shows on Today within 15 minutes (or at once with **Read now**) and counts in that day's load.
 
 Each person connects their own. Reads every 15 minutes (`CALDAV_PULL_EVERY_MIN`), from a week back to two months ahead.
 What the suite keeps of a meeting: its title, times, calendar and whether it is busy — not its notes, place or who is
-invited; every device holds both people's meetings (like tasks) and each of you sees only your own. **If you revoke the
+invited. Today and the plan show each of you only your own, but **every signed-in device holds both people's meetings**
+(like tasks), and titles stay in the suite's sync history and backups even after a meeting or the connection is gone.
+A new app-specific password for the same Apple ID keeps your calendar choice. **If you revoke the
 app-specific password** at appleid.apple.com the suite stops calling at once (the card says so): make a new one and
 enter it with **New password…**. **Forget…** removes the connection and your meetings from the suite (also delete the
 app-specific password at appleid.apple.com). The **Apple Calendar** card on System → Connections pauses both people's

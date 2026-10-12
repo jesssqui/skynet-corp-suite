@@ -74,6 +74,11 @@ test('busy minutes: overlaps once, free and all-day not counted, clipped to the 
   assert.equal(busyMinutes(ms, { me: 'partner', day: TODAY }), 60);
   assert.deepEqual(Object.fromEntries(busyMinutesByDay(ms, { me: 'owner', from: TODAY })), { [TODAY]: 150, '2026-10-08': 30 });
   assert.deepEqual(Object.fromEntries(busyMinutesByDay(ms, { me: 'owner', from: '2026-10-08' })), { '2026-10-08': 30 });
+  // A timed event of 24 hours or more (a conference entered with times) is listed but counts nothing, like an all-day one.
+  const long = [meeting('2026-10-06 09:00', '2026-10-09 17:00', { title: 'Conference' }), meeting('2026-10-07 09:00', '2026-10-07 10:00')];
+  assert.equal(busyMinutes(long, { me: 'owner', day: TODAY }), 60);
+  assert.deepEqual(Object.fromEntries(busyMinutesByDay(long, { me: 'owner', from: '2026-10-06' })), { [TODAY]: 60 });
+  assert.deepEqual(meetingsOn(long, { me: 'owner', day: TODAY }).map((m) => m.title), ['Conference', 'Meeting']);
   // A 1-hour meeting on the night the clocks go back is 60 minutes, not 0 or 120.
   assert.equal(busyMinutes([meeting('2026-11-01 09:00', '2026-11-01 10:00')], { me: 'owner', day: '2026-11-01' }), 60);
 });
@@ -117,7 +122,8 @@ test('the Account card: the app-specific password’s shape, what’s wrong, the
   assert.equal(appleState({ connected: false }).tone, 'neutral');
   assert.equal(appleState({ connected: true, refusedAt: 'x' }).tone, 'danger');
   assert.equal(appleState({ connected: true, paused: true }).tone, 'warn');
-  assert.match(appleState({ connected: true, lastSuccessAt: 't', meetingCount: 1, window: { from: 'a', to: 'b' } }).text, /1 meeting from a to b/);
+  assert.match(appleState({ connected: true, confirmed: true, lastSuccessAt: 't', meetingCount: 1, window: { from: 'a', to: 'b' } }).text, /1 meeting from a to b/);
+  assert.match(appleState({ connected: true, confirmed: false }).text, /choose which calendars/);
   const cals = [{ url: 'h', included: true }, { url: 'w', included: false }];
   assert.deepEqual(toggledExcluded(cals, 'h', false), ['h', 'w']);
   assert.deepEqual(toggledExcluded(cals, 'w', true), []);
@@ -130,6 +136,7 @@ test('done when: a meeting added in Apple Calendar reaches the device at the nex
   const server = await startServer(t, config, { crm: true });
   const apple = server.ctx.services.calendar.apple;
   await apple.connect('owner', { appleId: APPLE_ID, password: APP_PASSWORD });
+  await apple.setCalendars('owner', { excluded: [] }); // the calendars chosen: read from now on
   const phone = await makeDevice(t, server, 'owner');
   const today = localDate();
   await phone.engine.create('task', { title: 'Write the proposal', owner: 'owner', business_id: W, due_date: today, estimate_minutes: 300 });

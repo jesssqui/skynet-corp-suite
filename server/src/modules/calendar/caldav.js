@@ -36,9 +36,9 @@ export class CaldavError extends Error {
 
 // ---- hosts ------------------------------------------------------------------------------------------
 
-/** Is this an iCloud host the suite may call (https, `*.icloud.com`)? */
+/** Is this an iCloud CalDAV host the suite may call: https `caldav.icloud.com` or a partition host `p<NN>-caldav.icloud.com`? */
 export function isIcloudUrl(u) {
-  return u.protocol === 'https:' && /^([a-z0-9-]+\.)*icloud\.com$/i.test(u.hostname) && !u.username && !u.password;
+  return u.protocol === 'https:' && /^(caldav|p\d{1,4}-caldav)\.icloud\.com$/i.test(u.hostname) && !u.username && !u.password;
 }
 
 /** The URL a call may go to, or throws: an iCloud https host, or the test origin given. */
@@ -74,27 +74,70 @@ export const xmlEscape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '
 /**
  * A small XML reader for WebDAV answers: → the root element { name (local, lower case), attrs, children, text }.
  * Namespace prefixes are dropped (DAV:, CalDAV and CalendarServer names don't collide in what is read).
+ * One pass, linear in the text (review fix: a regex alternation re-scanned unterminated comments, CDATA and
+ * processing instructions from every "<"): each construct's end is found with indexOf, and the reading stops
+ * where a terminator is missing (the rest is not XML).
  */
 export function parseXml(text) {
   const root = { name: '#root', attrs: {}, children: [], text: '' };
   const stack = [root];
-  const re = /<!\[CDATA\[([\s\S]*?)\]\]>|<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!DOCTYPE[^>]*>|<\/\s*([^\s>]+)\s*>|<\s*([^\s/>]+)((?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>|([^<]+)/g;
-  let m;
-  while ((m = re.exec(text))) {
+  const n = text.length;
+  let i = 0;
+  const skipTo = (from, end) => {
+    const at = text.indexOf(end, from);
+    return at < 0 ? -1 : at + end.length;
+  };
+  while (i < n) {
     const top = stack.at(-1);
-    if (m[1] !== undefined) top.text += m[1];
-    else if (m[2]) {
-      const name = m[2].replace(/^.*:/, '').toLowerCase();
-      // Close back to the matching element (tolerates stray tags).
-      const at = stack.map((e) => e.name).lastIndexOf(name);
-      if (at > 0) stack.length = at;
-    } else if (m[3]) {
+    const lt = text.indexOf('<', i);
+    if (lt < 0) {
+      top.text += xmlUnescape(text.slice(i));
+      break;
+    }
+    if (lt > i) top.text += xmlUnescape(text.slice(i, lt));
+    if (text.startsWith('<![CDATA[', lt)) {
+      const end = text.indexOf(']]>', lt + 9);
+      if (end < 0) break;
+      top.text += text.slice(lt + 9, end);
+      i = end + 3;
+    } else if (text.startsWith('<!--', lt)) {
+      i = skipTo(lt + 4, '-->');
+    } else if (text.startsWith('<?', lt)) {
+      i = skipTo(lt + 2, '?>');
+    } else if (text.startsWith('<!', lt)) {
+      i = skipTo(lt + 2, '>');
+    } else {
+      // A tag: up to the first ">" outside quotes.
+      let j = lt + 1;
+      let quote = null;
+      for (; j < n; j += 1) {
+        const c = text[j];
+        if (quote) {
+          if (c === quote) quote = null;
+        } else if (c === '"' || c === "'") quote = c;
+        else if (c === '>') break;
+      }
+      if (j >= n) break;
+      const inner = text.slice(lt + 1, j);
+      i = j + 1;
+      if (inner.startsWith('/')) {
+        const name = inner.slice(1).trim().replace(/^.*:/, '').toLowerCase();
+        // Close back to the matching element (tolerates stray tags).
+        const at = stack.map((e) => e.name).lastIndexOf(name);
+        if (at > 0) stack.length = at;
+        continue;
+      }
+      const selfClosing = inner.endsWith('/');
+      const body = selfClosing ? inner.slice(0, -1) : inner;
+      const m = /^\s*([^\s/>]+)/.exec(body);
+      if (!m) continue;
       const attrs = {};
-      for (const a of (m[4] ?? '').matchAll(/([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) attrs[a[1].replace(/^.*:/, '').toLowerCase()] = xmlUnescape(a[2] ?? a[3] ?? '');
-      const el = { name: m[3].replace(/^.*:/, '').toLowerCase(), attrs, children: [], text: '' };
+      for (const a of body.slice(m[0].length).matchAll(/([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) attrs[a[1].replace(/^.*:/, '').toLowerCase()] = xmlUnescape(a[2] ?? a[3] ?? '');
+      const el = { name: m[1].replace(/^.*:/, '').toLowerCase(), attrs, children: [], text: '' };
       top.children.push(el);
-      if (!m[5]) stack.push(el);
-    } else if (m[6] !== undefined) top.text += xmlUnescape(m[6]);
+      if (!selfClosing) stack.push(el);
+    }
+    if (i < 0) break;
   }
   return root;
 }
@@ -134,7 +177,7 @@ const decodeHref = (h) => (h ? h.trim() : h);
 const NS = 'xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/" xmlns:x="http://apple.com/ns/ical/"';
 export const BODIES = Object.freeze({
   principal: `<?xml version="1.0" encoding="utf-8"?><d:propfind ${NS}><d:prop><d:current-user-principal/></d:prop></d:propfind>`,
-  home: `<?xml version="1.0" encoding="utf-8"?><d:propfind ${NS}><d:prop><c:calendar-home-set/></d:prop></d:propfind>`,
+  home: `<?xml version="1.0" encoding="utf-8"?><d:propfind ${NS}><d:prop><c:calendar-home-set/><c:calendar-user-address-set/></d:prop></d:propfind>`,
   calendars: `<?xml version="1.0" encoding="utf-8"?><d:propfind ${NS}><d:prop><d:resourcetype/><d:displayname/><cs:getctag/>`
     + '<d:sync-token/><c:supported-calendar-component-set/><x:calendar-color/></d:prop></d:propfind>',
 });
@@ -156,7 +199,7 @@ export function multigetBody(hrefs) {
  * The read client for one person's Apple ID. `baseUrl` = https://caldav.icloud.com (tests: the fake's
  * http://127.0.0.1:<port>, which then is the one non-iCloud origin allowed). `fetchImpl` is replaceable.
  */
-export function createCaldavClient({ appleId, password, baseUrl = ICLOUD_CALDAV, timeoutMs = 20_000, fetchImpl = globalThis.fetch }) {
+export function createCaldavClient({ appleId, password, baseUrl = ICLOUD_CALDAV, timeoutMs = 20_000, fetchImpl = globalThis.fetch, maxBytes = MAX_ANSWER_BYTES }) {
   const base = new URL(baseUrl);
   const testOrigin = base.protocol === 'https:' && isIcloudUrl(base) ? null : base.origin;
   allowedUrl(base.toString(), { testOrigin });
@@ -168,13 +211,16 @@ export function createCaldavClient({ appleId, password, baseUrl = ICLOUD_CALDAV,
     let target = allowedUrl(url, { testOrigin });
     for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
       let res;
+      // One signal for the time-out and for stopping a body that grows past maxBytes.
+      const stop = new AbortController();
+      const signal = AbortSignal.any([AbortSignal.timeout(timeoutMs), stop.signal]);
       try {
         res = await fetchImpl(target.toString(), {
           method,
           headers: { authorization: auth, depth: String(depth), 'content-type': 'application/xml; charset=utf-8', accept: 'application/xml, text/xml' },
           body,
           redirect: 'manual',
-          signal: AbortSignal.timeout(timeoutMs),
+          signal,
         });
       } catch (err) {
         const timeout = err?.name === 'TimeoutError' || err?.name === 'AbortError';
@@ -193,9 +239,11 @@ export function createCaldavClient({ appleId, password, baseUrl = ICLOUD_CALDAV,
         throw new CaldavError('unauthorized', 'Apple refused the Apple ID or the app-specific password (made at appleid.apple.com → Sign-In and Security → App-Specific Passwords)', { status: res.status });
       }
       const len = Number(res.headers.get('content-length'));
-      if (Number.isFinite(len) && len > MAX_ANSWER_BYTES) throw new CaldavError('too_big', 'iCloud’s answer was too big', { status: res.status });
-      const text = await res.text();
-      if (text.length > MAX_ANSWER_BYTES) throw new CaldavError('too_big', 'iCloud’s answer was too big', { status: res.status });
+      if (Number.isFinite(len) && len > maxBytes) {
+        stop.abort();
+        throw new CaldavError('too_big', 'iCloud’s answer was too big', { status: res.status });
+      }
+      const text = await readCapped(res, { maxBytes, stop, timeoutMs });
       if (res.status !== 207 && res.status !== 200) {
         throw new CaldavError('http', `iCloud answered ${res.status}`, { status: res.status });
       }
@@ -206,16 +254,23 @@ export function createCaldavClient({ appleId, password, baseUrl = ICLOUD_CALDAV,
 
   const resolve = (href, against) => allowedUrl(new URL(href, against).toString(), { testOrigin }).toString();
 
-  /** The person's calendar home: { principalUrl, homeUrl }. */
+  /**
+   * The person's calendar home and addresses: { principalUrl, homeUrl, addresses } — `addresses` = the
+   * principal's calendar-user-address-set as lowercase emails (the Apple ID's aliases: "declined" is matched on any).
+   */
   async function discover() {
     const p = await request('PROPFIND', base.toString(), { depth: 0, body: BODIES.principal });
     const principalHref = multistatus(p.text).map((r) => textOf(find(r.props['current-user-principal'], 'href'))).find(Boolean);
     if (!principalHref) throw new CaldavError('bad_answer', 'iCloud didn’t say where this Apple ID’s calendars are');
     const principalUrl = resolve(principalHref, p.url);
     const h = await request('PROPFIND', principalUrl, { depth: 0, body: BODIES.home });
-    const homeHref = multistatus(h.text).map((r) => textOf(find(r.props['calendar-home-set'], 'href'))).find(Boolean);
+    const answers = multistatus(h.text);
+    const homeHref = answers.map((r) => textOf(find(r.props['calendar-home-set'], 'href'))).find(Boolean);
     if (!homeHref) throw new CaldavError('bad_answer', 'iCloud didn’t give this Apple ID’s calendar home');
-    return { principalUrl, homeUrl: resolve(homeHref, h.url) };
+    const addresses = [...new Set(answers.flatMap((r) => findAll(r.props['calendar-user-address-set'], 'href'))
+      .map((e) => textOf(e) ?? '').filter((v) => /^mailto:/i.test(v)).map((v) => v.replace(/^mailto:/i, '').trim().toLowerCase())
+      .filter(Boolean))].slice(0, 20);
+    return { principalUrl, homeUrl: resolve(homeHref, h.url), addresses };
   }
 
   /** The calendars in a home that hold events: [{ url, name, color, ctag, syncToken }]. */
@@ -263,4 +318,35 @@ export function createCaldavClient({ appleId, password, baseUrl = ICLOUD_CALDAV,
   }
 
   return { request, discover, listCalendars, eventEtags, fetchEvents, origin: base.origin };
+}
+
+/** The answer's text, read as bytes and stopped (the request aborted) once it passes `maxBytes` — counted in bytes, not characters. */
+async function readCapped(res, { maxBytes, stop, timeoutMs }) {
+  if (!res.body?.getReader) {
+    const t = await res.text();
+    if (Buffer.byteLength(t) > maxBytes) throw new CaldavError('too_big', 'iCloud’s answer was too big', { status: res.status });
+    return t;
+  }
+  const reader = res.body.getReader();
+  const chunks = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > maxBytes) {
+        stop.abort();
+        reader.cancel().catch(() => {});
+        throw new CaldavError('too_big', 'iCloud’s answer was too big', { status: res.status });
+      }
+      chunks.push(value);
+    }
+  } catch (err) {
+    if (err instanceof CaldavError) throw err;
+    const timeout = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+    throw new CaldavError(timeout ? 'timeout' : 'network',
+      timeout ? `iCloud didn’t answer within ${Math.round(timeoutMs / 1000)} s` : `The answer from iCloud was cut off (${err?.message ?? 'network error'})`);
+  }
+  return Buffer.concat(chunks).toString('utf8');
 }
