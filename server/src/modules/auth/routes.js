@@ -47,6 +47,11 @@ export function createAuthRouter(_ctx, service) {
     res.json({ ok: true });
   });
 
+  // GET /api/auth/people -> the two accounts (Admin page): who, and whether two-factor is on. No secrets.
+  router.get('/people', (req, res) => {
+    res.json({ people: service.listPeople() });
+  });
+
   // GET /api/auth/devices -> both people's devices
   router.get('/devices', (req, res) => {
     res.json({ currentDeviceId: req.auth.device.id, devices: service.listDevices() });

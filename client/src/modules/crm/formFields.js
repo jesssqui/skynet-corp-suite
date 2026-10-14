@@ -5,6 +5,7 @@
 // snapshot taken then), never the whole form: if the other person's change to another field
 // arrives while the sheet is open, saving must not put the old value back (it would apply as a
 // normal later edit, with no clash to review).
+import { OWNERS } from '@suite/shared/actors';
 import { parseDollars, centsToInput, textOrNull } from './logic.js';
 import { fromDateTimeInput, nowIso } from '../../ui/format.js';
 
@@ -104,4 +105,28 @@ export const serviceForm = {
  */
 export function activityAt(startAt, typedAt, now = new Date()) {
   return typedAt === startAt ? nowIso(now) : fromDateTimeInput(typedAt);
+}
+
+// Admin (D-admin): a new business. The sheet makes the record with a colour, who new tasks go to,
+// the next position (so it lands at the end of the list) and archived off; businesses are never
+// deleted, so there is no delete and no archive here (that toggle stays on the list).
+export const BUSINESS_NAME_MAX = 100;
+export const businessForm = {
+  defaults: { name: '', color: '#1d5f78', default_owner: 'owner' },
+  toFields: (v) => {
+    const name = textOrNull(v.name);
+    const problems = {};
+    if (!name) problems.name = 'Give the business a name.';
+    else if (name.length > BUSINESS_NAME_MAX) problems.name = `Up to ${BUSINESS_NAME_MAX} characters.`;
+    if (!OWNERS.includes(v.default_owner)) problems.default_owner = 'Choose who new tasks go to.';
+    if (!/^#[0-9a-f]{6}$/i.test(v.color ?? '')) problems.color = 'Pick a colour.';
+    return { fields: { name, color: v.color, default_owner: v.default_owner }, problems };
+  },
+};
+
+/** Where a new business goes: after every existing one, archived ones included (positions are never reused). */
+export function nextBusinessPosition(businesses) {
+  let max = 0;
+  for (const b of businesses) if (Number.isInteger(b.position) && b.position > max) max = b.position;
+  return max + 1;
 }
