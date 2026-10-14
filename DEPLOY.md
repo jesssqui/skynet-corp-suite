@@ -166,7 +166,8 @@ shows *A new version of the suite is ready · Reload*.
 
 **Chosen approach: the container's own scheduler.** The server makes the backup itself every night at `BACKUP_TIME`
 (default 03:15, `TZ` America/Toronto), copies it to the off-machine folder, verifies the copy and deletes copies older
-than `BACKUP_KEEP_DAYS` (default 30; the newest is always kept). If the container was down at backup time, it catches
+than `BACKUP_KEEP_DAYS` (default 30; the newest is always kept) there — and local copies older than
+`BACKUP_LOCAL_KEEP_DAYS` (default 7, D10; see step 14). If the container was down at backup time, it catches
 up two minutes after it starts. Nothing to set up on the Mac — no launchd plist, no Node on the Mac, no cron.
 
 The automations (System → Automations: the Friday review list at 8:00 on Fridays, "no next step" at 7:30 daily) run
@@ -361,6 +362,33 @@ and *Replace* it if it may have leaked. The link never appears in the suite's lo
 Tailscale must be on for the calendar to update; without it the calendar keeps its last copy. 20 wrong links from one
 device within an hour lock that device out of every feed for an hour (an old subscription left after *Replace* never
 gets near that); a server restart lifts it.
+
+### Your meetings in the suite (C6b)
+
+The other direction: each of you can have your iCloud meetings on **Today**, in **Plan my day** and in the day's load
+(the overbooked warning). The suite reads them over CalDAV with an **app-specific password** — never your Apple ID's own
+password — and only reads (it can't change or add anything in your calendars).
+
+1. **appleid.apple.com** → sign in → **Sign-In and Security** → **App-Specific Passwords** → **+** → name it *Suite* →
+   copy the password it shows (four groups of four letters, `abcd-efgh-ijkl-mnop`). Two-factor authentication must be
+   on for the Apple ID (it is for every current one).
+2. In the suite: **Account → Calendar → Meetings from Apple Calendar** → your Apple ID (the email you sign in to iCloud
+   with) and the app-specific password → **Connect**. The suite checks it with iCloud first (nothing is saved if Apple
+   refuses it), keeps it encrypted with a key file in the data volume (`calendar-secret.key`, like the other connections'
+   keys — never in the database or the backups in usable form) and never shows it again. Nothing is read yet.
+3. Untick any calendar you don't want read (a shared family calendar, say) → **Read these calendars**. Check: a meeting you add in Calendar on the
+   iPhone or Mac shows on Today within 15 minutes (or at once with **Read now**) and counts in that day's load.
+
+Each person connects their own. Reads every 15 minutes (`CALDAV_PULL_EVERY_MIN`), from a week back to two months ahead.
+What the suite keeps of a meeting: its title, times, calendar and whether it is busy — not its notes, place or who is
+invited. Today and the plan show each of you only your own, but **every signed-in device holds both people's meetings**
+(like tasks), and titles stay in the suite's sync history and backups even after a meeting or the connection is gone.
+A new app-specific password for the same Apple ID keeps your calendar choice. **If you revoke the
+app-specific password** at appleid.apple.com the suite stops calling at once (the card says so): make a new one and
+enter it with **New password…**. **Forget…** removes the connection and your meetings from the suite (also delete the
+app-specific password at appleid.apple.com). The **Apple Calendar** card on System → Connections pauses both people's
+reads (meetings stay as last read). After a restore the connection is kept as it is now and the meetings are put right
+by the next read.
 
 ## 8. Renewals and recurring costs (D6)
 
@@ -590,10 +618,97 @@ Then check once:
   Wholesale, Save Point Shop or Personal (their sales come from the Order Manager and eBay); Retail stores only for a
   store not connected to WooCommerce (the sheet warns). Needs a connection to the suite.
 - **The overview** (`/overview`; on a phone: Today → *Overview*): sales per business and *To deal with*. Support emails
-  show "Not connected yet · comes with the helpdesk (D14)" until D14.
+  count once a support mailbox is added (step 16).
 - **After restoring the suite from a backup**: nothing to do — the wholesale days are written again from the holding
   area (kept across restores) at start, and the last unmatched e-Transfer count is kept; sales entered by hand roll back
   with the backup (like the rest of the data).
+
+## 14. Files on clients, accounts and tasks (D10)
+
+Nothing to set up: the Files tab works after the update. Uploads, links and password pointers are on each client's
+page (**Files** card, and **Files (N)** under each account → the Files tab with a tab per account) and in each task's
+sheet. Links and password pointers can be added offline; **uploading and opening uploads need a connection** (the tab
+says so). A password pointer says *where* a password is (the password manager and the item's name), never the password.
+
+**Files and backup size.** Uploaded files are kept **inside the database**, so every nightly backup holds all of them and
+a restore brings them back together with their records (no second folder to back up or keep in step). The price: each
+backup is as big as the database *with* its files. Limits (in `.env`, then `docker compose up -d`): `FILES_MAX_MB` (25)
+per file and `FILES_MAX_TOTAL_MB` (**500**) for all files together. Where that space goes:
+- **Off-machine folder**: `BACKUP_KEEP_DAYS` (30) backups — up to about 15 GB once 500 MB of files is reached.
+- **Local copies, inside the Docker volume**: `BACKUP_LOCAL_KEEP_DAYS` (**7**, never more than `BACKUP_KEEP_DAYS`) backups,
+  plus the live database. The volume lives on Docker Desktop's virtual disk (64 GB by default, **shared with every image
+  and container**): Docker Desktop → Settings → Resources → *Virtual disk limit* shows it. 7 × 500 MB + the database is
+  about 4 GB at the limit.
+- **Backups never shrink by themselves**: deleting files frees space inside the database for later uploads, but the file
+  (and so every backup) stays at its largest size so far.
+- **Each restore leaves a `pre-restore-<time>.db`** (the database it replaced) in `/app/data/backups`, which is not
+  pruned (it is how a restore is undone): delete old ones by hand once you're sure, e.g.
+  `docker compose exec suite sh -c 'ls -lh /app/data/backups; rm /app/data/backups/pre-restore-<time>.db'`.
+Every Files tab shows the space used ("120 MB of 500 MB used"); `ls -lh "<your SUITE_OFFSITE_DIR>"` shows the backups'
+size. Lower `BACKUP_KEEP_DAYS` or the file limit if a folder gets tight. A deleted file's contents are kept
+`FILES_PURGE_DAYS` (30) more days — counted from when the suite received the delete —, then removed. The nightly backup
+runs beside the app without slowing it (it works in the background).
+
+**Restore drill (add to step 5 b):** before the backup, upload a small PDF to a test client's Files tab; after the
+restore, open that client's Files tab and download it: the same file.
+
+**On an iPhone home-screen app**: *Download* saves a file through iOS's download sheet; *View* shows an image inside the
+app; *Open* (a PDF) opens a new browser tab, which on some iOS versions doesn't share the app's sign-in — sign in there
+once, or use *Download*.
+
+## 15. Quotes, invoices and credit notes (D17/D18)
+Nothing to install. Once, in the suite: **Money → Billing → Business details** — for Great White North Design, Business
+consulting (and Retail stores if they invoice outside WooCommerce): the name as it should print, the address, **the HST
+number** (`123456789 RT0001`), email, phone, website, **how to pay** (printed on invoices: e-Transfer address, cheque
+payee…), the number prefix (GWND, BC… — the first number is …-0001; set it before the first document if the business
+already has numbering of its own, e.g. a prefix that continues it), quotes valid for and invoices due in (days), usual terms.
+Then check once:
+- A quote for a test lead: **Look at the PDF** (a draft copy), **Approve and send** → number …-Q-0001, the lead is
+  *Quoted*, a follow-up task 7 days out on Today. **Declined…** it (the lead is lost; delete the test lead after).
+- The suite sends no email: *Email it…* shares or downloads the PDF and opens a drafted email in your own mail app.
+- An invoice paid by hand shows on **Money → Sales** (*Invoices · <business>*) and in the overview's sales on the day
+  it was paid. If a business's invoices were also entered by hand under *Sales entered by hand* (D11), stop doing that
+  for invoices made here (they would count twice).
+- **After restoring the suite from a backup**: the business details, the number counters and the issued PDFs are kept;
+  Money → Billing lists documents issued after the backup (their PDF kept, their record gone) to enter again.
+
+## 16. Support mailboxes: tickets from each store's support email (D14)
+
+The suite reads each store's support mailbox over IMAP — **read only**: nothing is marked read, moved, deleted or sent.
+You keep replying from your normal mail app; the suite sees the reply in the Sent folder and marks the ticket answered.
+Do this once per mailbox:
+
+1. **Make an app password** for the suite (never the mailbox's normal password; revoke it there any time):
+   - Gmail / Google Workspace: 2-Step Verification on, then Google Account → Security → App passwords. Server
+     `imap.gmail.com`, Sent folder `[Gmail]/Sent Mail` (check Gmail → Settings → Forwarding and POP/IMAP: IMAP on).
+   - iCloud: account.apple.com → Sign-In and Security → App-Specific Passwords. Server `imap.mail.me.com`, Sent folder
+     `Sent Messages`.
+   - Your web host's mail (cPanel / Dovecot): usually `mail.<your domain>`, the mailbox's own password or an app
+     password if the host offers one; Sent folder `Sent` or `INBOX.Sent`.
+   - **Microsoft 365 / Outlook.com / Hotmail can't be read**: Microsoft only allows OAuth sign-in for IMAP, which the suite
+     doesn't do. The suite refuses such a mailbox at once and says so. Forward that mail to a mailbox the suite can read
+     (a Gmail or your host's), or wait for OAuth support.
+2. Make sure the mail app you answer from **saves sent mail in that mailbox's Sent folder** (it does when the account is
+   IMAP; with Gmail it always does). **Gmail**: the suite reads the INBOX every 5 minutes — an email archived (or moved
+   out by a filter that "skips the inbox") before then is never seen. Archive after the ticket shows up, or let filters
+   label without skipping the inbox.
+3. **System → Connections → Support mailboxes → Add a mailbox…**: name ("TinsXpress support"), server, username (the
+   address), app password, inbox folder (`INBOX`), Sent folder, its WooCommerce store (for the order on each ticket — add
+   the store first, step 11) and our business (Retail stores). The suite logs in and opens both folders before saving;
+   if the Sent folder is wrong it lists the mailbox's folders and names the one marked Sent.
+4. On the mailbox's card → **Settings…** → *Never a ticket from*: keep the store's own notifications out **by subject**,
+   e.g. `subject: New order, subject: Low stock` — **don't** add `wordpress@<your shop>` (or the shop's noreply address):
+   the store's contact form is sent From that same address with the customer as Reply-To, and blocking it would lose
+   every contact-form email. (WooCommerce's new-order email also has the customer as Reply-To — that's why it is told
+   apart by its subject.) Addresses and `@domains` here match who an email is From; use them for senders that are never
+   customers (a supplier's notification address, say).
+5. Check: send a test email to the mailbox from another address → within 5 minutes it shows on **Support** (sidebar) and
+   as "Answer support email #1 (…)" on Today's shared list; reply to it from your mail app → within 5 minutes the ticket
+   says *Answered* and the task is done.
+
+The first read goes back 14 days. Email texts are deleted 90 days after a ticket is answered or closed, tickets after a
+year; attachments are never kept. Settings: `HELPDESK_PULL_EVERY_MIN` (5), `HELPDESK_PULL_ENABLED` (on in production),
+`HELPDESK_KEY_FILE` (the key that encrypts the app passwords — in the data volume, never in backups).
 
 ## Troubleshooting
 

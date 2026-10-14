@@ -69,6 +69,18 @@ export async function createApp({ config, db, log, modules = registeredModules, 
       app[method](route.path, ...route.handlers(modCtx, ctx.services[mod.name]));
     }
   }
+  // D10: a module may take a raw (application/octet-stream) body on exact POST paths (`rawUploads: ['/upload']`):
+  // the files module's upload. Only marked here; the guard still checks the Origin and the route needs a session.
+  // A cross-site form can't send that type, and a cross-site fetch only after a preflight the server never approves.
+  for (const mod of modules) {
+    for (const at of mod.rawUploads ?? []) {
+      if (!/^\/[a-z0-9/_-]+$/.test(at)) throw new Error(`${mod.name}: a raw upload path must be an exact path like /upload`);
+      app.post(`/api/${mod.name}${at}`, (req, _res, next) => {
+        req.rawUpload = true;
+        next();
+      });
+    }
+  }
   // Origin/CSRF check, JSON-only bodies, and the session (req.auth) for every API request.
   app.use('/api', auth.guard);
   // A module may take bigger JSON bodies on some paths (`bodyLimits: { '/import': '8mb' }`): signed in

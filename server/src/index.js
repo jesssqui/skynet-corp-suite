@@ -35,6 +35,7 @@ if (config.backup.enabled) {
       dir: config.backup.dir,
       offsiteDir: config.backup.offsiteDir,
       keepDays: config.backup.keepDays,
+      localKeepDays: config.backup.localKeepDays,
       now: new Date(),
       log: (m) => backupLog.info(m),
     }),
@@ -78,6 +79,22 @@ if (config.ebay.scheduled) {
   log.info('eBay pulls are off (EBAY_PULL_ENABLED); Pull now on its card still works');
 }
 
+// Apple Calendar (C6b): each person's meetings (one look a minute; read when due, every 15 minutes).
+let stopCalendar = () => {};
+if (config.calendar.apple.scheduled) {
+  stopCalendar = ctx.services.calendar.apple.startPuller();
+} else {
+  log.info('Apple Calendar reads are off (CALDAV_PULL_ENABLED); Pull now on Account → Calendar still works');
+}
+
+// Helpdesk (D14): each support mailbox read every few minutes (one look a minute; a mailbox is read when due).
+let stopHelpdesk = () => {};
+if (config.helpdesk.scheduled) {
+  stopHelpdesk = ctx.services.helpdesk.startPuller();
+} else {
+  log.info('Support mailbox pulls are off (HELPDESK_PULL_ENABLED); Pull now on a mailbox’s card still works');
+}
+
 let shuttingDown = false;
 function shutdown(signal) {
   if (shuttingDown) return;
@@ -89,6 +106,8 @@ function shutdown(signal) {
   stopStockroom();
   stopWoo();
   stopEbay();
+  stopCalendar();
+  stopHelpdesk();
   server.close(() => {
     db.close(); // checkpoints the WAL into the main file
     stopHeartbeat();

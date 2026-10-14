@@ -559,6 +559,7 @@ export function createSyncService({ db, log }) {
     })();
     const who = { actor, deviceId };
     const results = steps.map((step) => applyStep(step, who));
+    changed(steps.filter((s, i) => results[i]?.status === 'applied' || results[i]?.status === 'clash').map((s) => s.entity), actor);
     return {
       generation,
       seq: currentSeq(),
@@ -704,6 +705,34 @@ export function createSyncService({ db, log }) {
    */
   function resolveClash({ id, resolution, actor }) {
     if (!RESOLUTIONS.includes(resolution)) throw new HttpError(400, `resolution must be ${RESOLUTIONS.join(' or ')}`);
+    const out = settleClash({ id, resolution, actor });
+    if (out.step) changed([out.clash.entity], actor);
+    return out;
+  }
+
+  /**
+   * D18: listeners told after a device's push applied steps (or a settled clash changed a record) — the record types it
+   * touched. For modules that keep server-side figures from synced records (billing's invoice sales). Called after the
+   * steps are committed; a listener's error is logged, never the push's.
+   */
+  const changeListeners = new Set();
+  function onChange(fn) {
+    changeListeners.add(fn);
+    return () => changeListeners.delete(fn);
+  }
+  function changed(entities, actor) {
+    if (!entities.length || !changeListeners.size) return;
+    const set = new Set(entities);
+    for (const fn of changeListeners) {
+      try {
+        fn({ entities: set, actor });
+      } catch (err) {
+        log?.error?.('sync: a change listener failed:', err);
+      }
+    }
+  }
+
+  function settleClash({ id, resolution, actor }) {
     return db.transaction(() => {
       const c = getClash.get(id);
       if (!c) throw new HttpError(404, 'No such clash');
@@ -776,6 +805,7 @@ export function createSyncService({ db, log }) {
     applyLocal,
     listClashes,
     resolveClash,
+    onChange,
     recordState,
     deviceActor,
     info,

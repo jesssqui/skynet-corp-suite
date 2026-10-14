@@ -373,6 +373,14 @@ export function createCrmService({ db, services, log }) {
       FROM crm_services s JOIN crm_relationships r ON r.id = s.relationship_id AND r.deleted_at IS NULL ${REL_PARENTS}
       JOIN crm_clients c ON c.id = a.client_id AND c.deleted_at IS NULL
       WHERE s.id = ? AND s.deleted_at IS NULL`),
+    // D15 (the overview's business cards): every live service (any status) with its relationship's business, kind and
+    // status and its client's status.
+    services: db.prepare(`SELECT s.id, s.name, s.status, s.billing, s.amount_cents, s.rate_cents, s.period, s.renewal_date,
+        r.business_id AS business_id, r.kind AS relationship_kind, r.status AS relationship_status, r.account_id AS account_id,
+        a.client_id AS client_id, c.status AS client_status
+      FROM crm_services s JOIN crm_relationships r ON r.id = s.relationship_id AND r.deleted_at IS NULL ${REL_PARENTS}
+      JOIN crm_clients c ON c.id = a.client_id AND c.deleted_at IS NULL
+      WHERE s.deleted_at IS NULL ORDER BY s.id`),
     clientsActivity: db.prepare(`SELECT c.id, c.name, c.status, c.created_at,
         (SELECT max(t.at) FROM crm_activities t WHERE t.client_id = c.id AND t.deleted_at IS NULL) AS last_activity_at
       FROM crm_clients c WHERE c.deleted_at IS NULL AND c.status = 'active' ORDER BY c.name COLLATE NOCASE, c.id`),
@@ -569,6 +577,11 @@ export function createCrmService({ db, services, log }) {
      * stored plus account_name, client_id and business_id (the relationship's).
      */
     renewalsBetween: (from, to) => live.renewals.all(from, to),
+    /**
+     * D15 (the overview's business cards): every live service — any status; its relationship, account and client live —
+     * with business_id, relationship_kind, relationship_status, account_id, client_id and client_status.
+     */
+    liveServices: () => live.services.all(),
     /**
      * D6 (renewal reminders): one service as stored plus account_name, account_id, client_id,
      * client_name, client_status, relationship_status and business_id — any status — or null when it, its relationship,

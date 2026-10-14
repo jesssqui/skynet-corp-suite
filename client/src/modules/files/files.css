@@ -1,0 +1,42 @@
+/* Files (D10): the panel on the Files tab, the client page's card and a task's sheet. Phones from 320 px:
+   rows wrap, nothing scrolls sideways. */
+.files-panel { position: relative; display: grid; gap: var(--space-3); min-width: 0; }
+.files-dragging { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: var(--radius); }
+.files-drop-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.files-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.files-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.files-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-2); align-items: start;
+  padding: var(--space-2) 0; border-top: 1px solid var(--border);
+}
+.files-list > .files-row:first-child { border-top: 0; }
+.files-icon { color: var(--text-muted); padding-top: 2px; }
+.files-name { font-weight: 600; overflow-wrap: anywhere; }
+.files-name a { color: var(--accent); text-decoration: none; }
+.files-notes { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-muted); font-size: var(--text-sm); }
+.files-row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; }
+.files-text-link {
+  color: var(--accent); font-weight: 600; font-size: var(--text-sm); padding: 0 var(--space-2);
+  min-height: var(--tap); display: inline-flex; align-items: center; text-decoration: none;
+}
+.files-entry {
+  display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface-2); min-width: 0;
+}
+.files-tabs { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.files-tab {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 999px;
+  min-height: var(--tap); padding: 0 var(--space-3); font-size: var(--text-sm); cursor: pointer; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.files-tab[aria-selected='true'] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+.files-viewer {
+  position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, 0.85); display: flex; flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.files-viewer-bar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); color: #fff; }
+.files-viewer-button {
+  color: #fff; background: transparent; border: 0; min-height: var(--tap); min-width: var(--tap); padding: 0 var(--space-2);
+  display: inline-flex; align-items: center; justify-content: center; font-weight: 600; text-decoration: none; cursor: pointer;
+}
+.files-viewer img { flex: 1; min-height: 0; width: 100%; object-fit: contain; }

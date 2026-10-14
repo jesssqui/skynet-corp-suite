@@ -20,7 +20,11 @@
     "./campaigns": "./campaigns.js",
     "./leadImport": "./leadImport.js",
     "./sales": "./sales.js",
-    "./ebay": "./ebay.js"
+    "./ebay": "./ebay.js",
+    "./files": "./files.js",
+    "./playbooks": "./playbooks.js",
+    "./billing": "./billing.js",
+    "./targets": "./targets.js"
   },
   "scripts": {
     "test": "node --test \"test/*.test.js\""

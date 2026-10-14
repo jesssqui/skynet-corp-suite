@@ -23,6 +23,9 @@ import { resoldLine } from '../costs/logic.js';
 import { STAGE_LABELS, clientLeads, leadTimelineItems, leadValueText, nextStepOf, isOpenLead } from './leads.js';
 import { LeadForm } from './leadForms.jsx';
 import { WonTwice } from './LeadNotices.jsx';
+import { ClientFilesCard, AccountFilesLink } from '../files/ClientFilesCard.jsx';
+import { ClientProjectsCard } from '../playbooks/ClientProjectsCard.jsx';
+import { ClientBillingCard } from '../billing/cards.jsx';
 import './crm.css';
 
 // One client on one screen (/crm/clients/:id): who they are, their businesses (accounts) with
@@ -191,6 +194,7 @@ function AccountItem({ account, rels, servicesByRel, resoldByRel, links, busines
       {account.notes ? <p style={{ ...preWrap, ...muted }}>{account.notes}</p> : null}
       {links.map((l) => <LinkLine key={l.id} link={l} me={me} onUndo={(link) => open({ kind: 'undo-link', link, account, cards: wholesaleCards })} />)}
       <AccountWholesale cards={wholesaleCards} figures={sumCards(wholesaleCards)} today={today} hideQuiet={clientClosed} />
+      <AccountFilesLink clientId={account.client_id} accountId={account.id} />
       <RecordSync record={account} what="account" />
       {rels.length ? (
         <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 'var(--space-2)' }}>
@@ -611,6 +615,9 @@ function ClientScreen({ clientId }) {
             today={today}
             onNew={() => open({ kind: 'lead' })}
           />
+          <ClientFilesCard clientId={client.id} />
+          <ClientProjectsCard clientId={client.id} />
+          <ClientBillingCard clientId={client.id} />
         </div>
         <div className="crm-col">
           <ClientTasksCard

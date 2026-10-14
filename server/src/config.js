@@ -139,6 +139,20 @@ export function loadConfig(env = process.env) {
       publicUrl: publicUrl(env.SUITE_URL),
       // The zone of tasks' due times; timed events are written in it (with a VTIMEZONE).
       timeZone: timeZone(env),
+      // C6b: meetings read from each person's iCloud calendars (CalDAV, read-only).
+      apple: {
+        // The key that encrypts each person's app-specific password in the database — a file in the data
+        // folder, like D16's (never in the database or the backups). Made on first use.
+        keyFile: path.resolve(env.CALDAV_KEY_FILE || path.join(dataDir, 'calendar-secret.key')),
+        // iCloud's CalDAV address. Not an env setting: tests pass their fake's address through loadConfig's overrides only.
+        baseUrl: 'https://caldav.icloud.com',
+        // Each call gives up after this long.
+        timeoutMs: int(env.CALDAV_TIMEOUT_MS, 20_000, 'CALDAV_TIMEOUT_MS'),
+        // How often each person's calendars are read again (minutes).
+        everyMinutes: Math.max(5, int(env.CALDAV_PULL_EVERY_MIN, 15, 'CALDAV_PULL_EVERY_MIN')),
+        // The pull loop (one look a minute; reads only when due): on by default in production; Pull now works either way.
+        scheduled: bool(env.CALDAV_PULL_ENABLED, production),
+      },
     },
     stockroom: {
       // D16: the key that encrypts Stockroom's read key (its secret) in the database — a file in the
@@ -176,6 +190,32 @@ export function loadConfig(env = process.env) {
       // The pull loop: on by default in production; "Pull now" on the card works either way.
       scheduled: bool(env.EBAY_PULL_ENABLED, production),
     },
+    files: {
+      // D10: uploads (their bytes live in the database, so every nightly backup holds them all — see
+      // DEPLOY.md for the backup size this means). Per file, all files together, and how long a deleted
+      // file's bytes are kept (so a delete undone through a sync clash still has them).
+      maxFileBytes: int(env.FILES_MAX_MB, 25, 'FILES_MAX_MB') * 1024 * 1024,
+      maxTotalBytes: int(env.FILES_MAX_TOTAL_MB, 500, 'FILES_MAX_TOTAL_MB') * 1024 * 1024,
+      purgeDays: int(env.FILES_PURGE_DAYS, 30, 'FILES_PURGE_DAYS'),
+      // An upload that sends nothing for this long is answered 408 and dropped (D10 review).
+      uploadIdleMs: 60_000,
+    },
+    helpdesk: {
+      // D14: the key that encrypts each support mailbox's app password in the database — a file in the data folder,
+      // like D12's (never in the database or the backups). Made on first use.
+      keyFile: path.resolve(env.HELPDESK_KEY_FILE || path.join(dataDir, 'helpdesk-secret.key')),
+      // Each mail server call (connect, login, a fetch) gives up after this long.
+      timeoutMs: int(env.HELPDESK_TIMEOUT_MS, 30_000, 'HELPDESK_TIMEOUT_MS'),
+      // How often each mailbox is read for new mail.
+      everyMinutes: int(env.HELPDESK_PULL_EVERY_MIN, 5, 'HELPDESK_PULL_EVERY_MIN'),
+      // A whole read of one mailbox gives up after this long (the connection is closed; tried again later).
+      pullDeadlineMs: int(env.HELPDESK_PULL_DEADLINE_MS, 5 * 60_000, 'HELPDESK_PULL_DEADLINE_MS'),
+      // The pull loop: on by default in production; "Pull now" on a mailbox's card works either way.
+      scheduled: bool(env.HELPDESK_PULL_ENABLED, production),
+      // Tests only: a mail server on this machine may be reached over plain TCP on any port. Never in production —
+      // there it is always TLS on port 993.
+      plainLocalhost: !production && bool(env.HELPDESK_TEST_PLAIN_LOCALHOST, false),
+    },
     automations: {
       // The minute scheduler (C8): on by default in production only, like the backup schedule.
       // "Run now" on the Automations page works either way.
@@ -188,6 +228,10 @@ export function loadConfig(env = process.env) {
       dir: path.resolve(env.BACKUP_DIR || path.join(dataDir, 'backups')),
       offsiteDir: env.BACKUP_OFFSITE_DIR ? path.resolve(env.BACKUP_OFFSITE_DIR) : null,
       keepDays: int(env.BACKUP_KEEP_DAYS, 30, 'BACKUP_KEEP_DAYS'),
+      // D10 review: the local copies (inside the Docker volume, which shares the Docker VM's disk with images) are
+      // kept fewer days than the off-machine ones: they are for quick restores, and with files in the database
+      // each is as big as the database. Never more than BACKUP_KEEP_DAYS.
+      localKeepDays: Math.min(int(env.BACKUP_LOCAL_KEEP_DAYS, 7, 'BACKUP_LOCAL_KEEP_DAYS'), int(env.BACKUP_KEEP_DAYS, 30, 'BACKUP_KEEP_DAYS')),
     },
   };
 }

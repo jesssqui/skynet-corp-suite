@@ -37,6 +37,11 @@ export const PLANNER_ENTITIES = [
       // D8: the lead it is the next step for. A plain ref (deleting a lead never hides its tasks); an open
       // dated task naming a lead clears its "No next step" (leadsWithoutNextStep in @suite/shared/leads).
       lead_id: { type: 'id', ref: 'lead' },
+      // D9: the playbook run that made it and the run's copy of its step. Plain ids with no `ref`: the
+      // playbooks module registers after the planner, which must not depend on it; a run deleted later
+      // just reads as none (its tasks stay).
+      run_id: { type: 'id' },
+      run_step_id: { type: 'id' },
     },
   },
   {

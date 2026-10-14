@@ -5,7 +5,7 @@
 // emails (not connected yet), payments with no order to go against, no next step, clients gone quiet — each line
 // linking to where it is dealt with — plus this device's own changes it couldn't save (the sync bar's "need attention").
 // Server data (GET /api/overview, not synced): needs a connection to the suite. Built for the Mac; works on a phone.
-// Room is left below for D15's cards (stock, clients, goals…).
+// Below (D15): the goals scorecard of this month and a card per business (Cards.jsx).
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useServerData } from '../../api/useServerData.js';
@@ -19,6 +19,7 @@ import {
   SECTIONS, UNMATCHED_MISSING, unmatchedLine, suggestedLine, itemLine, stateNote, countText, summaryText, shownCount, moreText, restText, attentionTotal,
   totalOnlyNote, storesNote,
 } from './logic.js';
+import { BusinessCards, GoalsScorecard } from './Cards.jsx';
 import './overview.css';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
@@ -185,6 +186,8 @@ export default function OverviewPage() {
               </div>
             </div>
           </Card>
+          {data.goals ? <GoalsScorecard goals={data.goals} today={data.today ?? today} /> : null}
+          <BusinessCards cards={data.cards} today={data.today ?? today} />
         </div>
       ) : null}
     </>
