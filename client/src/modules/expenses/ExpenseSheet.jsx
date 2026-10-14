@@ -3,10 +3,10 @@
 // and a retry after a partial failure never makes the expense twice or repeats a tag.
 import { useMemo, useRef, useState } from 'react';
 import { store } from '../../sync/index.js';
-import { TextField, SelectField, TextAreaField, CheckboxField, Notice } from '../../ui/index.js';
+import { TextField, TextAreaField, CheckboxField, Notice } from '../../ui/index.js';
 import { FormSheet, RecordSync, useAction } from '../crm/parts.jsx';
-import { actorLabel, businessShortName, formatMoney, parseDollars } from '../crm/logic.js';
-import { EXPENSE_DESCRIPTION_MAX, EXPENSE_CATEGORY_MAX, EXPENSE_NOTES_MAX, PAID_BY, splitCents, shareLabel } from '@suite/shared/expenses';
+import { businessShortName, formatMoney, parseDollars } from '../crm/logic.js';
+import { EXPENSE_DESCRIPTION_MAX, EXPENSE_CATEGORY_MAX, EXPENSE_NOTES_MAX, splitCents, shareLabel } from '@suite/shared/expenses';
 import { expenseFormValues, expenseFieldsFrom, tagChanges } from './logic.js';
 
 const muted = { fontSize: 'var(--text-xs)', color: 'var(--text-muted)' };
@@ -98,13 +98,6 @@ export default function ExpenseSheet({ record = null, shares = [], businesses, d
         <TextField id="exp-date" label="Date spent" type="date" value={values.spent_on} onChange={setField('spent_on')} />
       </div>
       <div style={{ display: 'grid', gap: 'var(--space-3)', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' }}>
-        <SelectField
-          id="exp-paid"
-          label="Paid by (optional)"
-          value={values.paid_by}
-          onChange={(value) => setValues((cur) => ({ ...cur, paid_by: value }))}
-          options={[{ value: '', label: 'Not set' }, ...PAID_BY.map((a) => ({ value: a, label: actorLabel(a, me) }))]}
-        />
         <TextField id="exp-category" label="Category (optional)" value={values.category} onChange={setField('category')} maxLength={EXPENSE_CATEGORY_MAX} hint="Like Software or Shipping" />
       </div>
       <fieldset data-testid="expense-businesses" style={{ border: 0, padding: 0, margin: 0, display: 'grid', gap: 'var(--space-2)' }}>
@@ -123,7 +116,7 @@ export default function ExpenseSheet({ record = null, shares = [], businesses, d
             Split evenly, {shareLabel(picked.length)} each: {parts.map((p) => `${nameOf(p.businessId)} ${formatMoney(p.cents)}`).join(' · ')}
           </Notice>
         ) : null}
-        {picked.length === 0 ? <span style={muted}>Not for any business yet: it shows under “Not assigned”.</span> : null}
+        {picked.length === 0 ? <span style={muted}>Not for any business yet: it counts as company-wide.</span> : null}
       </fieldset>
       <TextAreaField id="exp-notes" label="Notes (optional)" value={values.notes} onChange={setField('notes')} rows={3} maxLength={EXPENSE_NOTES_MAX} />
     </FormSheet>

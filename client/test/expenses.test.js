@@ -16,7 +16,7 @@ test('a new expense: the form starts empty; saving checks the description, the a
   const ok = expenseFieldsFrom({ ...v, description: ' Invented ink ', amount: '1,234.5', spent_on: '2026-10-03', businesses: [W] });
   assert.equal(ok.error, null);
   assert.deepEqual(ok.fields, {
-    description: 'Invented ink', amount_cents: 123450, spent_on: '2026-10-03', paid_by: null, category: null, notes: null,
+    description: 'Invented ink', amount_cents: 123450, spent_on: '2026-10-03', category: null, notes: null,
   });
   assert.match(expenseFieldsFrom({ ...v, description: 'x', amount: '12.345', spent_on: '2026-10-03' }).error, /amount/i);
   assert.match(expenseFieldsFrom({ ...v, description: 'x', amount: '0', spent_on: '2026-10-03' }).error, /amount/i);
@@ -24,7 +24,7 @@ test('a new expense: the form starts empty; saving checks the description, the a
 });
 
 test('an edit saves only what changed, and a business-free expense is allowed', () => {
-  const record = { id: 'e1', description: 'Hosting', amount_cents: 2400, spent_on: '2026-10-01', paid_by: 'owner', category: 'Web', notes: '' };
+  const record = { id: 'e1', description: 'Hosting', amount_cents: 2400, spent_on: '2026-10-01', category: 'Web', notes: '' };
   const v = expenseFormValues(record, [W]);
   assert.equal(v.amount, '24');
   const unchanged = expenseFieldsFrom(v, record);
@@ -43,9 +43,9 @@ test('business tags: the ones added and removed, nothing for the ones kept', () 
 
 test('the summary: all businesses shows the true total; a business shows its own share', () => {
   const expenses = [
-    { id: 'shared', description: 'Shared', amount_cents: 10000, spent_on: '2026-10-03', paid_by: null },
-    { id: 'alone', description: 'Alone', amount_cents: 2500, spent_on: '2026-10-09', paid_by: null },
-    { id: 'none', description: 'None', amount_cents: 700, spent_on: '2026-09-30', paid_by: null },
+    { id: 'shared', description: 'Shared', amount_cents: 10000, spent_on: '2026-10-03' },
+    { id: 'alone', description: 'Alone', amount_cents: 2500, spent_on: '2026-10-09' },
+    { id: 'none', description: 'None', amount_cents: 700, spent_on: '2026-09-30' },
   ];
   const shares = [{ expense_id: 'shared', business_id: W }, { expense_id: 'shared', business_id: A }, { expense_id: 'alone', business_id: A }];
   const all = summarize(expenses, shares, { month: '2026-10' });

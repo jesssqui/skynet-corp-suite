@@ -7,7 +7,6 @@ CREATE TABLE expenses_items (
   description   TEXT NOT NULL,
   amount_cents  INTEGER NOT NULL,
   spent_on      TEXT NOT NULL,      -- "YYYY-MM-DD", local day it was spent
-  paid_by       TEXT,               -- owner | partner (optional)
   category      TEXT,
   notes         TEXT,
   created_at    TEXT,

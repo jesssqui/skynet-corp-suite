@@ -1177,11 +1177,12 @@ Code `server/src/modules/expenses/` (record types in `entities.js`), the money r
 `client/test/expenses.test.js`. Two synced record types, no HTTP routes: devices use their offline copy, server code
 would write through `sync.applyLocal`. Registered after `planner` (its shares point at CRM businesses); like the
 planner it is left out of any test app that leaves out `crm`.
+- Everything is paid by the company (one umbrella, no payer business or person is recorded). Businesses are tags for who an expense is for.
 - `expense` (`expenses_items`): description* (≤ 200), amount_cents* (whole cents, 1 … 1,000,000,000 = $10 million;
-  checked by `checkExpense`), spent_on* (the local day), paid_by (owner | partner, optional), category (≤ 80), notes.
+  checked by `checkExpense`), spent_on* (the local day), category (≤ 80), notes.
 - `expense_share` (`expenses_shares`): expense_id* (parent: deleting the expense hides its shares), business_id* (one
   of ours, Personal included; checked by `checkExpenseShare`). Created or deleted, never edited (like links). An
-  expense with no shares is not for any business and shows under "Not assigned".
+  expense with no shares is not for any business and shows as company-wide.
 - **Split**: a tagged expense is split evenly between its businesses, to the cent (`splitCents`). The cents that do not
   divide go one each to the businesses in id order, so the parts always add up to the amount exactly. No percentage is
   stored; `shareLabel` only shows it (50%, 33.3%). Shares of the same business from two offline devices count once.

@@ -37,7 +37,6 @@ export function expenseFormValues(record, businessIds = []) {
     description: record?.description ?? '',
     amount: record ? centsToInput(record.amount_cents) : '',
     spent_on: record?.spent_on ?? '',
-    paid_by: record?.paid_by ?? '',
     category: record?.category ?? '',
     notes: record?.notes ?? '',
     businesses: [...businessIds],
@@ -70,7 +69,6 @@ export function expenseFieldsFrom(values, record = null) {
     description,
     amount_cents: cents,
     spent_on: values.spent_on,
-    paid_by: textOrNull(values.paid_by),
     category,
     notes,
   };
@@ -79,7 +77,6 @@ export function expenseFieldsFrom(values, record = null) {
     description: record.description,
     amount_cents: record.amount_cents,
     spent_on: record.spent_on,
-    paid_by: textOrNull(record.paid_by),
     category: textOrNull(record.category),
     notes: textOrNull(record.notes),
   };

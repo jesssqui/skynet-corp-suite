@@ -2,7 +2,7 @@
 // per business it is for). Registered with sync at start-up; devices learn them from GET /api/sync/info.
 // A share points at an expense as its parent: deleting the expense hides its shares. Money is whole
 // cents (see @suite/shared/expenses for the even split).
-import { PAID_BY, EXPENSE_DESCRIPTION_MAX, EXPENSE_CATEGORY_MAX, EXPENSE_NOTES_MAX } from '@suite/shared/expenses';
+import { EXPENSE_DESCRIPTION_MAX, EXPENSE_CATEGORY_MAX, EXPENSE_NOTES_MAX } from '@suite/shared/expenses';
 
 export const EXPENSES_ENTITIES = [
   {
@@ -14,7 +14,6 @@ export const EXPENSES_ENTITIES = [
       description: { type: 'text', max: EXPENSE_DESCRIPTION_MAX, required: true },
       amount_cents: { type: 'integer', required: true }, // checked by the module (checkExpense)
       spent_on: { type: 'date', required: true },
-      paid_by: { type: 'enum', values: PAID_BY }, // who paid, if it matters
       category: { type: 'text', max: EXPENSE_CATEGORY_MAX },
       notes: { type: 'text', max: EXPENSE_NOTES_MAX },
     },

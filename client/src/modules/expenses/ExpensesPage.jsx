@@ -5,9 +5,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { PageHeader, Card, Button, EmptyState, TextField, SelectField } from '../../ui/index.js';
 import { formatDate, localDate } from '../../ui/format.js';
-import { useAuth } from '../../auth/session.jsx';
 import { BusinessChip } from '../crm/parts.jsx';
-import { actorLabel, formatMoney } from '../crm/logic.js';
+import { formatMoney } from '../crm/logic.js';
 import { shareLabel } from '@suite/shared/expenses';
 import { useExpenseData } from './data.js';
 import { monthOf, monthLabel, summarize } from './logic.js';
@@ -18,8 +17,6 @@ const muted = { fontSize: 'var(--text-xs)', color: 'var(--text-muted)' };
 
 export default function ExpensesPage() {
   const { data, loading } = useExpenseData();
-  const { session } = useAuth();
-  const me = session?.user?.actor ?? null;
   const [params, setParams] = useSearchParams();
   const thisMonth = monthOf(localDate());
   const month = params.get('month') || thisMonth;
@@ -74,7 +71,7 @@ export default function ExpensesPage() {
           />
         </div>
 
-        <Card title={business ? `${businessName}’s share` : 'Spent this month'}>
+        <Card title={business ? `${businessName}’s share` : 'Company total this month'}>
           {!summary ? (
             <p style={{ ...muted, margin: 0 }}>{loading ? 'Loading…' : ' '}</p>
           ) : (
@@ -93,7 +90,7 @@ export default function ExpensesPage() {
                   ))}
                   {summary.unassigned > 0 ? (
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-2)', ...muted }}>
-                      <span>Not assigned to a business</span>
+                      <span>Company-wide (no business)</span>
                       <span style={{ fontWeight: 600, color: 'var(--text)' }}>{formatMoney(summary.unassigned)}</span>
                     </div>
                   ) : null}
@@ -127,14 +124,13 @@ export default function ExpensesPage() {
                       <span style={muted}>
                         {formatDate(e.spent_on)}
                         {e.category ? ` · ${e.category}` : ''}
-                        {e.paid_by ? ` · paid by ${actorLabel(e.paid_by, me)}` : ''}
                       </span>
                     </span>
                     <span style={{ display: 'grid', gap: 4, justifyItems: 'end', flexShrink: 0 }}>
                       <strong>{formatMoney(mine ? mine.cents : e.amount_cents)}</strong>
                       {mine ? <span style={muted}>of {formatMoney(e.amount_cents)}</span> : null}
                       <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                        {parts.length === 0 ? <span style={muted}>Not assigned</span> : null}
+                        {parts.length === 0 ? <span style={muted}>Company-wide</span> : null}
                         {parts.map((p) => (
                           <BusinessChip key={p.businessId} business={businessById.get(p.businessId)} short />
                         ))}
@@ -165,7 +161,6 @@ export default function ExpensesPage() {
           shares={sheet.record ? sharesByExpense.get(sheet.record.id) ?? [] : []}
           businesses={data.businesses}
           defaultBusinesses={business ? [business] : []}
-          me={me}
           onClose={close}
           onDone={close}
         />

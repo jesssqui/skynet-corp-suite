@@ -3,9 +3,6 @@
 // it is tagged with the businesses it is for (expense_share records). A tagged expense is split
 // evenly between its businesses, to the cent: the shares always add up to the amount. Nothing
 // stores a percentage — "33.3%" is only how a third is shown. See CLAUDE.md, "Expenses (C9)".
-import { ACTORS } from './actors.js';
-
-export { ACTORS as PAID_BY };
 
 export const EXPENSE_DESCRIPTION_MAX = 200;
 export const EXPENSE_CATEGORY_MAX = 80;
