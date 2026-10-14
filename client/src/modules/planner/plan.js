@@ -13,6 +13,7 @@ import {
 import { parseLocalDate } from '../../ui/format.js';
 import { costsRenewingBetween } from '@suite/shared/costs';
 import { buildToday, compareDue, dueTimeOf, isMineOrShared, isTop, moveChange, otherActor, relationshipsWithoutNextStep } from './logic.js';
+import { busyMinutes, busyMinutesByDay, meetingsOn } from './meetings.js';
 
 export { MONTH_PRIORITY_LIMIT, planMonth, isStaleGoal };
 
@@ -320,30 +321,40 @@ export function taskDay(task, today, me) {
   return task.due_date ?? null;
 }
 
-/** Minutes planned per day from today on, for `me`: Map<day, minutes> (one pass over the tasks). */
-export function loadsByDay(tasks, { me, today }) {
+/**
+ * Minutes planned per day from today on, for `me`: Map<day, minutes> (one pass over the tasks). C6b: plus the
+ * minutes their busy meetings from Apple Calendar cover that day (`meetings`; overlaps counted once).
+ */
+export function loadsByDay(tasks, { me, today, meetings = null }) {
   const m = new Map();
   for (const t of tasks) {
     const day = taskDay(t, today, me);
     if (!day || !t.estimate_minutes) continue;
     m.set(day, (m.get(day) ?? 0) + t.estimate_minutes);
   }
+  if (meetings?.length) {
+    for (const [day, minutes] of busyMinutesByDay(meetings, { me, from: today })) m.set(day, (m.get(day) ?? 0) + minutes);
+  }
   return m;
 }
 
 /**
- * One day's load for `me` (their own tasks and the shared list's that count on it — taskDay):
- * { day, minutes, dayMinutes, over, excess, tasks (in Today's order), unestimated (no estimate:
- * counted 0 and listed) }.
+ * One day's load for `me` (their own tasks and the shared list's that count on it — taskDay — and, C6b,
+ * their meetings from Apple Calendar): { day, minutes (tasks + meetings), taskMinutes, meetingMinutes,
+ * dayMinutes, over, excess, tasks (in Today's order), meetings (that day's, in time order), unestimated
+ * (tasks with no estimate: counted 0 and listed) }. Meetings are never something to push: they are in
+ * `minutes` but never in `tasks`.
  */
-export function dayLoad(tasks, { me, today, day = today, dayMinutes }) {
+export function dayLoad(tasks, { me, today, day = today, dayMinutes, meetings = null }) {
   const on = [];
   for (const t of tasks) if (taskDay(t, today, me) === day) on.push(t);
   on.sort(compareDue);
-  const minutes = on.reduce((sum, t) => sum + (t.estimate_minutes || 0), 0);
+  const taskMinutes = on.reduce((sum, t) => sum + (t.estimate_minutes || 0), 0);
+  const meetingMinutes = meetings?.length ? busyMinutes(meetings, { me, day }) : 0;
+  const minutes = taskMinutes + meetingMinutes;
   return {
-    day, minutes, dayMinutes, over: minutes > dayMinutes, excess: Math.max(0, minutes - dayMinutes),
-    tasks: on, unestimated: on.filter((t) => !t.estimate_minutes),
+    day, minutes, taskMinutes, meetingMinutes, dayMinutes, over: minutes > dayMinutes, excess: Math.max(0, minutes - dayMinutes),
+    tasks: on, meetings: meetings?.length ? meetingsOn(meetings, { me, day }) : [], unestimated: on.filter((t) => !t.estimate_minutes),
   };
 }
 
@@ -377,13 +388,15 @@ export function pushOrder(today, me, goalsById) {
  * the next day with room (counting the suggestions before it). Tasks without an estimate count 0
  * and are never suggested (moving them frees nothing). A shared task counts on both people's
  * days, but one the other person starred as a top pick today is never suggested (moving it would
- * move their pick). [] when the day fits.
- * @param {{ tasks: object[], me, today, day?, dayMinutes, goalsById?: Map }} args
+ * move their pick). [] when the day fits. C6b: meetings count in the day's load (and the other days' room) but are
+ * never suggested — they are in Apple Calendar, not the suite; when meetings alone fill the day, every estimated
+ * task is suggested.
+ * @param {{ tasks: object[], me, today, day?, dayMinutes, goalsById?: Map, meetings?: object[] }} args
  */
-export function pushSuggestions({ tasks, me, today, day = today, dayMinutes, goalsById = new Map() }) {
-  const load = dayLoad(tasks, { me, today, day, dayMinutes });
+export function pushSuggestions({ tasks, me, today, day = today, dayMinutes, goalsById = new Map(), meetings = null }) {
+  const load = dayLoad(tasks, { me, today, day, dayMinutes, meetings });
   if (!load.over) return [];
-  const loads = loadsByDay(tasks, { me, today });
+  const loads = loadsByDay(tasks, { me, today, meetings });
   const out = [];
   let left = load.minutes;
   const other = otherActor(me);
@@ -403,8 +416,8 @@ export function pushChange(task, to, today, me) {
   return moveChange(task, to, today, me);
 }
 
-/** The week's days with their loads for `me`: [{ day, past, minutes, over, count }]. */
-export function weekLoads(tasks, { me, today, monday, dayMinutes }) {
+/** The week's days with their loads for `me`: [{ day, past, minutes, over, count, meetings }] (C6b: meetings' busy minutes count). */
+export function weekLoads(tasks, { me, today, monday, dayMinutes, meetings = null }) {
   const loads = new Map();
   const counts = new Map();
   for (const t of tasks) {
@@ -414,8 +427,13 @@ export function weekLoads(tasks, { me, today, monday, dayMinutes }) {
     if (t.estimate_minutes) loads.set(d, (loads.get(d) ?? 0) + t.estimate_minutes);
   }
   return weekDays(monday).map((day) => {
-    const minutes = loads.get(day) ?? 0;
-    return { day, past: day < today, today: day === today, minutes, count: counts.get(day) ?? 0, over: day >= today && minutes > dayMinutes };
+    const meetingMinutes = meetings?.length ? busyMinutes(meetings, { me, day }) : 0;
+    const meetingCount = meetings?.length ? meetingsOn(meetings, { me, day }).length : 0;
+    const minutes = (loads.get(day) ?? 0) + meetingMinutes;
+    return {
+      day, past: day < today, today: day === today, minutes, meetingMinutes, count: counts.get(day) ?? 0, meetings: meetingCount,
+      over: day >= today && minutes > dayMinutes,
+    };
   });
 }
 

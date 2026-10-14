@@ -26,7 +26,8 @@ module: its CRM notes on the linked client's timeline, and its follow-up dates a
 (same module: Order Manager customers linked automatically on a clean email or phone, suggestions for review with
 "Not the same", possible duplicate clients, and an undo that puts back what linking changed), and from **C6a** the task
 calendar feed (module `calendar`: each person's dated tasks as a read-only calendar Apple Calendar subscribes to, by a
-secret link per person), and from **D6** renewals and recurring costs (module `costs`: what our businesses and the home
+secret link per person; **C6b**: each person's meetings read from their iCloud calendars into Today, the morning plan
+and the day's load), and from **D6** renewals and recurring costs (module `costs`: what our businesses and the home
 pay for, with monthly and yearly totals, reminder tasks 30 days before a client service renews and 14 days before one
 of our costs does, auto-renewing costs rolled forward, resold costs on the client page), and from **D16** stock tasks
 from Stockroom (module `stockroom`: a read-only, signed pull from Stockroom — the Inventory Hub on Fly — that makes
@@ -43,7 +44,19 @@ tasks with no buyer details; and in `sales`, a month's total entered by hand tha
 connected), and from **D11** sales entries and the overview (module `wholesale`: the Order Manager's sales per day in
 the shared totals, matching its own P&L; module `sales`: sales entered by hand — invoices, anything not connected,
 refunds and credit notes as negatives; module `overview`: the home screen of the business — sales per business for
-today, this week and this month with the combined total, and one list of what needs dealing with — "To deal with").
+today, this week and this month with the combined total, and one list of what needs dealing with — "To deal with"),
+and from **D10** files (module `files`: uploads, links and password pointers on clients, accounts and tasks, the bytes
+kept in the database so backups carry them), and from **D9** projects and playbooks (module `playbooks`: reusable step
+lists run for a client offline, making dated tasks, service renewal dates and a retainer's later months), and from
+**D17/D18** quotes, invoices and credit notes (module `billing`: drafts written offline, approved on the server with a
+gap-free number and a stored PDF, sent by the person themselves; a lead's quote moves the lead to Quoted and accepting
+it wins the lead; a follow-up task 7 days after sending; paid invoices in the sales totals, credit notes taking money
+back; invoices past due on the overview), and from **D14** the helpdesk (module `helpdesk`: each store's support
+mailbox read over IMAP, read only, into tickets with the order looked up live, a task on the shared list while one
+waits; nothing is ever sent), and from **D15** the overview's cards and goals (module `overview`: a card per business —
+wholesale, stock, web and social, consulting, Save Point Shop, clients, all businesses, retail stores — and the goals
+scorecard: monthly targets per business, a synced record set offline on the monthly plan, against what the month
+brought, with the pace).
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -88,7 +101,8 @@ shared/                    @suite/shared — ids.js (UUIDv7), time.js, hlc.js (s
                            effectiveAnchor, costTotals, costState, wantsCostReminder, moneyText/costAmountText, the
                            reminder lead days); D8: leads.js (LEAD_STAGES, LEAD_SOURCES, LOST_REASONS,
                            LEAD_STAGE_FIELDS, leadNeedsLook, leadsWithoutNextStep, firstYearValue, pipelineTotals,
-                           CROSS_SELL_PAIRS, crossSellList);
+                           CROSS_SELL_PAIRS, crossSellList); D17/D18: billing.js (statuses, BILLING_BLOCKED, numbers,
+                           documentTotals — HST on the document —, documentFingerprint, invoiceState, invoiceSalesDays);
                            tests in shared/test
 server/src/
   index.js                 start: open db, createApp, listen, heartbeat, backup schedule, shutdown
@@ -137,7 +151,10 @@ server/src/
   modules/calendar/        C6a: the task calendar feed — ics.js (iCalendar writer, pure: escaping, 75-octet folding,
                            VTIMEZONE from Intl's zone data, events), service.js (links: make/replace/turn off, token
                            lookup, the feed, the per-address throttle, the 'calendar-feed' connection), routes.js
-                           (public GET /feed/<token>.ics; signed-in /link), migrations/001 (calendar_feeds, _changes)
+                           (public GET /feed/<token>.ics; signed-in /link), migrations/001 (calendar_feeds, _changes);
+                           C6b: caldav.js (the PROPFIND/REPORT-only iCloud client, XML reader), icsRead.js (iCalendar
+                           reader: repeats, exceptions, zones — pure), apple.js (per-person connection, pulls, the synced
+                           `meeting` records, the 'calendar' Connections row), routes /apple…, migrations/002_meetings.sql
   modules/costs/           D6: entities.js (the synced recurring_cost), service.js (registration + checkCost, reads:
                            cost/renewingBetween/autoRenewingPassed/liveCosts, monthlyTotals for D15), reminders.js
                            (the reminder engine reminderPlan/applyReminderPlan, rollCostsForward, the service-renewals
@@ -151,18 +168,35 @@ server/src/
                            (/api/sales: summary, totals; GET only), migrations/001_create_sales.sql (sales_daily, sales_stores)
                            D11: storeDays; sales entered by hand (addEntry/updateEntry/deleteEntry/listEntries, rebuildHand
                            into sales_daily source 'manual'), /api/sales/entries, migrations/004_entries.sql
-  modules/overview/        D11: no tables — service.js (overview(): sales strip + the attention sections, read through
-                           every other module's service), routes.js (GET /api/overview?today=)
+  modules/overview/        D11: service.js (overview(): sales strip + the attention sections, read through
+                           every other module's service), routes.js (GET /api/overview?today=); D15: cards.js (the
+                           business cards), scorecard.js (targets against actuals + priorities; GET /targets?month=),
+                           entities.js (the synced `target`), migrations/001_create_targets.sql (overview_targets)
   modules/woocommerce/     D12: client.js (the GET-only client: PATHS allowlist, Basic auth, no redirects; cleanStoreUrl,
                            storeKey, parseKeys, WooError), service.js (stores: add/verify/replaceKey/update/remove; pulls:
                            window + backfill + backoff + startPuller; lookups + orderView; the 'woocommerce' and 'woo-<id>'
                            Connections rows; the sales source), routes.js (/api/woocommerce/stores…), migrations/001
                            (D13 in sales: migrations/002_manual_months.sql, putManualMonth/deleteManualMonth/months/monthly)
+  modules/helpdesk/        D14: imap.js (the read-only IMAP client: COMMANDS allowlist, EXAMINE + BODY.PEEK), mime.js (an email
+                           → plain text, pure), threads.js (ticket state, the 24-hour flag, subjects, order numbers; pure),
+                           service.js (mailboxes, pulls, tickets, retention, order lookups, the 'helpdesk' / 'mail-*'
+                           Connections rows), automations.js (helpdesk-tickets), entities.js (saved_answer), routes.js
   modules/ebay/            D13: client.js (getOrders GETs + the token endpoint's POST only; parseKeyset, consentUrl,
                            codeFromUrl, SCOPES), figures.js (pure: orderFigures, refundFigures, dayRows, zoneMidnightUtc,
                            shipView, shipEndedWhy), service.js (keyset, sign-in with state, tokens, pulls + backfill +
                            backoff + startPuller, the 'ebay' Connections row, the sales source), plans.js + automations.js
                            (ebay-orders-to-ship, ebay-sign-in), routes.js (/api/ebay…), migrations/001_create_ebay.sql
+  modules/files/           D10: entities.js (the synced `file`: upload, link or password pointer on a client, account or task),
+                           service.js (bytes in 512 KB pieces in its own tables, usage, purge), routes.js (/api/files:
+                           upload — the one raw body —, download, usage), migrations/001..002 (see "Files")
+  modules/playbooks/       D9: entities.js (playbook, playbook_step, playbook_run, run_step), service.js (checks, reads:
+                           activeRuns…), automations.js (playbook-months), migrations/001; the planner's 004_task_run.sql
+  modules/billing/         D17/D18: entities.js (quote, invoice, credit_note + their lines, invoice_payment; SERVER_FIELDS,
+                           CONTENT_FIELDS), service.js (checks, business details, approve = number + PDF + record in one
+                           transaction, the lead to Quoted, void, the archive), document.js (what a document looks like)
+                           + pdf.js (the PDF writer, no dependency: Helvetica, WinAnsi, deterministic), money.js (D18:
+                           invoices in sales, past due), automations.js (quote-follow-up), routes.js (/api/billing),
+                           migrations/001_create_billing.sql
   backup/                  backup.js, restore.js (D5: runs this version's migrations on the restored copy, then
                            carryKeptTables: modules' keepOnRestore), schedule.js
   lib/                     log.js, httpError.js, serverLock.js (heartbeat file), redact.js (C6a), sealed.js (D16: AES-GCM
@@ -207,7 +241,9 @@ client/src/
                            logic.js (no React; client/test/automations.test.js)
   modules/calendar/        C6a: CalendarPage (/account/calendar, a tab of Account: make / replace / turn off the link,
                            shown once, how to subscribe), links.js (no React: the https link, "only works on
-                           this Mac"; client/test/calendar.test.js)
+                           this Mac"; client/test/calendar.test.js); C6b: AppleCard.jsx + apple.js (connect, calendars,
+                           Read now, Forget; the 'calendar' Connections panel links here); planner/meetings.js (no React:
+                           meetingsOn, busyMinutes, meetingTimeText; client/test/meetings.test.js)
   modules/sync/            /sync (Offline data), /sync/attention (Needs attention), /sync/data/:entity (plain records view)
   modules/costs/           D6: CostsPage (/costs: by business, totals, filters in the URL, ?open= / ?new=&relationship=),
                            CostForm.jsx (the add/edit sheet, the CRM's useForm), data.js (cached reads via crm/data.js),
@@ -216,7 +252,10 @@ client/src/
   modules/stockroom/       D16: no page — ConnectionPanel.jsx (the Stockroom card's settings: paste the code, each read,
                            Pull now, Forget; lazy, via connections/panels.js), logic.js (no React; client/test/stockroom.test.js)
   modules/overview/        D11: OverviewPage (/overview: the sales strip, To deal with; lazy; sidebar only — `nav.phone: false` —,
-                           Today links to it on phones), logic.js (no React: item lines, states, paging; client/test/overview.test.js)
+                           Today links to it on phones), logic.js (no React: item lines, states, paging; client/test/overview.test.js);
+                           D15: Cards.jsx (BusinessCards, GoalsScorecard), cards.js (no React: card rows, the money table,
+                           target lines), MonthTargets.jsx + targetForm.js (the monthly plan's targets, offline;
+                           client/test/overview-cards.test.js)
   modules/sales/           D12: SalesPage (/costs/sales: per store, per business, all together; today/week/month),
                            StorePage (/costs/sales/woo/:id: its totals + the order lookup, kept in page memory only),
                            logic.js (no React; client/test/sales.test.js), sales.css; MoneyTabs.jsx lives in costs/;
@@ -227,6 +266,15 @@ client/src/
   modules/ebay/            D13: ConnectionPanel.jsx (the eBay card: keyset, Sign in to eBay, the pasted address, zone,
                            Pull now, Forget), AcceptedPage (/ebay/accepted: where eBay sends the browser back), logic.js
                            (client/test/ebay.test.js); the sales module's EbayPage (/costs/sales/ebay: months + entry by hand)
+  modules/files/           D10: FilesPage (/crm/clients/:id/files), ClientFilesCard.jsx, FilesPanel.jsx, TaskFiles.jsx (in
+                           the task sheet), upload.js, data.js, logic.js; index.jsx sets D9's setFileHref (see "Files")
+  modules/playbooks/       D9: PlaybooksPage, PlaybookPage, RunPage, ClientProjectsCard.jsx (client page), forms.jsx,
+                           parts.jsx (StepLinks, RunRow; the setFileHref seam), data.js, logic.js (no React)
+  modules/billing/         D17/D18: BillingPage (/costs/billing: Quotes · Invoices · Credit notes, New quote / invoice),
+                           DocumentPage (/costs/billing/quotes|invoices|credit-notes/:id), SettingsPage (/costs/billing/
+                           settings: business details, online), forms.jsx (the sheets: new, line, details, approve, email,
+                           accept — D8's WinSheet —, decline, payment, void), cards.jsx (LeadQuotesCard on the lead page,
+                           ClientBillingCard on the client page), data.js, logic.js (no React; client/test/billing.test.js)
   modules/wholesale/       D1: WholesalePage (/wholesale: waiting for a client / linked; lazy), ConnectionPanel.jsx (the
                            wom card's address + secret, via connections/panels.js; lazy), parts.jsx (timeline rows,
                            account and client figures on the client page; D3: QuietRegularBadge; D5: note rows, the
@@ -357,6 +405,17 @@ One folder per module on each side, same name on both (`server/src/modules/healt
     person's browser, not the server. Scope `sell.fulfillment.readonly` only. Key file `ebay-secret.key` (the Cert ID
     and the refresh token; the access token stays in memory). No buyer details are kept (no username, name, address,
     email or phone): totals, and for orders to ship only their id, items, total and ship-by date.
+  - **Apple Calendar** (C6b): iCloud's CalDAV hosts only (`https://caldav.icloud.com` and its `p<NN>-caldav.icloud.com`
+    partition hosts, https), HTTP Basic with each person's Apple ID and **app-specific password**;
+    PROPFIND and REPORT only (they only read; their XML bodies are fixed templates), redirects followed only to another
+    iCloud host. Key file `calendar-secret.key`. Kept: meeting titles, times, calendar names, free/busy — no notes,
+    places or attendees.
+  - **Support mailboxes** (D14): each store's IMAP server, **TLS on port 993 only** (implicit TLS, certificate checked;
+    plain TCP only to this machine, in tests), logged in with that mailbox's **app password**. Not HTTP: the module's one
+    connection is `helpdesk/imap.js`, which can send only CAPABILITY, LOGIN, LIST, EXAMINE (never SELECT), UID SEARCH,
+    UID FETCH with BODY.PEEK (never BODY[…]: nothing marked read), NOOP and LOGOUT — anything else is refused before a
+    byte is written (proved by tests against a fake server). No STORE, COPY, MOVE, EXPUNGE, APPEND, no SMTP: the suite
+    never sends an email. Key file `helpdesk-secret.key`.
   Nothing else in the suite calls out.
 - **No HSTS** (helmet's is off): browsers apply it to the whole ts.net hostname on every port, which would force the
   Order Manager's plain-http port on the same Mac to https. Tailscale Serve already makes the suite HTTPS-only.
@@ -449,6 +508,8 @@ Design (code in `server/src/backup/`, tests in `server/test/backup.test.js`):
 - Snapshot with better-sqlite3's **backup API** (consistent: committed data only, WAL included; safe while running),
   converted to a single self-contained file (`journal_mode=DELETE`), `integrity_check` must pass, then fsync + rename.
 - Local copy in `BACKUP_DIR` (`data/backups`), then copied to `BACKUP_OFFSITE_DIR`, SHA-256 verified, renamed into place.
+  (D10 review: the snapshot and its check run in a worker thread, the copies are async; local copies are kept
+  `BACKUP_LOCAL_KEEP_DAYS` — default 7 — see "Files".)
   The off-machine folder must contain a `.suite-backup-target` marker file, so an unmounted drive/share (an empty stand-in
   folder) fails loudly instead of silently "backing up" to the same disk.
 - Names `suite-YYYY-MM-DDTHHMMSS.mmmZ.db` (UTC). Retention `BACKUP_KEEP_DAYS` in both folders; the newest is always
@@ -1067,7 +1128,8 @@ only its own tables and has **no HTTP routes**: devices use their offline copy, 
   never fills the other person's three; counts, stars, Today and the plan's load show only your own picks, and
   moving a task clears only your own pick. Changes are worked out from the latest record (`store.get`), so a
   move right after a star clears it. Ticking sets `done_at`; the row stays (ticked, with undo) for the rest of the app session
-  (`keepFinished`, in memory). Today's calendar (Apple Calendar) is a later package: **nothing is shown for it yet**.
+  (`keepFinished`, in memory). C6b: the day's meetings from Apple Calendar are listed beside the tasks (see "Meetings from
+  Apple Calendar").
 - **Morning plan** (`PlanSheet`, "Plan my day"): proposes overdue + due today on my Today (mine and the shared list's)
   + **my** undated open tasks that belong to **this week's goals or this month's priorities** (C4b; before C4b it
   proposed every undated task of mine). Undated tasks with no goal are counted ("N with no day or goal to sort" →
@@ -1226,8 +1288,8 @@ Same module as C4a. Logic `client/src/modules/planner/plan.js` + `goalForm.js` (
 
 **For C5 / C6 / C8 / D15**
 - **C5** (Siri, share sheet): captured items still become tasks with no day or goal → they land in To sort, by design.
-- **C6b / calendar** (C6a, the task feed, is done): a task's day is `taskDay`; the overbooked warning has no calendar meetings yet — when Apple Calendar
-  events arrive, add their minutes to `dayLoad`/`loadsByDay` (timed events are never "suggested to push").
+- **C6b / calendar** (done: see "Meetings from Apple Calendar"): a task's day is `taskDay`; busy timed meetings add their
+  minutes to `dayLoad`/`loadsByDay` and are never "suggested to push".
 - **C8 overview** ("goals against targets"): `ctx.services.planner.goals(kind, period)` returns live goals of one period
   (server); devices use `goalsOf` + `goalProgress`. The last-Friday-of-the-month review of priorities can reuse
   `reviewLists` with `goalsOf(goals, 'month', monthStart(today))`.
@@ -1265,8 +1327,8 @@ switch pauses it without breaking the app.
 - **Rows today**: the off-machine backup (from `backup/status.json`: last success, last error, "queue" = whole days
   behind once the last good backup is over 26 h old; `pausable: false` — backups are never pausable from the app), the
   Order Manager (`wom`, D1 — real, see "Wholesale"), the task calendar feed (`calendar-feed`, C6a: last read by a
-  calendar, refused lookups, whose links are on; paused = every feed answers 503) and placeholders "Not connected yet ·
-  comes with …": Apple Calendar (C6b, meetings over CalDAV). Stockroom (`stockroom`, D16 — real, see "Stock tasks from
+  calendar, refused lookups, whose links are on; paused = every feed answers 503), Apple Calendar (`calendar`, C6b — real,
+  the last placeholder's slot: see "Meetings from Apple Calendar"; no placeholder is left). Stockroom (`stockroom`, D16 — real, see "Stock tasks from
   Stockroom") took its placeholder's slot. D12: "WooCommerce stores" (`woocommerce`, always on: it only adds stores)
   and one row per store under it (`woo-<store id without dashes>`, pausable), placed with `register({ …, after:
   'woocommerce' })` and taken off with `unregister(id)` when a store is removed (its switch row stays; a store added
@@ -1841,6 +1903,108 @@ business names through `crm.getBusiness`, display names through `auth.accounts`)
 - **For C6b**: meetings come in through the `calendar` connection (CalDAV pull) in this module; their minutes go into
   C4b's `dayLoad`. The feed could later show them too, but they already are in Apple Calendar.
 
+## Meetings from Apple Calendar (calendar module, C6b)
+Code `server/src/modules/calendar/` (`caldav.js` the client, `icsRead.js` the iCalendar reader — pure, `apple.js` the
+connection, pulls and records, routes in `routes.js`, migration `002_meetings.sql`); client `client/src/modules/calendar/`
+(`AppleCard.jsx`, `apple.js`) and the planner (`meetings.js`, Today, Plan my day, the week strip); tests
+`server/test/meetings.test.js` (TZ Toronto, against `server/test/fixtures/caldavFake.js`, a fake iCloud),
+`client/test/meetings.test.js`, `test/e2e/meetings.e2e.test.js`. Same module as C6a; reads and writes only its own tables.
+The plan's "done when" — a meeting added in Apple Calendar shows on Today at the next refresh and counts in that day's
+load — is proved against the fake (server, device and browser). **Real iCloud is not exercised here.**
+- **The connection — per person** (Account → Calendar, the session's own actor; each manages only their own): Apple ID
+  (an email, lowercase) + an **app-specific password** (appleid.apple.com → Sign-In and Security; its shape —
+  four groups of four letters — is required, so the Apple ID's own password is refused before anything is sent).
+  `PUT /api/calendar/apple { appleId, password }` checks it with iCloud first (find the calendar home, list the
+  calendars; 401 → 400 `refused`, unreachable → 502, paused → 409) and only then saves it in `calendar_apple` (one row
+  per person) with the calendars it lists — **nothing is read from them yet** (review fix: the person chooses first;
+  `confirmed_at` is set by the first `PUT /apple/calendars`, which then reads at once): the password **AES-256-GCM-sealed** with the key file `config.calendar.apple.keyFile`
+  (`<data>/calendar-secret.key`, `CALDAV_KEY_FILE`; `lib/sealed.js`) — never in the database or backups in usable form,
+  **never sent back** (`GET /apple` has no password), never logged (tests check the database, answers and log); an Apple
+  ID with ":" is refused (HTTP Basic). A new password **for the same Apple ID** keeps the calendars left out, the
+  choice and what was read (no churn on devices) and reads at once (review fix: it used to tick every calendar again);
+  **another Apple ID** starts over (a new `conn_id`: what was read for the old one and its meetings go; choose again).
+  The principal's `calendar-user-address-set` (its mailto: aliases) is kept in `addresses`, so an invitation declined
+  under an alias is left out too. `PUT /apple/calendars { excluded }`
+  — every event calendar counts except the ones unticked (a calendar added later is read; one left out has its events
+  forgotten and its meetings taken off). `POST /apple/pull` (Read now), `DELETE /apple` (Forget: the connection, what
+  was read and this person's meetings on devices). Changes in `calendar_apple_changes` (connected / replaced /
+  calendars / forgotten / refused). Both tables are **keepOnRestore** (like Stockroom's: a password replaced or
+  forgotten after a backup never comes back).
+- **Read only by construction** (`caldav.js`): `request()` is the one network call; methods **PROPFIND and REPORT**
+  only (anything else throws before a request), XML bodies from fixed templates, https to `caldav.icloud.com` and
+  iCloud's partition hosts `p<NN>-caldav.icloud.com` only (review fix: not any `*.icloud.com`; the partition host
+  is followed, a redirect to any other host is refused before the password is sent), no query strings, a time-out
+  (`CALDAV_TIMEOUT_MS`, 20 s), answers read as a stream and **stopped at 20 MB counted in bytes** (`maxBytes`; the
+  request is aborted). The XML reader is one linear pass (`indexOf` for comments, CDATA, PIs; it stops where a
+  terminator is missing — review fix for a quadratic regex; tested with a time budget). Tests: every request the fake saw was PROPFIND/REPORT, and the module's sources hold one `fetch`
+  (in caldav.js) and no other HTTP client. Only for tests, the base address (`config.calendar.apple.baseUrl`, not an env
+  setting) may be the fake's local port.
+- **Pulls** (`startPuller`, from `src/index.js` when `CALDAV_PULL_ENABLED`, on in production; one look a minute): each
+  connected person every `CALDAV_PULL_EVERY_MIN` (15) minutes, one round at a time (Read now chains one forced round).
+  Several forced requests while a round runs share one chained round, for every person asked (review fix: the second
+  person's Read now was lost). **Window**: today − 7 … today + 60 days in the suite's zone (`WINDOW_PAST_DAYS` / `WINDOW_FUTURE_DAYS`: the week
+  strip's Monday to two months of planning). Each read lists the calendars (PROPFIND Depth 1: name, colour, CTag,
+  components — reminders-only lists, the inbox and outbox are left out); a calendar whose **CTag** and window are as
+  last read is skipped; otherwise a `calendar-query` REPORT gets its objects' **ETags** in the window and a
+  `calendar-multiget` fetches only new or changed objects (50 a request); objects no longer listed are dropped.
+  (Decision: CTag + ETag, not sync-token — the window moves daily, and an ETag list is cheap.) Each object is kept in
+  `calendar_apple_objects` in its **minimal form** (`minimalCalendar`: UID, RECURRENCE-ID, SUMMARY, DTSTART, DTEND /
+  DURATION, RRULE, EXDATE, RDATE, STATUS, TRANSP, whether this person declined, and VTIMEZONE rules only for a TZID
+  Intl doesn't know — never DESCRIPTION, LOCATION, attendees, organizer, URL or alarms). A failure backs off 2, 4 … 60
+  minutes; a 404 or unreadable home re-discovers it once. **401** (the app-specific password revoked) sets
+  `refused_at`: **no more calls for that person** until a new password is entered (repeated refused sign-ins could lock
+  the Apple ID). **Paused** (the `calendar` Connections row, both people): no calls at all, and nothing is deleted.
+  Pull state (`calendar_apple_pulls`), calendars and objects are not kept across restores (the next read refreshes them).
+- **The iCalendar reader** (`icsRead.js`, hand-rolled — decision: no dependency; the suite needs a known part of RFC
+  5545 and every rule is tested): unfolding (CRLF or LF), quoted parameters, TEXT escapes; **zones**: an IANA TZID (what
+  Apple writes) through Intl, else the object's own VTIMEZONE (STANDARD/DAYLIGHT with yearly BYMONTH/BYDAY rules or fixed
+  onsets), else Windows names (Exchange invitations), else the suite's zone; `Z` = UTC, floating = the suite's zone; a
+  wall time in the spring-forward gap uses the offset before it (2:30 → 3:30 daylight). **Repeats**: RRULE DAILY / WEEKLY
+  / MONTHLY / YEARLY with INTERVAL, COUNT, UNTIL, BYDAY (ordinals 1MO, −1FR), BYMONTHDAY (negative too), BYMONTH,
+  BYSETPOS, WKST — everything Apple Calendar's repeat options write — expanded in the event's own wall clock (a weekly
+  10:00 stays 10:00 across DST), starts before the window counted (COUNT) but not kept; then EXDATE, RDATE, and each
+  **override** (same UID + RECURRENCE-ID) in its original's place — moved, retitled, or `STATUS:CANCELLED` (gone); an
+  override moved into the window from outside shows, but not one whose original EXDATE removed, nor one past
+  UNTIL / COUNT or on a day the rule never makes (review fix; checked with `ruleStarts`). A rule with parts it doesn't read (BYHOUR, BYWEEKNO, BYYEARDAY,
+  HOURLY…) keeps only its first instance and is counted (`unsupported`, shown on the card) — never guessed. Left out:
+  cancelled events, invitations this person **declined** (their ATTENDEE row matched by the Apple ID), and events whose
+  UID ends `@skynet-corp-suite` — **the suite's own task feed (C6a), never read back as meetings** (were it ever
+  subscribed through iCloud).
+- **The records devices see** — `meeting` (`calendar_meetings`; synced, **`readOnly` + a check refusing every device
+  step**, written by the server through `applyLocal` as `system`): actor* (whose calendar), source_key* (a hash of
+  person, calendar, UID and instance — a rename is an update, not a new record), calendar_name, title*, all_day,
+  start_at / end_at (timed: UTC instants), start_date / end_date* (the suite's zone; all-day: first and last day,
+  inclusive), busy (false for "free" and every all-day event), recurring. **One record per instance** in the window
+  (at most `MAX_MEETINGS` = 3,000 per person, soonest first). After each read `project(actor)` creates, updates what
+  differs and deletes what is gone (extras with one key too), in 200-step transactions; the start hook projects again
+  (not while paused), so a restore's rolled-back meetings are put right at once and fully at the next read.
+  **Decision — synced records, not a server read API**: Today, the morning plan and the load work offline on the phone.
+  **What that means for privacy, plainly** (review fix): every signed-in device holds **both people's** meetings (like
+  tasks). Today, the plan, the load and the plain records view (`/sync/data/meeting`, which lists only your own and
+  says how many of your partner's are on the device) show each person only their own — but the other person could
+  read them from the device's offline copy. Titles also stay in the sync log (`sync_steps`, never pruned yet) and in
+  every backup, after a meeting is deleted in Apple Calendar or the connection forgotten. The card says so.
+- **On devices** (`client/src/modules/planner/meetings.js`, the device's local days like tasks): `meetingsOn` (mine,
+  on the day — a meeting past midnight is on both days; all-day by its dates — all-day first, then by start),
+  `busyMinutes` (**busy timed meetings only**, overlaps counted once, clipped to the day; all-day and free ones add
+  nothing, nor — review decision — **timed events of 24 hours or more** (`LONG_EVENT_MS`: a conference or trip
+  entered with times would otherwise fill whole days; listed like all-day ones)), `meetingTimeText` ("9:00 AM – 10:00 AM", "All day", "Until …", "From …"). **Load**: `dayLoad` and
+  `loadsByDay` (C4b) take `meetings` and add their busy minutes (`minutes` = tasks + meetings; `taskMinutes`,
+  `meetingMinutes` and the day's `meetings` beside); **`pushSuggestions` never suggests a meeting** (they are not in
+  `load.tasks`; other days' meetings leave less room in `nextDayWithRoom`; meetings alone over the day → every
+  estimated task suggested); `weekLoads` counts them too (the week strip's "· 1 meeting"). Shown: **Today** (a
+  "Calendar" card of today's meetings in time order, ended ones dimmed, beside the tasks; the load panel says "Includes
+  N of meetings from Apple Calendar — they stay where they are"), **Plan my day** ("Your calendar today" + the load),
+  the Monday plan's days. `usePlannerData` reads `meeting` with the planner's cached lists. Past meetings of today still
+  count in today's load (the day's length is the whole day).
+- **The Connections row** `calendar` (the placeholder's slot): last success / last error per person (named), queue label
+  "Jessy: 2 calendars · Sam: not connected" / "password refused"; its panel links to Account → Calendar.
+- **The task feed (C6a) never sends meetings back**: it reads tasks only (`planner.feedTasks`); tested.
+- **Not built / open**: real iCloud (shared calendars someone else owns, delegated calendars, huge accounts, Apple's
+  rate limits); RRULE parts above; pruning meeting titles out of the sync log; RANGE=THISANDFUTURE overrides (Apple splits a series instead); an Apple ID that is a
+  phone number (email only); a meeting's place or video link; meetings in the overview (D15) or the Friday review; the
+  pull scope (meetings leave devices as the window moves, so they don't pile up).
+
 ## Renewals and recurring costs (costs module, D6)
 Code `server/src/modules/costs/` (`entities.js`, `service.js`, `reminders.js`, migration `001_create_costs.sql`), shared
 facts `shared/costs.js`, the CRM read `crm.liveService(id)`, the task book `server/src/modules/automations/taskBook.js`
@@ -2092,7 +2256,8 @@ with `confirmed_at` and `expected_on`, the spot check's time and suggestions, op
 used when present and not needed (a Stockroom without them works as before). Tested with and without them (fake hub)
 and against a `git archive` of the hub's B10 branch and of master.
 
-**Not built / open**: Stockroom's `/summary` (the stock card on the overview is **D15**); the decisions waiting in
+**Not built / open**: Stockroom's `/summary` (D15's stock card reads the four answers already pulled instead — see
+"Overview cards and goals (D15)"); the decisions waiting in
 Stockroom's `/orders` (B8) as tasks; per-supplier or per-product overrides; editing anything in Stockroom from the suite
 (never: it stays in Stockroom). Pruning `stockroom_reorder_episodes` (one small row per supplier need).
 
@@ -2318,8 +2483,9 @@ Code `server/src/modules/sales/` (`service.js`, `routes.js`, migration `001_crea
 `client/test/sales.test.js`, `test/e2e/sales.e2e.test.js`. Registered after stockroom, before `woocommerce`.
 **Decision: one shared module** owns the daily totals so every sales source writes the same rows and every reader reads
 one table — D12's WooCommerce stores now, **D13's eBay next** (source `ebay`), D11/D15 read them.
-- **`sales_daily`** (PK source + store + day, WITHOUT ROWID): `source` (`woo|ebay|wholesale|manual` — `SALES_SOURCES`;
-  D11: `wholesale` = the Order Manager, `manual` = sales entered by hand, total only), `store`
+- **`sales_daily`** (PK source + store + day, WITHOUT ROWID): `source` (`woo|ebay|wholesale|manual|invoices` — `SALES_SOURCES`;
+  D11: `wholesale` = the Order Manager, `manual` = sales entered by hand, total only; D18: `invoices` = the suite's own
+  invoices, every figure known), `store`
   (the source's own key: for woo the store's address without the scheme or a leading `www.`, e.g. `tinsxpress.com` — so
   a store re-added under its other host continues its totals), `day` (the **store's
   own calendar day**, "YYYY-MM-DD"), `business_id` (one of ours), `currency`, and the figures (`SALES_FIGURES`): `orders`,
@@ -2744,7 +2910,8 @@ Server `server/src/modules/overview/` (no tables), client `client/src/modules/ov
      and our active costs (`costs.renewingBetween`), as the Friday review → client page / `/costs?open=`.
   4. `lowStock` — Stockroom's last order-soon answer, products with a suggested quantity above 0 (the reorder tasks'
      list), most urgent first (`stockroom.lowStock()`); states `not_connected`, `revoked`, `not_read`, `paused`.
-  5. `support` — always `not_connected`: "Not connected yet · comes with the helpdesk (D14)".
+  5. `support` — D14: tickets waiting on us for 24 hours or more (`helpdesk.supportSection()`; `not_connected` until a
+     mailbox is added, `paused` when every mailbox is) → `/helpdesk/tickets/:id`; see "Helpdesk (D14)".
   6. `payments` — **payments with no matching order, both kinds (owner's decision)**: (a) the Order Manager's
      e-Transfers that matched no customer or order — its `payments.unmatched` count, total and oldest, as one line:
      "N e-Transfers with no matching order in the Order Manager: $X — record or dismiss them there: Customers →
@@ -2768,6 +2935,8 @@ Server `server/src/modules/overview/` (no tables), client `client/src/modules/ov
      lead page.
   8. `quiet` — active clients quiet for 60 days (the Friday review's rule incl. Order Manager orders and notes:
      `planner.quietClients`) → client page.
+  D18 added `invoices` after `balances` (urgent): our own issued invoices still owing after their due date
+  (`billing.overdueInvoices`), oldest due first → the invoice's page.
 - **Placement (decision)**: route `/overview`, a **sidebar entry at the top** (order 5) on the Mac; the phone's tab bar
   keeps its eight (nav entries may say `phone: false`; AppShell's tab bar skips them) and the overview is reached from
   **Today** (a phone-only link row under the header) and **Money → Sales** ("Overview ›"). Today stays the home page: it
@@ -2775,6 +2944,557 @@ Server `server/src/modules/overview/` (no tables), client `client/src/modules/ov
   320 px (e2e). **Room for D15**: the page is a stack of cards — D15's cards (wholesale, stock, web/social, consulting,
   Save Point Shop, clients, all businesses, retail, goals) go below "To deal with", reading `sales.monthly()`,
   `costs.monthlyTotals()` and the services above.
+
+## Files (files module, D10)
+Code `server/src/modules/files/` (`entities.js`, `service.js`, `routes.js`, migration `001_create_files.sql`), shared
+`shared/files.js` (types, `cleanFileName`, `cleanUrl`, `downloadName`, `fileOwner`, limits), client
+`client/src/modules/files/` (`FilesPage.jsx` /crm/clients/:id/files, `ClientFilesCard.jsx` — the client page's card and
+each account's "Files (N)" —, `TaskFiles.jsx` in the task sheet, `FilesPanel.jsx`, `upload.js`, `logic.js`, `data.js`);
+tests `shared/test/files.test.js`, `server/test/files.test.js`, `client/test/files.test.js`, `test/e2e/files.e2e.test.js`.
+Registered after ebay (needs crm and planner; without them — the sync engine's own tests — it stays off: no record type,
+routes 503). The plan's "done when": an uploaded file survives a backup restore (server test "DONE WHEN").
+- **Storage (decision): the bytes are in the database** — `files_blobs` (id, size, sha256, pieces) + `files_chunks`
+  (512 KB pieces, `CHUNK_BYTES`), the module's own tables, not synced. Chosen over files on disk under the data folder:
+  the nightly backup is one SQLite snapshot (backup API), so the bytes and their records are always consistent, the
+  off-machine copy is SHA-256 checked as one file, and `restore.js` brings both back with no change (no second folder to
+  copy, prune or keep in step, no orphans either way). The price: every backup holds every file (see DEPLOY.md step 14:
+  up to `FILES_MAX_TOTAL_MB` × `BACKUP_KEEP_DAYS` off-machine, × `BACKUP_LOCAL_KEEP_DAYS` locally). Not `keepOnRestore`
+  (data). Space freed by a purge is reused, the database file doesn't shrink (no VACUUM): backups stay at its high-water size.
+  **Review fixes to the backup itself** (`backup.js`, `checkWorker.js`): the snapshot (the backup API from a worker
+  thread's own read connection — its last step writes and syncs the whole copy at once), the switch to one file and
+  `integrity_check` all run in a **worker thread**, and the fsyncs and the off-machine copy are async, so the server keeps
+  answering (test: a ~220 MB database with 300,000 rows backed up while `/api/health` is polled — longest freeze ~25 ms,
+  ~470 ms before). `integrity_check` was kept (not `quick_check`): off the main thread its cost doesn't matter. The local
+  folder keeps `BACKUP_LOCAL_KEEP_DAYS` (default **7**, never more than `BACKUP_KEEP_DAYS`): it lives in the Docker VM's
+  disk, shared with images.
+- **Limits** (`config.files`): `FILES_MAX_MB` 25 per file, `FILES_MAX_TOTAL_MB` **500** in all (Σ blob sizes, purge first;
+  lowered from 1 GB in review: backups), `FILES_PURGE_DAYS` 30, `uploadIdleMs` 60 s (no env). **Types by extension only** (`FILE_TYPES`; the browser's claimed type is ignored): images (png,
+  jpg, gif, webp, heic, svg, psd, ai, eps), PDF, text/csv/md/rtf, Word/Excel/PowerPoint/OpenDocument/iWork, zip. Never:
+  HTML, XML, scripts, programs (415 `type_not_allowed`). The types that may be shown (png, jpeg, gif, webp, pdf) must start
+  with their magic bytes (422 `type_mismatch`), so a page renamed .png is never shown.
+- **The record** `file` (`files_items`; synced, UUIDv7, `created_*`/`updated_*`, `flagged`; ops create/update/delete):
+  kind* (`upload | link | password`), name* (≤ 150), exactly one of client_id⇧ / account_id⇧ / task_id⇧ (all `parent`:
+  deleting the client, account or task hides its files with it), notes, url (links; a pointer's sign-in page), vault,
+  vault_item (pointers), and server-only blob_id, size, content_type, sha256. **`checkFile`** (step values only): one
+  owner on create; a device can't create an upload (`op_not_allowed`: they come from the upload route); a link needs a
+  clean http(s) url (stored as `cleanUrl` gives it — no other scheme, no user:password@); a pointer needs `vault_item`;
+  kind, owner and the blob fields never change in an update (a file is added again where it belongs instead).
+- **Password pointers never hold secrets**: only where to look (the password manager / vault and the item's name, an
+  optional sign-in page). There is no password field; the form says so and warns when the text looks like one
+  (`looksLikeSecret`: "password: …", "pw=…") — a warning, not a refusal (nothing can tell for sure).
+- **Uploads** — `POST /api/files/upload`, **the one request body that isn't JSON**: a module may declare `rawUploads:
+  ['/upload']` (exact paths); app.js marks those POSTs and the guard then accepts `application/octet-stream` there only
+  (everything else still 415). Origin and Sec-Fetch-Site are checked as for every write, and a session is needed. Same CSRF
+  argument: a cross-site form can't send that type, a cross-site fetch only after a preflight the server never approves.
+  The name and owner travel in `X-File-Info` (encodeURIComponent(JSON { id, name, clientId | accountId | taskId, notes? }),
+  ≤ 8 KB) — never in the path, so nothing personal can reach a log. **Refused from the headers, before any of the body is
+  read**: wrong type, no `Content-Length` (411), empty, over the per-file limit (413 `too_big`), owner not live (404),
+  no room (413 `no_space`), three uploads already going (503); a refused body is drained when it is of a sensible size,
+  else the connection is closed. Then the body is read (exactly Content-Length, hashed as it comes; nothing for 60 s →
+  408 `idle` and the connection dropped). The pieces are written in transactions of 8 MB (`PIECES_PER_WRITE`) with a
+  yield between them, the blob marked `complete = 0` (migration 002); the **last transaction checks the space again**
+  (every blob stored or under way counts, so two uploads at once can't both take the last room → 413 `no_space`, the
+  pieces removed), marks the blob complete and makes the record (`sync.applyLocal` as the person). A file is listed only
+  once all its bytes are in; a crash mid-upload leaves pieces with no record, purged after an hour. 201 `{ file }`. **Idempotent**: the device makes the
+  record id once per picked file (`uploadIdFor`, a WeakMap) — the same id with the same bytes again → 200 with that file
+  (a retry after a lost answer), other bytes → 409 `exists`, deleted meanwhile → 409 `deleted`. Names are cleaned (`cleanFileName`: last part of a path,
+  no control/bidi/zero-width/reserved characters, NFC, ≤ 150 keeping the extension); a device's rename of an upload is
+  cleaned the same way before it is sent, other names lose control/bidi/invisible characters (`safeName`), and
+  `checkFile` refuses any name holding them (`hasUnsafeNameChars`). Logs say only "file uploaded <id>
+  (<size> bytes, <type>)" — tested: no name, no owner.
+- **Downloads** — `GET /api/files/:id/download` (session; the other person too): 404 when deleted, not an upload, or its
+  client/account/task is gone (`crm.liveRecord`, `crm.liveAccount`, `planner.taskState`); 410 `purged`. Sent piece by
+  piece (each read on its own, awaiting `drain`), with the stored type, `Content-Length`, `X-Content-Type-Options:
+  nosniff`, `Cache-Control: private, no-store`, CORP same-origin and RFC 6266 `Content-Disposition` (ASCII fallback +
+  `filename*`; `downloadName` puts the type's extension back after a rename). **Always `attachment`**, except `?inline=1`
+  on an image or PDF. **Nothing renders in the app's origin**: every download except an inline PDF gets `Content-Security-
+  Policy: default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox` (no scripts, opaque origin); an inline
+  PDF keeps the app's CSP (browsers won't show a PDF in a sandboxed document — PDF viewers run apart from the page). SVG
+  is never inline. Firefox shows PDFs with pdf.js, which runs as privileged browser code and doesn't run a PDF's own
+  scripts, so an inline PDF there can't act in the app's origin either (Chrome/Safari: their own viewers, apart too). The service worker never answers `/api`, so downloads are never cached on devices.
+- **Deletes (decision): soft, no bin.** A delete is a sync tombstone like any record (offline, both devices); the bytes are
+  kept `FILES_PURGE_DAYS` (30) after the delete — so a delete undone through a delete-vs-edit clash still has them — then
+  `purge()` (at start, hourly and before each upload) removes them. The 30 days count from the **later** of the record's
+  `deleted_at` (the device's clock: an offline delete can arrive weeks later) and when the server first saw it deleted
+  (`files_purge_marks`, noted by each purge pass; taken back when the record is live again). No "bin" screen: sync has no undelete step for devices, and
+  backups (which hold the bytes) are the way back after that. A record revived after its purge answers 410.
+- **Task files** belong to the task (`task_id`) and are **listed on the Files tab of the task's client — and of its
+  account** — worked out on the device (`filesForClient`: tasks naming the client or one of its accounts), so a task
+  re-filed under another client takes its files along. Uploading to a task works from its sheet (Save the task first).
+- **Screens** (lists offline from the device's copy, `useClientFiles` through crm/data.js's cached lists): the client
+  page's **Files** card (newest 5, with where each is: Client / an account / "Task: …"), each account's **Files (N)**,
+  and `/crm/clients/:id/files?tab=all|client|<account id>` (chips that wrap; new files go to the client on All and the
+  client's tab, to the account on its tab). The panel: **Upload** (picker, several at once; a drop on desktop), with a
+  progress bar, plain-English refusals checked first on the device (`uploadProblem`, the server checks again) and **Try
+  again** (same id); **Add link** and **Password pointer** (inline, no nested `<form>` — the panel also sits inside the
+  task sheet's form: Enter saves the panel's entry, buttons are `type="button"`); each row: name (a download link),
+  kind · size or site · where · who and when, notes, **View** (images, in an in-app viewer — an `<img>` on the same
+  origin), **Open** (PDFs, a new tab), **Edit** (rename, notes, address; sends only what changed) and Delete… behind a
+  confirm. While a panel is shown, a file dropped beside it does nothing (window-level dragover/drop prevented), so the
+  browser never leaves the app to open it. Offline: Upload is off and the panel says why; links and pointers still save; the space used shows when online
+  (`GET /api/files/usage`). No nav entry (eight phone tabs).
+- **Not exercised / open**: a real iPhone (the download sheet; whether *Open* in a new tab shares the home-screen app's
+  sign-in — DEPLOY.md says to use Download or View there); HEIC previews (download only); Range requests (no video);
+  thumbnails; moving a file to another owner; a bin screen; virus scanning; files from the share sheet (C5); per-person
+  quotas. Pruning file tombstones follows the sync pruning plan.
+
+## Projects and playbooks (playbooks module, D9)
+Server `server/src/modules/playbooks/` (`entities.js`, `service.js` — checks and reads —, `automations.js`, migration
+`001_create_playbooks.sql`), planner migration `004_task_run.sql`, shared rules `shared/playbooks.js`, client
+`client/src/modules/playbooks/` (`logic.js` no React, `data.js`, `forms.jsx`, `parts.jsx`, `PlaybooksPage`, `PlaybookPage`,
+`RunPage`, `ClientProjectsCard.jsx`); tests `shared/test/playbooks.test.js`, `server/test/playbooks.test.js` (TZ Toronto),
+`client/test/playbooks.test.js` (logic + two devices: the plan's three "done when"), `test/e2e/playbooks.e2e.test.js`
+(iPhone, Mac, 320 px). Registered after the crm, planner and automations (`modules/index.js`); without the crm/planner
+(the sync engine's own tests) it registers nothing (`{ enabled: false }`).
+
+**Record types** (synced, UUIDv7, `created_*`/`updated_*`, `flagged`; ⇧ parent, → plain ref, * required):
+- `playbook` (`playbooks_playbooks`; create/update/delete — delete is for mistakes, `archived` hides one): name*,
+  business_id*⇧ (one of ours), repeat (`once|monthly`, null = once: monthly = a retainer), for_client (a run asks for a
+  client), kind (a relationship kind: what we do for them), description, archived.
+- `playbook_step` (`playbooks_steps`): playbook_id*⇧, position, title* (a task's title), stage (free text: the run's
+  checklist is grouped by it), action (`task|renewal`, null = task), offset_amount + offset_unit (`days|weeks|months|
+  years`; from the run's start, negative = before, ten years at most — `checkStepFields`), owner (`runner|business|owner|
+  partner|shared`, null = whoever runs it; `business` = the business's default owner), estimate_minutes, notes, links
+  (one per line: a web address with an optional label, `file:<id>`, or words), and for a renewal step service_name,
+  service_period, service_amount_cents; for an **offer**, only_if_lacks_business→ + only_if_lacks_kind.
+- `playbook_run` (`playbooks_runs`; create/update/delete): playbook_id→ (plain: deleting the playbook hides no run),
+  name*, business_id*⇧, repeat, client_id→, account_id→, relationship_id→, start_date*, end_date (monthly: no month
+  starts after it; `checkRun`: not before the start), owner (`OWNERS`: everything to one person / the shared list;
+  null = as each step says), runner* (who ran it: each step's "whoever runs it", later months too), status
+  (`active|done|stopped|starting`, null = active), playbook_as_of (the latest change to the playbook **or its steps**
+  when copied), playbook_name (its name then: later months' notes use it), made (what it made or changed in the
+  client's records: `relationship:<id> service:<id> restarted:relationship:<id> renewal:<service id>:<old date>`;
+  migration 002), notes.
+- `run_step` (`playbooks_run_steps`; **append-only**): run_id*⇧, step_id (no ref), every step field copied, outcome
+  (`task|skipped|renewal`) + outcome_note (why it was left out, what date it set).
+- `task.run_id` + `task.run_step_id` (planner migration 004): **plain ids with no `ref`** (decision: the planner is
+  registered before playbooks and mustn't depend on it; a deleted run reads as none and its tasks stay).
+
+**Rules (decisions)**
+- **Editing a playbook changes only future runs — by copy, not versions**: a run copies every step into its own
+  append-only `run_step`s when it starts, and its tasks are made from those copies (the device for a run's first month,
+  the server for a retainer's later ones). A playbook edited, reordered or deleted never touches a run, its copies or its
+  tasks (tested on two devices and on the server). Chosen over version numbers: nothing to keep in step, and a run reads
+  as it started even after the playbook is deleted. Versions would only matter for "update this run to the new steps"
+  (not built).
+- **Runs execute on the device, offline** (`planRun` → `applyRun`, like D8's win): one person's tap makes the run, its
+  copies, the tasks, the renewal dates and (when missing) the relationship as ordinary store writes — shown at once,
+  synced later — so a phone in the warehouse runs the packing playbook with no signal. Ids are **made once per playbook
+  and choice** (`keptRunIds`, localStorage `suite.playbooks.runIds.<playbook id>` until saved, keyed by client, account,
+  start, owner, end): a retry after a failure part-way, a double tap or a reload re-uses them (`already_exists` = done),
+  never a second run; after a save they are forgotten (running it again is a new run). The server only makes later
+  months of a repeating run (it is the one always on; a phone can't run on a schedule).
+- **What a run makes** (`planRun`): the relationship it works on = the account's with the playbook's business (and kind)
+  — an active one, else a paused/ended one made active again (only `status` sent), else (kind known) a new active one
+  from the start day; then the run, a `run_step` per step, then per step: a **task** (`stepTaskFields`: the step's
+  title — "· November 2026" added in a repeating run —, notes + "Files and links" + "From the playbook …", owner by
+  `stepOwner`, the run's business, client, account and relationship, due = `stepDate(start, step)`, estimate, run_id,
+  run_step_id); a **renewal** sets `renewal_date` on the relationship's service of that name (any case; not done or
+  cancelled) — or adds it (active, start = the start day, its period, flat amount when given) — so D6's
+  `service-renewals` reminds 30 days before; with no relationship it is left out. **Offers** follow D8's cross-sell
+  rule (`offerSkipReason`): left out when the account has a relationship of that business and kind **in any status**
+  (an ended one was a "no thanks"; the one this run adds counts), or is **age-restricted** with no relationship with that
+  business at all, or no client was picked — the website launch's "Offer social media" is made only for a client
+  without GWND social. Renewal dates go on the CRM `service` only (not a `recurring_cost`: our own costs are D6's page).
+- **Stages**: the step's free-text stage; a run's checklist groups its copies by stage in step order, and its current
+  stage is the first with an open task (`runChecklist`, derived, never stored). D6's `service.stage` free text stays
+  as it is: a service's project is shown by its run on the client page's Projects card, not written into the service.
+- **Retainers** (`repeat: monthly`) — decision: **an automation with an idempotency key** (`playbook-months`, daily
+  07:20, on, silent): month n starts on `cycleStart(start, n)` (= start + n months, counted from the start each time:
+  Jan 31 → Feb 28 → Mar 31); month 0 is made by the device at run time; each later month is made from
+  `MONTH_LEAD_DAYS` (7) before it starts until it is over (`dueCycles`: a month that went by entirely — the server off
+  — isn't made late; none starting after `end_date`), key `<run id>:<YYYY-MM>` in `automations_made`, remembered in the
+  run's transaction — the scheduler again, Run now and restarts never make a month twice. From the run's own copies
+  (task steps only: renewal dates are set once), owner by the same rule (`runner` = the run's runner), the offer
+  re-checked each month. Nothing for a run done or stopped, a client closed or deleted, or an archived business (the run
+  log says "waiting: … — its client is closed"). Not capped (one person's runs, a few tasks a month each).
+- **Review fixes**:
+  - **Unfinished runs**: a run is created `starting` and its **last write** sets it `active`, so a save that stopped
+    part-way is never "under way" (the automation skips it). Its page says "This run didn't finish saving": **Finish it**
+    on the device that kept its ids and choice (`keptRunFor`; nothing made twice) or **Delete the unfinished run**.
+  - **Run twice**: the Run sheet says "Already under way: <run>, started <date>" for an open run of the same playbook
+    and account (`runsUnderWay`). Runs of the same playbook, account and start day (two devices offline at once —
+    on one device the kept ids prevent it) are flagged "Run twice" (`duplicateRuns`; the first made is kept) and the run
+    page offers **Delete the extra** (`extraRunPlan` → `removeExtraRuns`, D8's pattern: sync and re-read first; the
+    extra's open, unchanged tasks, the services and relationship it added while unchanged and unused by anything else —
+    another run, a task not its own, a resold cost —, then the run; sync again and re-read: "Kept: … was changed on the
+    other device"). A relationship it restarted and renewal dates it moved stay (listed).
+  - **Renewal dates**: an earlier (or no) date on their service is moved — the preview says "moves from X to Y"; a
+    **later** one is left alone unless the person ticks "Also move renewal dates that are later than the playbook's".
+  - **Retainers** wait while the run's relationship is paused, ended or deleted (or its account deleted), as D6's
+    reminders do; an **offer is made once per run** (the first month made it — its copy's outcome `task` — or a later
+    month did: key `<run id>:offer:<run step id>`).
+  - Offer tasks say whose email consent counts ("only if <business> has their email consent"), as D8's cross-sell.
+  - `checkStepFields` checks the offset/unit pair when either changes alone; `stepDate` clamps to the unit's limit.
+  - Run… is off for an archived business; the Run sheet ignores a second tap while saving (a ref).
+- **Linked files**: `links` is text — web addresses, words, and `file:<id>` lines, the **seam for D10** (no D10 code is
+  used): `parseLinks` reads them, a task's notes list them, and `StepLinks` shows a file line as a link: the files
+  module sets `setFileHref` (`client/src/modules/files/index.jsx` → `/api/files/<id>/download`, a plain download link,
+  needs a connection; integration). Only an **upload**'s id downloads (a link or password pointer's id answers 404); the
+  Files tab doesn't show ids yet, so such lines are typed by hand (open: a file picker in the step form).
+- **Done / stopped / delete**: a person marks a run done (offered when every task is), stops a retainer ("Stop
+  repeating"), or reopens either; Delete (for a run made by mistake) removes the run and its **open** tasks — done
+  tasks, renewal dates and a relationship it added stay (tidy by hand).
+- **Screens** (offline; edits send only what changed — the CRM's `useForm`/`editChanges`, two devices tested):
+  `/playbooks` (under way with progress and next task, playbooks by business with Run…, "Start from an example":
+  `EXAMPLE_PLAYBOOKS` — Website launch, Monthly content retainer, Packing a wholesale order (all on the shared list), New
+  client onboarding — copied into a playbook of yours; nothing is seeded on the server; `?client=` from the client page),
+  `/playbooks/:id` (steps by stage with up/down — `reorderChanges` renumbers only what moves —, a step sheet, Run…,
+  its runs, "Changes apply to runs started from now on"), the **Run sheet** (client search + account, start, end for a
+  retainer, who does it, a **preview** of every task, renewal date, skipped offer and the relationship line, then
+  "Run it"), `/playbooks/runs/:id` (progress, checklist with ticks, done / stop / reopen / edit / delete). **Placement
+  (decision)**: a sidebar entry (`phone: false`, the phone keeps eight tabs); phones reach it from Tasks ("Playbooks and
+  projects ›") and the client page's **Projects** card (runs with progress, "Run a playbook").
+- **Reads for others**: `ctx.services.playbooks.activeRuns()` / `run(id)` / `runSteps(id)` / `repeatingRuns()` (D15's
+  overview cards can show projects under way).
+- **Not built / open**: "Run twice" can't tell two devices from one person running the same playbook for the same
+  client and day on purpose (it offers, never acts on its own); updating a running run to its playbook's new steps; a playbook's own attachments beyond links;
+  per-step dependencies ("after the previous one is done" — every date is from the start); weekly repeats; a
+  `recurring_cost` from a renewal step; quotes (D17) starting a run on acceptance; pruning done runs (the pull scope).
+
+## Quotes, invoices and credit notes (billing module, D17/D18)
+Server `server/src/modules/billing/`, shared `shared/billing.js`, client `client/src/modules/billing/` (+ the lead page's
+Quotes card, the client page's Quotes and invoices card, D8's WinSheet); tests `shared/test/billing.test.js`,
+`server/test/billing.test.js` (TZ Toronto), `client/test/billing.test.js` (logic + two devices), `test/e2e/billing.e2e.test.js`
+(iPhone and Mac). Registered after crm, planner, automations and sales, before the overview. **Working documents**: they
+are what the client receives; the accountant keeps the books (no ledger, no tax filing here). Owner's decision (12 Oct):
+D17 and D18 built together; D7 (consulting engagements) is skipped, so "engagements" are the CRM's services.
+- **Records** (synced, UUIDv7, `created_*`/`updated_*`, `flagged`; ⇧ parent, → plain ref): `quote` (`billing_quotes`:
+  business_id*⇧, client_id→, account_id→, relationship_id→, lead_id→, status* `draft|sent|accepted|declined`, to_name,
+  to_lines, title, notes, terms, valid_until, tax_rate_bp; server: number, sent_on, sent_at, sent_by, subtotal/tax/total
+  cents; a decision: decided_on, declined_reason (`LOST_REASONS`), decided_note), `invoice` (`billing_invoices`:
+  business_id*⇧, client_id*→, account_id→, relationship_id→, service_id→, quote_id→, status* `draft|issued|void`,
+  to_name, to_lines, title, notes, terms, due_days, tax_rate_bp; server: number, issue_date, issued_at, issued_by, due_date,
+  totals, void_on, void_reason), `credit_note` (`billing_credit_notes`: invoice_id*⇧ — an issued invoice —, business_id*→
+  (the invoice's), status* `draft|issued`, reason, to_name, to_lines, notes, tax_rate_bp; server: number, issue dates,
+  totals), `quote_line` / `invoice_line` / `credit_note_line` (one table per kind, same columns: <doc>_id*⇧, position,
+  description*, quantity (number, null = 1), unit_cents* (negative = a discount line), tax_exempt), and `invoice_payment`
+  (`billing_payments`, create/delete — a correction is a delete and a new one: invoice_id*⇧, amount_cents* > 0, paid_on*,
+  method (`PAYMENT_METHODS`), note). Drafts, lines, decisions and payments are written on devices, **offline too**.
+- **The module's checks** (device steps only; the server's own pass): fields only the server writes are refused
+  (`SERVER_FIELDS`); a new document is a draft; what it says (`CONTENT_FIELDS`) and its lines change **only while it is a
+  draft** (`locked` after: an offline edit that arrives after the approval lands in Needs attention, and the PDF never
+  disagrees with the record); only a sent quote may become accepted or declined (no other status from a device: issuing
+  and voiding are the server's); a sent or issued document is never deleted; payments only on an issued invoice; a credit
+  note only for an issued invoice, from its business; tax 0–50 %, terms 0–365 days. **Wholesale (the Order Manager),
+  Save Point Shop (eBay — its sales would count twice) and Personal never bill here** (`BILLING_BLOCKED`, refused).
+- **Money**: CAD only. A line = round(quantity × unit price); **HST at the document's rate (13 % by default; the sheet
+  offers GST 5 % for a client outside the HST provinces and 0 % outside Canada) on the non-exempt lines, rounded once on
+  the document** (`documentTotals`); a total of $0 or more. A lead's value from its quote is the subtotal **before HST**
+  (HST isn't ours), one-off.
+- **Numbers** (decision: **given by the server when a person approves the draft**, never on a device — drafts made offline
+  on two devices can't collide): `<prefix>-Q-0007` / `-INV-0012` / `-CN-0002`, counted **per business and kind**
+  (`billing_counters`), the prefix from the business details (default GWND, BC, RS, else initials). **Gap-free**: the
+  counter moves only in the transaction that also stores the PDF and writes the record; a refused approval (not ready, the
+  fingerprint differs) uses no number; a retried request answers the same number (`already`). Void keeps its number.
+- **Approving** (`POST /api/billing/quotes/:id/send`, `/invoices/:id/issue`, `/credit-notes/:id/issue` `{ today,
+  fingerprint }`, online): "sent only after you approve the draft" — the device syncs first, refuses while its changes
+  haven't reached the server (`pending`), and sends `documentFingerprint` (FNV-1a over every printed value and line) of
+  what the person saw; the server refuses another (409 `changed`: edited on the other device meanwhile). Then, in **one
+  SQLite transaction**: the number, the PDF (rendered synchronously), the record's number / day (the device's `today`,
+  within a day of the server's) / totals (+ `valid_until` = sent + the business's valid days, `due_date` = issued + its
+  terms, the business's usual terms when the draft had none) through `applyLocal`, and for a quote's lead the stage (below).
+  A credit note can't credit more than is left on its invoice (409 `too_much`). Void (`POST /invoices/:id/void { reason }`)
+  only with no payment and no issued credit note.
+- **PDFs** (decision: **hand-rolled, no dependency** — `pdf.js`: the standard Helvetica fonts every reader has, WinAnsi
+  text with Adobe's widths, text/lines/boxes; pdfkit would bring fontkit and half a dozen packages, and writes through an
+  async stream, while issuing is one synchronous transaction). **Deterministic** (no dates, no ids: the same document →
+  the same bytes, tested). The business's colour (`business.color`, else the CRM's fixed one) on the top band and table
+  header; its details from **the business details** (`billing_settings`: name, address, HST number "123456789 RT0001",
+  email, phone, website, how to pay, prefix, quotes valid for, invoices due in, usual terms — **server settings, edited on
+  Money → Billing → Business details, online**; kept across restores). Multi-page with "Page n of m". A draft's preview
+  (`GET /api/billing/pdf/<kind>/<id>?today=`) says DRAFT across the page and has no number. **The issued PDF is stored for
+  good** (`billing_pdfs`, a trigger refuses any UPDATE) with its SHA-256; GET serves it as stored (inline, or `download=1`),
+  signed in, `no-store`, **without the app's CSP header** (browsers' built-in PDF viewers can refuse a PDF that carries
+  `object-src 'none'`; these PDFs are the suite's own — text and boxes, no scripts, links or forms; nosniff stays).
+- **Sending** (decision: **the person sends it** — no SMTP: no outbound connection, no mail secret, nothing sent
+  automatically, and it goes from their own mailbox): after approving, the Email sheet offers **Share the PDF…** (the
+  phone's share sheet with the file — straight into Mail on an iPhone), **Download the PDF** and **Open a drafted email**
+  (mailto: to the contact's email, subject and body; the person attaches the PDF). **Consent**: a quote or an invoice is a
+  transactional message the client expects (CASL covers commercial electronic messages), so no email consent is needed —
+  the sheet says so; marketing rules (consent, the age-restricted rule) are untouched.
+- **Lead stages** (D8's seam): sending a quote for a lead in **Lead or Talking** moves it to **Quoted** — D8's whole
+  `LEAD_STAGE_FIELDS` set in one step, so a stage move on a device at the same time settles as one — with a `stage` row
+  ("Quote GWND-Q-0001 sent: $2,825.00 ($2,500.00 before HST)") and the value; a lead already Quoted gets the new value and a
+  note; a won or lost lead only the note. **Accepted…** on a lead's quote is **D8's Won… sheet** (`WinSheet` with
+  `afterWin`): planWin/applyWin with ids kept until saved — a retry or a double tap never makes a second client — then the
+  quote is marked accepted with the client, account and relationship the win made, in the same save, offline. A lead won
+  meanwhile (the other device): just accepted, with its client. **Declined…**: the quote with its reason, and the lead
+  **lost** with the same reason (a checkbox, on by default).
+- **The follow-up** — automation `quote-follow-up` (event: `billing.quote_sent` after each send, `billing.changed` after a
+  device's push touches quotes and at start; **on, silent**): one task per sent quote, "Follow up on quote … for …", due
+  **7 days after sending**, for the business's default owner, with the lead (so it **is** the lead's dated next step), client,
+  account and relationship. Finished by the suite when the quote is accepted, declined or deleted ("Quote … was accepted on
+  …"). Key `quote:<id>`: a task a person finished or deleted is never made again. `accept` runs it only when there is
+  something to do (no run rows otherwise).
+- **Invoices**: from an accepted quote (**Make the invoice**: its client — the win's —, account, relationship, lines,
+  `quote_id`; printed "For quote …"), or new for a client (optionally a relationship and **a service**: its price as the
+  first line — flat amount, or hours × rate). Where it stands is worked out (`invoiceState`): unpaid, partly paid, paid,
+  credited in full, overdue (owing after its due date), void; overpaid says how much to give back or keep as credit.
+  Payments are recorded on any device (offline too). **Credit notes** (agency and consulting work, any billing business):
+  from an issued invoice (**Credit note…**, "Copy the invoice's lines" then change them), issued like an invoice.
+- **In sales** (D18 decision — **as money comes in, on the day it was paid**, like every other source counts a sale only
+  once it is paid; `money.js`, `invoiceSalesDays`): source `invoices`, one store per business (`invoices:<business id>`,
+  CAD, "Invoices · <business>"), **not total-only** (net, HST and total are all known). Per invoice, on each day a payment
+  arrived or a credit note was issued, kept = min(paid so far, total − credited so far); the day counts the change. So a
+  payment counts on its day; a credit note on a paid invoice takes its amount off on its own day (money given back); a
+  credit note before payment only lowers what is owed (never counted twice); an overpayment beyond the total isn't a sale;
+  void counts nothing. Each change is split into before-tax and HST in the invoice's proportion; `orders` counts an
+  invoice once, on the day its first money came in (D15's orders target adds it up). Written again (only days
+  that differ, zeros for days with nothing left) after every change that reaches the server — a device's push (the sync
+  module's additive `onChange` hook: listeners told which record types a push or a settled clash changed) or an issue /
+  void — and at start (`sales_daily` isn't kept across restores; the billing records are data and roll back with it). They
+  show on Money → Sales and in **the overview's sales for the business** (the "done when").
+- **To deal with**: the overview's `invoices` section (after balances, urgent): invoices past due, oldest first, with what
+  is owing (`billing.overdueInvoices`).
+- **Screens** (Money → **Billing**, a third tab: no ninth phone tab): `/costs/billing` (Quotes · Invoices · Credit notes;
+  show open / accepted / declined / overdue / paid / all, business and words in the URL; `?new=quote&lead=…` /
+  `?new=invoice&client=…&relationship=…&service=…` open the new sheet), a document's page (`/costs/billing/quotes/:id`,
+  `/invoices/:id`, `/credit-notes/:id`: details, lines and live totals for a draft — offline —, Approve and send / issue…,
+  Email it…, Accepted… / Declined…, Make the invoice, Record a payment…, Credit note…, Void…; RecordSync and sync badges),
+  `/costs/billing/settings` (online). The lead page's **Quotes** card (New quote) and the client page's **Quotes and
+  invoices** card (what is owed, New quote / New invoice). Phones from 320 px: nothing scrolls sideways (e2e).
+- **Restores**: `billing_settings`, `billing_counters` and `billing_pdfs` are **keepOnRestore** — a number is never given
+  twice and a document a client has stays findable; Money → Billing lists the kept PDFs whose record isn't in the restored
+  database ("Issued, but not in the database any more", `GET /api/billing/archive`, `/pdf-archive/:kind/:id`) to enter
+  again if they still count. (Gaps in the restored database's own documents are exactly those.)
+- **Review fixes**:
+  - **Settling a clash never rewrites what was sent or issued**: the checks also refuse **server** steps (applyLocal,
+    which settling a clash uses) that change a non-draft document's `CONTENT_FIELDS`, delete it, or touch any line of it
+    (a field or delete clash on a draft line settled with keep_loser after the approval → 409, the line as issued).
+    Approving itself passes: its step runs while the document is still a draft.
+  - **Restores and kept PDFs** (migration 002: each kept PDF also stores the approved draft's `fingerprint` and a
+    `snapshot` — the document's fields as issued, the server's fields, its lines): approving a draft that has a kept PDF
+    **re-adopts** its kept number, day and totals when it says the same (no new number, no new PDF; a quote's lead moves to
+    Quoted again), and is refused (409 `kept_differs`, naming the kept number) when it doesn't. The archive's `inDatabase` is
+    true only when the record is there **as issued with that number** (`draftAgain` = a draft again). **Restore from
+    archive** (`POST /api/billing/archive/:kind/:id/restore`; Money → Billing's list) puts the record back with its original
+    id, number, dates, content and lines (a credit note needs its invoice back first; a draft deleted since the restore, or
+    a PDF kept before this version, can't be: enter it by hand). Payments recorded after the backup aren't kept.
+  - **Credit notes** stay on their invoice and its business (updates refused, devices and server; approving checks the
+    business matches the invoice's).
+  - **Payment days**: after tomorrow refused (server and sheet); before the issue date allowed with a warning (a deposit).
+  - **Tax label** from the rate (`taxLabel`/`taxLineText`): 13 % HST, 5 % GST, 0 % "Zero-rated", else "Tax" — the same on
+    the PDF and the screen.
+  - **Decided on two devices**: the later decision is refused "Already accepted (declined) on the other device: this quote
+    stays …" (Needs attention). A lead **won on one device while its quote was declined on the other**: the quote stays
+    declined; the win's records stand (one client — D8's kept ids); the lead's stage set clashes (Won vs Lost) and is
+    settled on the lead page with D8's StageClash — keep Won (the client stays; the quote stays declined, its accept
+    discarded in Needs attention) or Lost (then the client the win made is tidied by hand, as D8's "won twice" notes). Tested.
+  - The follow-up is due max(sent + 7 days, today) and goes to the **lead's owner** (else the business's default owner).
+  - D11's hand-entry sheet tells Great White North Design and Business consulting that invoices made here count by themselves.
+  - Halves round away from zero (a negative line mirrors its price); "Copy the invoice's lines" makes its lines once (ids
+    kept, off while running); a partial `PUT /settings` changes only the fields sent (null / '' clears); changing the
+    prefix after numbers were given answers a `warning` (shown on the page).
+- **Not built / open**: emailing from the suite (SMTP); recurring invoices (retainers billed monthly by hand for now);
+  currencies other than CAD; a refund paid back as its own record (an overpayment or a credit note on a paid invoice is
+  shown, the accountant settles it); deposits on quotes; a quote's own expiry (valid until is printed, not enforced);
+  per-line tax rates other than exempt.
+
+## Helpdesk (helpdesk module, D14)
+Server `server/src/modules/helpdesk/` (`imap.js` the read-only IMAP client, `mime.js` emails → plain text, `threads.js`
+the ticket rules — both pure —, `service.js`, `automations.js`, `entities.js`, `routes.js`, migrations `001_create_helpdesk.sql`,
+`002_saved_answers.sql`), client `client/src/modules/helpdesk/` (`TicketsPage` `/helpdesk`, `TicketPage`
+`/helpdesk/tickets/:id`, `AnswersPage` `/helpdesk/answers`, `HubPanel` + `MailboxPanel` on Connections, `logic.js`);
+tests `server/test/helpdesk-imap.test.js`, `server/test/helpdesk.test.js` (TZ Toronto), `client/test/helpdesk.test.js`,
+`test/e2e/helpdesk.e2e.test.js`, against `server/test/fixtures/imapFake.js` (a fake IMAP server recording every command
+and keeping flags; plain TCP, or TLS with the test-only certificate `fixtures/imap-test-cert.pem`) and D12's fake
+WooCommerce. Registered after `ebay` (it uses `woocommerce`, the planner and automations; without the planner — the sync
+engine's tests — it reads mail but makes no tasks and registers no synced type). Reads/writes only its own tables.
+**Owner decision (12 Oct)**: IMAP login per store mailbox; reading is IMAP only; nothing is ever sent from the suite.
+- **Mailboxes** (`helpdesk_mailboxes`, `helpdesk_changes`: **keepOnRestore**, like D12's stores): System → Connections →
+  **Support mailboxes** → *Add a mailbox…*: name, IMAP server, username, **app password**, inbox and Sent folders (INBOX /
+  Sent by default), its WooCommerce store (for orders), our business (retail by default). **Checked before anything is
+  saved**: a real login, LIST, and EXAMINE of both folders — a wrong password → 400 `refused`, a missing folder → 400
+  `no_folder` with `details.folders` (and the folder marked `\Sent`), unreachable / TLS → 502. The password is sealed
+  (AES-256-GCM, `lib/sealed.js`, key file `config.helpdesk.keyFile` = `<data>/helpdesk-secret.key`, `HELPDESK_KEY_FILE`),
+  never returned or logged. Each mailbox is its own pausable Connections row `mail-<id without dashes>` after the
+  always-on `helpdesk` row; its card: Pull now, Settings… (name, folders — checked with a login —, own address, "never
+  a ticket from" addresses/@domains, store, business), Replace the app password… (checked), Remove… (deletes its
+  tickets and messages here; nothing changes in the mailbox). Port 993 always (`HELPDESK_TEST_PLAIN_LOCALHOST` lets
+  tests reach a server on this machine over plain TCP on any port; never in production).
+- **Read only by construction** (`imap.js`, no dependency — decision: `imapflow` was approved, but its ~10-package tree
+  includes SMTP and every write command; a 400-line client that *can't* issue a write is the stronger guarantee and its
+  fake server is fully ours): `COMMANDS` = CAPABILITY, LOGIN, LIST, EXAMINE, UID SEARCH, UID FETCH, NOOP, LOGOUT;
+  `checkCommand` refuses anything else and any FETCH item but UID / INTERNALDATE / RFC822.SIZE / `BODY.PEEK[…]` before
+  writing. Tests: no SELECT, every FETCH peeks, the message's flags unchanged, no other module file opens sockets.
+- **Pulls** (`startPuller`, `HELPDESK_PULL_ENABLED`, on in production; one look a minute; a mailbox is read every
+  `HELPDESK_PULL_EVERY_MIN` = **5** minutes; no IDLE — decision: a long-lived connection per mailbox for minutes saved
+  isn't worth it): per folder (`helpdesk_folders`: folder, UIDVALIDITY, last uid; **not** kept across restores) the
+  first read is `UID SEARCH SINCE` 14 days back (`FIRST_READ_DAYS`), later ones `UID SEARCH UID n:*` (skipped when
+  UIDNEXT says nothing is new); a new UIDVALIDITY or folder name reads again from 14 days (a Message-ID already held is
+  never held twice). At most 100 messages a folder a round (`MAX_PER_ROUND`), fetched 20 at a time, the first 256 KB of
+  each (`BODY.PEEK[]<0.262144>`); the Sent folder (headers only) is read **only when the inbox is caught up**, so a reply
+  is normally never read before the email it answers; a sent email that answers no ticket yet is **held** (thread
+  headers and recipients only, `helpdesk_sent_waiting`) and tried again on the next `SENT_HOLD_ROUNDS` (2) reads, then
+  dropped. Failures back off 2 … 60 minutes (an auth refusal says "replace the app password"); paused = no calls at all;
+  switched on → read at once. After a round with a good read: `automations.emit('helpdesk.pulled')`. **Limits (review
+  fix)**: a whole read gives up after `HELPDESK_PULL_DEADLINE_MS` (5 min: an AbortController closes the connection,
+  connecting included); each command has its own deadline (3 × the timeout) and each wait the timeout; a literal larger
+  than asked for (+ 64 KB) or a line over 1 MB closes the connection, as do more than 20,000 answers or 48 MB to one
+  command; the reader (`ResponseReader`) is linear in the bytes received. Emails are parsed **before** the write
+  transaction; each is filed in its own savepoint.
+- **Tickets** (`helpdesk_tickets`, `helpdesk_messages`; server data, **not synced**, not kept across restores — rolled
+  back and read again): a customer email (Reply-To when it isn't our own address — contact forms —, else From) joins the
+  ticket of any message its In-Reply-To/References name, else the same customer + `subjectKey` (Re:/Fwd:/AW:… stripped)
+  within 30 days, else opens a new ticket (`number` from its own counter `helpdesk_meta.ticket_number`: never reused).
+  No Message-ID → an id hashed from its own headers (`fallbackMessageId`; never from where it was read, so a renumbered
+  folder doesn't hold it twice). One of our sent emails is kept (**without its body**) only when it replies to a ticket
+  (thread headers, else To + subject — a mailto reply). **Never a ticket, never kept** (`isAutomaticFor`): an email
+  whose Reply-To names someone other than the sender and us — **a contact form** (From noreply@ / wordpress@, the
+  customer as Reply-To, often through SendGrid / Mailgun with List-Unsubscribe and Precedence bulk) — is judged by that
+  Reply-To: only Auto-Submitted ≠ no, an auto-reply header or a noreply Reply-To leave it out, and its customer is the
+  Reply-To. Any other email: Auto-Submitted ≠ no, Precedence bulk/junk/list, List-Id/List-Unsubscribe, X-Autoreply,
+  mailer-daemon/postmaster/no-reply senders. Also the mailbox's own address as the customer, and "never a ticket from"
+  (`parseIgnore`/`isIgnored`: an address or @domain matches **From only**; `subject: <words>` matches the subject —
+  WooCommerce's new-order email also comes From the shop with the customer as Reply-To, so block it by subject, never
+  by the shop's address, which would block the contact form too). Counted as `skipped`.
+  State (`ticketStatus`, from INTERNALDATEs): `waiting` (a customer email after the later of our last reply and a close;
+  `waiting_since` = the first such), `answered`, `closed` (a person's close at or after our last reply); every move back
+  to waiting because the customer wrote is a new **episode** (`wait_reason: customer`). **Flagged** = waiting 24 hours or
+  more (`FLAG_AFTER_MS`), worked out at read time. Close ("no reply needed"; closed at now, never before the customer's
+  last email as the mail server timed it) / Reopen on the ticket page (`POST /tickets/:id/close|reopen`): a **reopen is
+  not a new episode** (the customer didn't write) — `reopen_count` +1, `reopened_at/_by`, `wait_reason: reopened`.
+- **Privacy** (customer emails are personal data; the stores sell age-restricted products): kept only to answer them —
+  **never for marketing, never copied into the CRM, never synced to devices** (said on every Support page and the
+  mailbox form). Kept: sender name and email, subject, dates, the body as **plain text** (HTML turned into text on the
+  server: scripts, styles, images and links' addresses dropped; quoted earlier messages left out; ≤ 20,000 characters),
+  attachment **names only** (never the files), thread ids. Pages show text as text (React): no remote image is ever
+  loaded (e2e: no request leaves the suite, no CSP violation). **Retention**: bodies (and attachment names) deleted 90
+  days after a ticket is answered or closed (`BODY_KEEP_DAYS`), whole tickets 365 days after (`TICKET_KEEP_DAYS`);
+  waiting tickets are kept; run on every puller look (at most hourly, `purgeIfDue` — paused or failing mailboxes too) and
+  at start. **At start** tickets, messages, folders, pulls and held sent emails of a mailbox that isn't there any more are
+  deleted (a restore keeps the current mailboxes but rolls tickets back). Every route answers `no-store`; addresses
+  carry ids only. **Linear by construction (review fix)**: every input is capped first (text parts 64 KB, HTML 256 KB,
+  400 header lines / 64 KB, 8 KB a value, 100 MIME parts) and HTML → text, text clean-up, quoted-reply trimming and
+  header parsing are single passes — tests time 256 KB of "<a", runs of spaces, thousands of "On … wrote:" and header
+  lines (the regex versions took over a minute).
+- **The order on each ticket**: `POST /api/helpdesk/tickets/:id/order` (the page calls it on open) — the order numbers
+  the customer's emails mention (`orderNumbers`: "#1042", "order 1042", "Order #TX-500", "commande 2051"; at most 3), else
+  the customer's email, looked up through `ctx.services.woocommerce.lookup` (D12) in the mailbox's store: shown with
+  D12's `OrderCard` (`sales/OrderCard.jsx`; first name only), **never stored, never logged**; the route answers every
+  error itself like D12's. No store linked → 409 `no_store`. **An order found by a number in the email may be anyone's**
+  (review fix): `woocommerce.lookup(id, { number, matchEmail })` compares the order's billing email with the ticket's
+  customer in the store module and returns only `senderMatches: true|false`; the page says "This order isn't under the
+  sender's email" when false. Orders found by the customer's email are theirs.
+- **Tasks** — automation `helpdesk-tickets` (events `helpdesk.pulled` / `helpdesk.changed` — closes, reopens, removals,
+  and once at start; **on, silent**): one task per waiting ticket per wait, key `ticket:<id>:<episode>` (+ `.r<n>` after
+  the n-th reopen on the page), on the
+  **shared list** (`owner: 'shared'`), the mailbox's business (retail), due the (server-local) day it started waiting,
+  title **"Answer support email #12 (TinsXpress)"** (": the customer wrote again" for a new episode, ": reopened" for a
+  reopen) and notes
+  with the path `/helpdesk/tickets/<id>` — **no customer data** (decision: tasks sync to devices and their titles go into
+  the calendar feed). The task row shows **Open the ticket** (`ticketPathIn`), so a phone reaches the ticket from Today.
+  Who finished it decides: answered / closed on the page / mailbox removed → the suite finishes it saying why; a
+  **person** ticking it off (or deleting it) while the ticket waits **closes the ticket** (`closeFromTask`:
+  `task_done` / `task_deleted`, `closed_by` = who changed the task last — planner's `taskState` now gives `updatedBy`
+  and `deletedAt` —, **closed_at = the task's done time**, or for a deleted one its delete time — review fix: never the
+  run's time, so an email that came after the tick is a new wait with a new task, not swallowed) and adds one line to the
+  task ("… Reopen this task to reopen the ticket"); a person **reopening that task** (a mistaken tick) → the ticket waits
+  again, same episode, same task (`uncloseFromTask`). The customer writing again → a new episode, a new task. At most
+  25 new a run (planned again after the closes). `accept` leaves no run rows when nothing changes.
+- **The overview** (D11): `support` = flagged tickets (`helpdesk.supportSection()`: count, items `{ number, mailbox,
+  hours }`, `waiting`, `failing`), linking to the ticket; urgent (in the headline). **For D15**:
+  `helpdesk.openTicketsByStore()` → `{ <sales store key>: count }` — open = waiting + answered (not closed), keyed like
+  `sales_daily.store` through the woocommerce service's `storeKey` for the mailbox's `store_id`; mailboxes with no store
+  (or one no longer connected) are left out. Read-only; call it guarded.
+- **Microsoft accounts** (Microsoft 365, Outlook.com, Hotmail: host or username) are refused at once with 400
+  `microsoft` ("can't be read yet: Microsoft only allows OAuth sign-in for IMAP") — nothing is tried.
+- **Saved answers** (`saved_answer`, `helpdesk_saved_answers`, synced, offline): title, body (≤ 5000), `mailbox_id` (id,
+  no ref — mailboxes aren't synced; null = every mailbox), position. On a ticket: **Copy** (`{name}` → the customer's
+  first name) and **Write it in Mail** (`mailto:` with "Re: <subject>" and the body — matched later by subject and
+  address; replying to the email itself keeps the thread; it opens the device's **default** mail account, which the
+  page says to check). Edits send only what changed.
+- **Placement**: a sidebar entry **Support** (`phone: false`, order 27); phones reach tickets from their task on Today
+  and the overview (the row link reads `ticketPathIn`, in `planner/links.js`, so the planner doesn't import the
+  helpdesk). Tabs Tickets · Saved answers.
+- **Not exercised here**: a real mailbox (Gmail, iCloud, a cPanel/Dovecot host) — only the fake server; real TLS
+  certificates (only the test certificate); real mail apps' Sent folders and threading headers; Microsoft 365 /
+  Outlook.com (refused up front: OAuth isn't built). **Open**: OAuth (XOAUTH2)
+  for providers that require it; a search over tickets; IDLE; merging two tickets by hand.
+
+## Overview cards and goals (overview module, D15)
+Server `server/src/modules/overview/cards.js`, `scorecard.js`, `entities.js`, migration `001_create_targets.sql`; small
+reads added elsewhere: `crm.liveServices()`, `stockroom.stockCard()`, `wholesale.readyToShip()` and `moneyLines(today).totals`
+(owed, payments this month, quiet regulars — same pass); shared `shared/targets.js` (`@suite/shared/targets`); client
+`client/src/modules/overview/Cards.jsx`, `cards.js`, `MonthTargets.jsx`, `targetForm.js` (+ 7 lines in the planner's
+`MonthPlanPage.jsx`). Tests `shared/test/targets.test.js`, `server/test/overview-cards.test.js` (TZ Toronto),
+`client/test/overview-cards.test.js` (two devices), `test/e2e/overview-cards.e2e.test.js` (iPhone 390/320 and Mac). The
+plan's "done when": every card shows its data or a clear "not connected", and each target shows actual against target.
+- **Still one read**: `GET /api/overview` now also returns `cards` (in `CARD_IDS` order) and `goals` (this calendar
+  month's scorecard). Each request reads the sales summary, the sales months (this month and the two before, once —
+  `reads.window()`), D6's `costs.monthlyTotals()`, the wholesale money lines and the quiet clients **once**, shared by
+  the cards, the scorecard and "To deal with" (`requestReads`). Each card is built on its own (`{ id, state: 'error' }`
+  when it throws). Every other module is read through its service and **guarded** (absent → `not_available`), so D14's
+  helpdesk or any later service plugs in without breaking anything. Measured: ~100 ms with 3,000 clients (server test).
+- **Placement**: below the sales strip and "To deal with": the goals scorecard first (what the month is judged by), then
+  the cards in the plan's order in a grid (two or three across on a Mac, the all-businesses card full width; one column
+  on a phone, no sideways scroll at 320 px).
+- **The cards (decision: content from data that exists)** — rows are data, the device words them (`cards.js`):
+  - **Wholesale**: sales this month and last month (`sales.monthly`, the Order Manager's P&L days), owed (Σ positive
+    balances, the Balances page's rule) and owed over 30 days (D3/D11's aging), **payments received this month (shown
+    only — "recorded in the Order Manager"; the suite never records one)**, quiet regulars (linked, D3's rhythm, active
+    clients only — as the flag), orders packed and not shipped (every customer's, `json_extract` on the held snapshot),
+    recurring costs a month. `not_connected` / `paused` as D11's sections.
+  - **Stock**: from the four Stockroom answers D16 already pulls (counts, differences, order-soon, deliveries): last full
+    count (+ due/overdue, % matched in 30 days), last spot check, open differences and their value, products to reorder
+    and from how many suppliers (+ out of stock), deliveries expected (tins, next day, late). **Decision: no call to
+    `/v1/suite/summary`** — it runs Stockroom's forecast (as costly as order-soon, which D16 reads once a day on
+    purpose), and every field the card needs is in the reads already pulled. States `not_connected | revoked | not_read
+    | paused | ok`.
+  - **Web and social** (GWND, kinds website + social) and **Business consulting**: active relationships (active, client
+    active; by kind), active services and what plans/retainers bring a month (yearly ÷ 12, hourly counted apart; no
+    currency on services: CAD), renewals in 30 days (+ the next one), the open pipeline (count per stage, first-year
+    value per currency, won this month), sales this month, recurring costs. Consulting's sales include its invoices (D18's
+    `invoices` source, registered whenever the billing module is — so its old "sales here are the ones entered by hand"
+    note no longer shows; it would only come back without the billing module).
+  - **Save Point Shop**: today / this week / this month from the summary (the month entered by hand when it fills the
+    card, marked), eBay orders waiting to ship (`ebay.store.waiting()`: count, next ship-by, past it), costs; eBay's state.
+  - **Clients**: active, **clients added this month** (made in the suite this calendar month, active — imports included,
+    so labelled "added", not "new"; the scorecard's "new clients" is the start-date rule below), gone quiet (the Friday review's rule — the
+    same list as "To deal with"), open leads.
+  - **All businesses**: each business's Total sales for the last three calendar months beside its recurring costs a
+    month **as they are now** (D6 keeps no history: past months say "less today's costs"; the month in progress takes
+    only the share of its days completed — elapsed ÷ days), and "less costs" per month and currency (never across currencies);
+    **Personal** (the home) on its own line, left out of the together line (home costs aren't the businesses').
+  - **Retail stores**: each WooCommerce store (and retail sales by hand) with this month / today and its state; **open
+    tickets per store** from D14's `helpdesk.openTicketsByStore()` → `{ <WooCommerce store key>: open tickets (waiting +
+    answered) }` (the same key as the store's sales rows; mailboxes with no store are left out). No support mailbox yet
+    (`helpdesk.supportSection().state === 'not_connected'`) → "no support mailbox yet · add each store's on System →
+    Connections → Support mailboxes" (`support.setUp`); no helpdesk module → "Not connected yet · comes with the
+    helpdesk (D14)". The call is guarded on its own (a failure → the support line says it couldn't be read; the stores
+    still show); tickets for a key no retail store has are counted apart. The server test reads the real helpdesk (fake
+    IMAP server + fake WooCommerce).
+- **Monthly targets** — synced record `target` (`overview_targets`; create/update/delete; registered only with the CRM):
+  business_id*⇧ (one of ours), month* (the 1st, "YYYY-MM-01" — **calendar months**, as sales), measure*
+  (`sales` Total sales · `net_sales` before tax and shipping · `orders` · `new_clients` "New clients (first relationship
+  started)": **distinct clients whose first relationship with the business has its start_date in the month** —
+  start_date only, so C7's imports (no start date) never count · `won_leads`; Personal is offered no sales measures),
+  amount* (cents for money measures, else a count; > 0), currency (money only; null = CAD), notes. `checkTargetStep`
+  (shared): month a 1st, amount > 0, currency shape, and an update may not touch business/month/measure/**currency** (a
+  different one is a new target). Two devices setting the same target offline make two records (nothing refused):
+  readers use the one changed last (`pickTargets`: pulled times; on a device a change still waiting to be sent counts as
+  newest; without times, the ids) and the plan offers "Remove the extra…" behind a confirm.
+- **Orders and D18**: `orders` is Σ the `orders` column of `sales_daily` as each source writes it. D18's `invoices`
+  source writes **one order per invoice**, on the day its first money came in (integration fix: it used to count one per
+  payment day, so an invoice paid in two parts was two orders) — the same day its sale starts counting, as a store's
+  order counts with its sale.
+- **Actuals** (`scorecard.js`): sales/net/orders from `sales.monthly()` per business and currency — **totalOnly-aware**:
+  `net_sales` is "can't tell" (`reason: total_only`) when a hand entry or hand-entered month is in it (only totals are
+  known); `orders` is `partial` then; `sales` is always known. **Pace** (`targetPace`): a straight line from 0 on the 1st
+  to the target on the last day — expected by the end of today, projected at the same rate, status reached / ahead /
+  on pace (±5 %) / behind, **by the days completed** (today isn't over: elapsed = day − 1), and **"too early to tell"**
+  before 3 completed days (`PACE_MIN_DAYS`); a past month reached or missed; a future one not started.
+- **Relation to C4b's priorities (decision, no duplication)**: a priority is a piece of work ticked by hand (its own
+  `target`/`progress` are typed); a target is a number the suite measures. Both are set per business on the monthly
+  plan (targets above the priorities in each business's card) and the scorecard shows them together ("1 of 2 priorities
+  done" + their progress). Neither copies the other; `goal_id` isn't linked to targets.
+- **The monthly plan** (`/plan/month`): "+ Target" per business → the sheet (what to measure with what it counts, amount
+  in dollars or a count, currency, notes; edits send only what changed; Delete behind a confirm); works offline;
+  "so far" comes from `GET /api/overview/targets?month=YYYY-MM&today=` (server data: "needs a connection" offline) and is
+  asked again as soon as nothing is waiting to be sent.
+- **Not built / open**: costs per past month (no history in D6); targets per person; a target linked to a priority;
+  Stockroom's stock value and orders needing a decision (in `/summary`, not read — see above).
 
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
@@ -2833,6 +3553,12 @@ Server `server/src/modules/overview/` (no tables), client `client/src/modules/ov
   out after 30 days); titles go as written (automated ones include account names and amounts), nothing else of the
   task's; the https link only (no webcal); the token is never logged; the links survive restores (`keepOnRestore`); its own Connections row
   (pausable). Next: C6b (meetings over CalDAV into Today and the day load).
+- **C6b (meetings from Apple Calendar)**: done — see "Meetings from Apple Calendar". CalDAV pull per person with an
+  app-specific password (sealed, checked first, kept across restores), PROPFIND/REPORT only to iCloud hosts; a
+  hand-rolled iCalendar reader (no dependency); meetings are server-written, read-only synced records (one per
+  instance, a week back to two months ahead), so Today, the plan and the load have them offline (both people's on every
+  device; titles stay in the sync log and backups); calendars are chosen before anything is read; busy timed meetings
+  under 24 h count in `dayLoad`/`loadsByDay` and are never pushed; the task feed never echoes them.
 - **D6 (renewals and recurring costs)**: done — see "Renewals and recurring costs". One module `costs` for the synced
   `recurring_cost` and both reminder automations (client services 30 days ahead, our costs 14 days), sharing one engine
   keyed by record + renewal date; reminders are made on their day (or today when late), capped at 20 new a run, silent by
@@ -2888,6 +3614,35 @@ Server `server/src/modules/overview/` (no tables), client `client/src/modules/ov
   count as one line; the headline counts only urgent sections); payments with no matching order = the Order Manager's
   unmatched e-Transfers (`payments.unmatched`) and lasting credit balances. D7 (consulting invoices) skipped; support
   emails wait for D14. Next: D15's cards.
+- **D10 (files)**: done — see "Files". The bytes live in the database (own tables, 512 KB pieces) so backups and restores
+  carry them with their synced records (backups now run off the main thread; local copies kept 7 days; 500 MB of files by default); uploads are the one raw (`application/octet-stream`) body, on one exact path,
+  checked from the headers before reading; downloads are attachments (images/PDFs shown on request), nosniff, sandboxed,
+  no-store; deletes are soft with the bytes purged 30 days later (no bin); password pointers hold no secrets; task files
+  list on their client's and account's tab.
+- **D9 (projects and playbooks)**: done — see "Projects and playbooks". Runs execute on the device (offline, ids made
+  once) and copy their steps (`run_step`), so editing a playbook changes only future runs; a run makes tasks with owners
+  and dates, renewal dates on the client's services (D6 reminds) and offers only where D8's rule allows; retainers' later
+  months come from the `playbook-months` automation keyed per run and month; links are text with a `file:<id>` seam for
+  D10 (set by the files module since the integration: a download link); tasks carry `run_id`/`run_step_id` (plain ids).
+  Next: D15 reads `activeRuns()`.
+- **D17/D18 (quotes, invoices and credit notes)**: done — see "Quotes, invoices and credit notes". One module `billing`;
+  drafts are synced (offline), numbers are given by the server when a person approves a draft (per business and kind,
+  gap-free, kept across restores with the issued PDFs), PDFs are hand-rolled (no dependency, deterministic) and stored for
+  good; the person sends them (share / download / mailto — no SMTP; transactional, no consent needed); a lead's quote moves
+  it to Quoted (D8's whole stage set) and accepting it is D8's win; a 7-day follow-up task; invoices count in sales as money
+  comes in (source `invoices`, payments on their day, credit notes on paid invoices taking it back); invoices past due on the
+  overview. Wholesale, Save Point Shop and Personal never bill here. Next: D15's cards can read `sales.monthly()` (source
+  `invoices` is in it) and `billing.overdueInvoices`.
+- **D14 (helpdesk)**: done — see "Helpdesk (D14)". IMAP only, read only by construction (own client, no dependency:
+  EXAMINE + BODY.PEEK, a command allowlist), nothing ever sent — replies are written in the person's mail app and seen
+  in the Sent folder. Tickets are **server data with a read API, not synced records** (customer emails stay on the
+  Mac mini; synced steps are never pruned, so bodies there could never be deleted); a task per wait on the shared list
+  carries only the ticket's number and mailbox; ticking it closes the ticket. Bodies purged 90 days after a ticket is
+  handled, tickets after a year. Orders looked up live through D12, never stored. Saved answers are synced. Next: D15.
+- **D15 (overview cards and goals)**: done — see "Overview cards and goals". Cards and the scorecard come in the same
+  one read, each guarded; the stock card uses Stockroom's answers already pulled (no `/summary` call); targets are a
+  synced record of the overview module set offline on the monthly plan, measured on calendar months from
+  `sales.monthly()` (totalOnly-aware) and the CRM, with a straight-line pace; priorities stay C4b's and sit beside them.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
@@ -2903,8 +3658,8 @@ works with `--force`: carrying the switches is best effort (a warning, then the 
 copy must pass `integrity_check`. Tests that depend on local time set
 `process.env.TZ = 'America/Toronto'` at the top (automations.test.js, wholesale-automations.test.js, wholesale-notes.test.js,
 costs.test.js, stockroom.test.js, leads.test.js, sales.test.js, woocommerce.test.js, ebay.test.js, wholesale-sales.test.js,
-sales-entries.test.js, overview.test.js). automations.test.js
-switches D3's two scheduled wholesale automations, D6's two renewal reminders, D8's cross-sell list and D13's eBay sign-in reminder off in its setup (they're on by default)
+sales-entries.test.js, overview.test.js, playbooks.test.js, meetings.test.js, billing.test.js, helpdesk.test.js, overview-cards.test.js — server and client). automations.test.js
+switches D3's two scheduled wholesale automations, D6's two renewal reminders, D8's cross-sell list, D13's eBay sign-in reminder and D9's playbook-months off in its setup (they're on by default)
 so its ticks stay about C8; costs.test.js switches every other scheduled automation off. The e2e `startServer(t, { extraModules })` adds
 test-only modules (conndemo). `npm run test:wom -- <wholesale-order-manager checkout>` (D1) runs the real Order
 Manager (needs `npm ci` in its `server/`) against a real suite and checks the timeline and spend against its own;

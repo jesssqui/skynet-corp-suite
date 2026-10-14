@@ -1,7 +1,7 @@
 // The overview (D11): GET /api/overview — sales per business (only those with sales, in our order) for today, this
 // week and this month with the combined total per currency, and the list of what needs dealing with, in the plan's
 // order: overdue tasks (both people and the shared list), wholesale balances over 30 days, renewals and retainers in
-// 30 days (client services and our costs), low stock (Stockroom), support emails (not connected yet), payments with no
+// 30 days (client services and our costs), low stock (Stockroom), support emails (no mailbox yet: D14's own tests cover the rest), payments with no
 // order to go against, relationships and leads with no next step, quiet clients.
 process.env.TZ = 'America/Toronto';
 
@@ -51,7 +51,7 @@ test('an empty suite: every section in the plan’s order, counts of 0, the outs
   assert.deepEqual(r.body.attention.map((s) => s.id), [...ATTENTION_SECTIONS]);
   assert.deepEqual(['overdue', 'renewals', 'noNextStep', 'quiet'].map((id) => section(r.body, id).count), [0, 0, 0, 0]);
   assert.deepEqual(['balances', 'payments', 'lowStock', 'support'].map((id) => section(r.body, id).state), ['not_connected', 'not_connected', 'not_connected', 'not_connected']);
-  assert.equal(section(r.body, 'support').comesWith, 'the helpdesk (D14)');
+  assert.equal(section(r.body, 'support').count, null, 'no support mailbox yet');
   assert.deepEqual(r.body.sales.businesses, [], 'no business has sales yet (eBay’s card, not set up, doesn’t count)');
 });
 

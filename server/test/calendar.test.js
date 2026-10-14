@@ -417,7 +417,8 @@ test('switched off on Connections: every feed answers 503 (calendars keep what t
 
 test('restores keep the links as they are now: a replaced link doesn’t come back; the current one keeps working', async (t) => {
   assert.ok(KEPT_TABLES.includes('calendar_feeds') && KEPT_TABLES.includes('calendar_feed_changes'));
-  assert.deepEqual(modules.find((m) => m.name === 'calendar').keepOnRestore, ['calendar_feeds', 'calendar_feed_changes']);
+  // C6b adds each person's Apple Calendar connection (meetings.test.js).
+  assert.deepEqual(modules.find((m) => m.name === 'calendar').keepOnRestore, ['calendar_feeds', 'calendar_feed_changes', 'calendar_apple', 'calendar_apple_changes']);
   const dir = tmpDir(t);
   const config = testConfig(dir, { CALENDAR_TIME_ZONE: ZONE });
   fs.mkdirSync(config.backup.offsiteDir, { recursive: true });

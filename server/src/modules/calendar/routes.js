@@ -90,5 +90,31 @@ export function createCalendarRouter(ctx, service) {
     res.json({ ...service.turnOff({ actor: req.auth.user.actor, deviceId: req.auth.device?.id ?? null }), ...info() });
   });
 
+  // ---- C6b: this person's Apple Calendar (meetings) — each person manages only their own ----------------
+  const who = (req) => ({ actor: req.auth.user.actor, deviceId: req.auth.device?.id ?? null });
+  // GET /api/calendar/apple -> { connected, appleId, calendars, lastSuccessAt, lastError, … } (never the password)
+  router.get('/apple', NO_STORE, (req, res) => {
+    res.json(service.apple.info(req.auth.user.actor));
+  });
+  // PUT /api/calendar/apple { appleId, password } -> checked with iCloud first, then saved and read once.
+  router.put('/apple', NO_STORE, async (req, res) => {
+    const { actor, deviceId } = who(req);
+    res.json(await service.apple.connect(actor, { appleId: req.body?.appleId, password: req.body?.password }, { deviceId }));
+  });
+  // PUT /api/calendar/apple/calendars { excluded: [calendar url] } -> which calendars count.
+  router.put('/apple/calendars', NO_STORE, async (req, res) => {
+    const { actor, deviceId } = who(req);
+    res.json(await service.apple.setCalendars(actor, { excluded: req.body?.excluded }, { deviceId }));
+  });
+  // POST /api/calendar/apple/pull -> read this person's calendars now.
+  router.post('/apple/pull', NO_STORE, async (req, res) => {
+    res.json(await service.apple.pullNow(req.auth.user.actor));
+  });
+  // DELETE /api/calendar/apple -> forget the connection here (and this person's meetings on devices).
+  router.delete('/apple', NO_STORE, (req, res) => {
+    const { actor, deviceId } = who(req);
+    res.json(service.apple.forget(actor, { deviceId }));
+  });
+
   return router;
 }

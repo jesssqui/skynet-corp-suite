@@ -35,13 +35,12 @@ async function connections(page, server, label) {
   await page.getByTestId('always-on-backup').filter({ hasText: 'can’t pause' }).waitFor(WAIT);
   assert.equal(await card('backup').getByRole('switch').count(), 0, 'no switch for backups');
   // D1 made the Order Manager's row real (test/e2e/wholesale.e2e.test.js), D16 Stockroom's
-  // (test/e2e/stockroom.e2e.test.js); the others still wait.
+  // (test/e2e/stockroom.e2e.test.js), C6b Apple Calendar's (test/e2e/meetings.e2e.test.js): no placeholder is left.
   await page.locator('[data-connection="wom"][data-state="on"]').waitFor(WAIT);
   await page.locator('[data-connection="stockroom"][data-state="on"]').waitFor(WAIT);
-  for (const [id, pkg] of [['calendar', 'C6b']]) {
-    await page.getByTestId(`placeholder-${id}`).filter({ hasText: `Not connected yet · comes with ${pkg}` }).waitFor(WAIT);
-    assert.equal(await card(id).getByRole('switch').count(), 0);
-  }
+  await page.locator('[data-connection="calendar"][data-state="on"]').waitFor(WAIT);
+  await card('calendar').getByTestId('calendar-connect-link').waitFor(WAIT);
+  assert.equal(await page.locator('[data-testid^="placeholder-"]').count(), 0);
   // The test connection: off (paused), the queue builds, on again (it catches up).
   const demo = card('conndemo');
   await demo.getByTestId('queue-conndemo').filter({ hasText: 'Nothing waiting' }).waitFor(WAIT);

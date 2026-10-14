@@ -104,7 +104,7 @@ async function walkThrough(page, server, label) {
   const overdue = page.locator('[data-section="overdue"]');
   await overdue.getByRole('link', { name: /Send the October invoices/ }).waitFor(WAIT);
   assert.equal(await overdue.getAttribute('data-count'), '1');
-  await page.locator('[data-section="support"]').getByText('Not connected yet · comes with the helpdesk (D14).').waitFor(WAIT);
+  await page.locator('[data-section="support"]').getByText('Not connected: add each store’s support mailbox on System → Connections.').waitFor(WAIT);
   await page.locator('[data-section="balances"]').getByTestId('section-state').filter({ hasText: /Order Manager is set up/ }).waitFor(WAIT);
   await page.locator('[data-section="lowStock"]').getByTestId('section-state').filter({ hasText: /Stockroom is set up/ }).waitFor(WAIT);
   await page.locator('[data-section="noNextStep"]').getByRole('link', { name: /Lefty’s Vape Shop/ }).waitFor(WAIT);

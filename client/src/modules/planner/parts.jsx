@@ -9,6 +9,7 @@ import { SyncBadges } from '../../sync/components.jsx';
 import { BusinessChip, useAction } from '../crm/parts.jsx';
 import { captureFields, saveCapture, dueLabel, dueState, formatMinutes, isTop, ownerLabel } from './logic.js';
 import { isPhone, keepFinished } from './prefs.js';
+import { ticketPathIn } from './links.js';
 import './planner.css';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
@@ -90,6 +91,7 @@ export function TaskRow({ task, me, today, businessesById, clientsById, accounts
           ) : null}
           {!showClient && account ? <span>{account.name}</span> : null}
           {lead ? <Link to={`/crm/leads/${lead.id}`} className="planner-client-link" data-testid="task-lead">Lead: {lead.name}</Link> : null}
+          {ticketPathIn(task.notes) ? <Link to={ticketPathIn(task.notes)} className="planner-client-link" data-testid="task-ticket">Open the ticket</Link> : null}
           {task.estimate_minutes ? <span><Icon name="clock" size={13} style={{ verticalAlign: '-2px' }} /> {formatMinutes(task.estimate_minutes)}</span> : null}
           {goal ? (
             <span className="planner-goal-tag" title={goal.kind === 'month' ? 'Month priority' : 'Week goal'}>

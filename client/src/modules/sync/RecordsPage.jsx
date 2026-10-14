@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { PageHeader, Card, Button, KeyValue, EmptyState, Notice } from '../../ui/index.js';
 import { useSyncEngine, useRecords, useSyncData } from '../../sync/index.js';
+import { useAuth } from '../../auth/session.jsx';
 import { ClashPanel, FieldInput, FieldsForm, SyncBadges, fieldLabel, formatValue } from '../../sync/components.jsx';
 
 // A plain view of any synced record type, straight from the offline copy: list, add, change,
@@ -170,7 +171,13 @@ export default function RecordsPage() {
   const def = engine?.definition(entity) ?? null;
   const [showHidden, setShowHidden] = useState(false);
   useEffect(() => setShowHidden(false), [entity]);
-  const { records, loading } = useRecords(entity, { orphans: showHidden }, [showHidden]);
+  const { records: all, loading } = useRecords(entity, { orphans: showHidden }, [showHidden]);
+  // C6b: meetings are each person's own — this view lists only yours. Your partner's are on this device too
+  // (synced like tasks), and the page says so.
+  const { session } = useAuth();
+  const me = session?.user?.actor ?? null;
+  const records = entity === 'meeting' ? all.filter((r) => r.actor === me) : all;
+  const othersHere = all.length - records.length;
   // How many this device holds that are hidden because something they belong to is gone.
   const { data: hidden } = useSyncData(
     async (e) => (e.ancestorsOf(entity).length
@@ -202,6 +209,12 @@ export default function RecordsPage() {
       />
       <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
         {adding && def ? <AddForm def={def} engine={engine} onDone={() => setAdding(false)} /> : null}
+        {othersHere > 0 ? (
+          <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }} data-testid="others-meetings">
+            Only your meetings are listed. Your partner’s {othersHere} {othersHere === 1 ? 'meeting is' : 'meetings are'} on this
+            device too (synced like tasks), just not shown here.
+          </div>
+        ) : null}
         {def && hidden > 0 ? (
           <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }} data-testid="hidden-records">
             {showHidden

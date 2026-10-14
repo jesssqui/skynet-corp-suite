@@ -15,6 +15,10 @@ import stockroom from './stockroom/index.js';
 import sales from './sales/index.js';
 import woocommerce from './woocommerce/index.js';
 import ebay from './ebay/index.js';
+import files from './files/index.js';
+import playbooks from './playbooks/index.js';
+import billing from './billing/index.js';
+import helpdesk from './helpdesk/index.js';
 import overview from './overview/index.js';
 
 // auth comes first: app.js puts its guard in front of every route.
@@ -31,6 +35,12 @@ import overview from './overview/index.js';
 // sales (D12) holds the daily sales totals every source writes (woocommerce now, ebay with D13); it comes
 // before them. woocommerce (D12) after connections (each store is a row) and sales (it writes totals there);
 // ebay (D13) after sales and the planner (its totals go to sales, its automations make tasks).
+// files (D10) after the crm and the planner: its files belong to clients, accounts and tasks.
+// playbooks (D9) after the crm, the planner and automations: its runs point at CRM records, make tasks and its
+// automation makes a repeating run's later months.
+// billing (D17/D18) after crm, planner, automations and sales: quotes and invoices point at CRM records, its follow-ups
+// are tasks, its invoices count in sales; before the overview (overdue invoices are one of its lines).
+// helpdesk (D14) after woocommerce (its tickets look orders up through it), the planner and automations (its tasks).
 // overview (D11) last: it has no tables and reads every other module through its service.
 // (wholesale writes its sales days into sales from its start hook — every service exists by then.)
-export const modules = [auth, health, sync, connections, automations, crm, planner, wholesale, calendar, costs, stockroom, sales, woocommerce, ebay, overview];
+export const modules = [auth, health, sync, connections, automations, crm, planner, wholesale, calendar, costs, stockroom, sales, woocommerce, ebay, files, playbooks, billing, helpdesk, overview];

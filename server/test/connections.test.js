@@ -62,7 +62,7 @@ test('the page lists the backup (always on), the placeholders (not connected yet
   const { call } = await setup(t);
   const { status, body } = await call('GET', '/api/connections');
   assert.equal(status, 200);
-  assert.deepEqual(body.connections.map((c) => c.id), ['backup', 'wom', 'calendar', 'stockroom', 'calendar-feed', 'woocommerce', 'ebay', 'conndemo']);
+  assert.deepEqual(body.connections.map((c) => c.id), ['backup', 'wom', 'calendar', 'stockroom', 'calendar-feed', 'woocommerce', 'ebay', 'helpdesk', 'conndemo']);
   // D12: the WooCommerce stores' row (each store added gets its own row under it).
   assert.deepEqual([row(body.connections, 'woocommerce').state, row(body.connections, 'woocommerce').queueLabel], ['always_on', 'No stores yet']);
   const backup = row(body.connections, 'backup');
@@ -72,10 +72,13 @@ test('the page lists the backup (always on), the placeholders (not connected yet
   // D1 registered the real Order Manager connection in the placeholder's slot; the others still wait
   const wom = row(body.connections, 'wom');
   assert.deepEqual([wom.state, wom.pausable, wom.module], ['on', true, 'wholesale']);
-  // D16 did the same for Stockroom.
+  // D16 did the same for Stockroom, and C6b for Apple Calendar (no placeholder is left).
   const stockroom = row(body.connections, 'stockroom');
   assert.deepEqual([stockroom.state, stockroom.pausable, stockroom.module, stockroom.queueLabel], ['on', true, 'stockroom', 'Not set up']);
-  for (const p of PLACEHOLDERS.filter((x) => !['wom', 'stockroom'].includes(x.id))) {
+  const calendar = row(body.connections, 'calendar');
+  assert.deepEqual([calendar.state, calendar.pausable, calendar.module], ['on', true, 'calendar']);
+  assert.match(calendar.queueLabel, /not connected/);
+  for (const p of PLACEHOLDERS.filter((x) => !['wom', 'stockroom', 'calendar'].includes(x.id))) {
     const c = row(body.connections, p.id);
     assert.deepEqual([c.state, c.comesWith, c.pausable], ['not_connected', p.comesWith, false]);
   }
@@ -140,9 +143,11 @@ test('either person may switch; the backup and placeholders can’t be; bad requ
 
   const backup = await call('PUT', '/api/connections/backup', { paused: true });
   assert.deepEqual([backup.status, backup.body.code], [409, 'not_pausable']);
-  const calendar = await call('PUT', '/api/connections/calendar', { paused: true });
-  assert.deepEqual([calendar.status, calendar.body.code], [409, 'not_connected']);
-  assert.match(calendar.body.error, /comes with C6b/);
+  // A placeholder (every one has its package by now: make one) can't be switched.
+  ctx.services.connections.placeholder({ id: 'future', name: 'Future', description: 'Not built yet', comesWith: 'Z9' });
+  const future = await call('PUT', '/api/connections/future', { paused: true });
+  assert.deepEqual([future.status, future.body.code], [409, 'not_connected']);
+  assert.match(future.body.error, /comes with Z9/);
   assert.equal((await call('PUT', '/api/connections/nope', { paused: true })).status, 404);
   assert.equal((await call('PUT', '/api/connections/conndemo', { paused: 'yes' })).status, 400);
   assert.equal((await call('PUT', '/api/connections/conndemo', {})).status, 400);
@@ -242,10 +247,15 @@ test('register() checks its arguments: ids, describe, pause/resume or a reason t
   assert.throws(() => c.register({ ...base, pausable: false, pause: undefined }), /say why/);
   assert.throws(() => c.register({ ...base, id: 'conndemo' }), /already registered/);
   // A real connection takes its placeholder's place (and slot).
-  c.register({ ...base, id: 'calendar', name: 'Apple Calendar', module: 'calendar', describe: () => ({ queueSize: 0 }) });
+  c.placeholder({ id: 'future', name: 'Future', description: 'Not built yet', comesWith: 'Z9' });
+  c.register({ ...base, id: 'after-future', name: 'After' });
+  const slot = c.list().findIndex((x) => x.id === 'future');
+  assert.equal(row(c.list(), 'future').state, 'not_connected');
+  c.register({ ...base, id: 'future', name: 'Future', module: 'future', describe: () => ({ queueSize: 0 }) });
   const list = c.list();
-  assert.deepEqual(list.map((x) => x.id).slice(0, 4), ['backup', 'wom', 'calendar', 'stockroom']);
-  assert.equal(row(list, 'calendar').state, 'on');
+  assert.equal(list.findIndex((x) => x.id === 'future'), slot);
+  assert.equal(list[slot + 1].id, 'after-future');
+  assert.equal(row(list, 'future').state, 'on');
   // A describe() that throws shows as the row's error, not a broken page.
   c.register({ ...base, id: 'broken', describe: () => { throw new Error('boom'); } });
   assert.match(row(c.list(), 'broken').lastError, /Could not read its status: boom/);
@@ -267,7 +277,8 @@ test('D12: rows registered `after` another go under it in order; unregister() ta
   assert.ok(!ids().includes('shop-a'));
   assert.equal((await call('PUT', '/api/connections/shop-a', { paused: false })).status, 404);
   assert.equal(c.isPaused('shop-a'), true, 'the switch row stays (a store added again gets a new id)');
-  assert.equal(c.unregister('calendar'), false, 'placeholders aren’t unregistered');
+  c.placeholder({ id: 'future', name: 'Future', description: 'Not built yet', comesWith: 'Z9' });
+  assert.equal(c.unregister('future'), false, 'placeholders aren’t unregistered');
   assert.equal(c.unregister('nope'), false);
   c.register({ ...base, id: 'shop-c', after: 'shop' });
   assert.deepEqual(ids().slice(ids().indexOf('shop'), ids().indexOf('shop') + 3), ['shop', 'shop-b', 'shop-c']);

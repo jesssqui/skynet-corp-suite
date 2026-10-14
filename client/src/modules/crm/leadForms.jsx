@@ -137,7 +137,10 @@ const safeStorage = () => { try { return window.localStorage; } catch { return n
  * "Add to <client>" instead of a new one. One save: client (if new) → account → contact → relationship
  * → a milestone on the client's timeline → the lead won (with the client and relationship it became).
  */
-export function WinSheet({ lead, data, onClose, onDone }) {
+// D17: accepting a lead's quote wins the lead through this same sheet — `title` / `saveLabel` / `intro`, and `afterWin(plan)`
+// (the quote marked accepted with the client it made), run in the same save, before the kept ids are forgotten (a retry
+// after a failure there repeats nothing).
+export function WinSheet({ lead, data, onClose, onDone, title = null, saveLabel = 'Mark won', intro = null, afterWin = null }) {
   const businessName = data.businessesById.get(lead.business_id)?.name ?? '';
   const dup = useMemo(() => leadDuplicate(lead, data), [lead, data]);
   const [clientId, setClientId] = useState(lead.client_id ?? (dup?.state === 'same' ? dup.clientId : ''));
@@ -151,9 +154,9 @@ export function WinSheet({ lead, data, onClose, onDone }) {
   const client = clientId ? data.clientsById.get(clientId) : null;
   return (
     <FormSheet
-      title={`Won: ${lead.name}`}
+      title={title ?? `Won: ${lead.name}`}
       testId="win-form"
-      saveLabel="Mark won"
+      saveLabel={saveLabel}
       onClose={onClose}
       dirty
       busy={busy}
@@ -164,12 +167,16 @@ export function WinSheet({ lead, data, onClose, onDone }) {
         const plan = planWin(lead, { ...choice, startDate, businessName }, data, ids);
         setProblem(plan.problem ?? null);
         if (plan.problem) return;
-        if (await run(() => applyWin(store, plan))) {
+        if (await run(async () => {
+          await applyWin(store, plan);
+          await afterWin?.(plan);
+        })) {
           forgetWinIds(safeStorage(), lead.id, winMemory);
           onDone?.(plan.clientId);
         }
       }}
     >
+      {intro}
       {lead.client_id ? (
         <p style={{ margin: 0 }}>Adds {KIND_LABELS[kind] ?? 'the service'} with {businessName} to <strong>{client?.name ?? 'this client'}</strong>.</p>
       ) : dup ? (

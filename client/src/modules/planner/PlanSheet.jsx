@@ -4,7 +4,8 @@
 // changed here) and an overbooked day lists what to push, each with a one-tap move (C4b). Tasks
 // with no day and no goal aren't proposed: they are counted, with a link to sort them. Each tap
 // is saved at once through the offline store (one or two fields), so nothing is lost if the sheet
-// is closed; moved tasks stay listed with an Undo.
+// is closed; moved tasks stay listed with an Undo. C6b: today's meetings from Apple Calendar are listed
+// (read-only) and count in the day's load.
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { WORKDAY_IDS } from '@suite/shared/planner';
@@ -17,7 +18,8 @@ import {
 } from './logic.js';
 import { dayMinutesFor } from './plan.js';
 import { OwnerBadge } from './parts.jsx';
-import { DayLoadPanel } from './planParts.jsx';
+import { DayLoadPanel, MeetingList } from './planParts.jsx';
+import { meetingsOn } from './meetings.js';
 
 /** Day lengths to choose from: 2 h to 14 h in half hours, plus the current one. */
 function dayLengthOptions(current) {
@@ -123,6 +125,7 @@ export default function PlanSheet({ data, me, today, inboxCount, onClose }) {
   const tasksById = useMemo(() => new Map(data.tasks.map((t) => [t.id, t])), [data.tasks]);
   const dayMinutes = dayMinutesFor(data.workdays, me);
   const topCount = useMemo(() => countTop(data.tasks, me, today), [data.tasks, me, today]);
+  const meetings = useMemo(() => meetingsOn(data.meetings, { me, day: today }), [data.meetings, me, today]);
 
   // Changes are worked out from the latest record (store.get), not this render's copy: a star
   // tapped just before Move must be cleared by the move.
@@ -158,13 +161,19 @@ export default function PlanSheet({ data, me, today, inboxCount, onClose }) {
       footer={<Button variant="primary" onClick={onClose}>Done</Button>}
     >
       <div style={{ display: 'grid', gap: 'var(--space-2)' }} data-testid="plan-load">
-        <DayLoadPanel tasks={data.tasks} me={me} today={today} dayMinutes={dayMinutes} goalsById={data.goalsById} always testId="plan-day" />
+        <DayLoadPanel tasks={data.tasks} meetings={data.meetings} me={me} today={today} dayMinutes={dayMinutes} goalsById={data.goalsById} always testId="plan-day" />
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
           <DayLength me={me} minutes={dayMinutes} />
           <span style={muted} data-testid="top-count">Top 3: {topCount} of {TOP_LIMIT} picked</span>
         </div>
       </div>
       {error ? <Notice tone="danger">{error}</Notice> : null}
+      {meetings.length ? (
+        <section style={{ display: 'grid', gap: 'var(--space-1)' }} data-testid="plan-meetings">
+          <h3 style={{ ...muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', margin: 0 }}>Your calendar today</h3>
+          <MeetingList meetings={meetings} day={today} testId="plan-meetings-list" compact />
+        </section>
+      ) : null}
       {sections.length ? sections.map(([label, rows]) => (
         <section key={label} style={{ display: 'grid', gap: 'var(--space-1)' }}>
           <h3 style={{ ...muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', margin: 0 }}>{label}</h3>

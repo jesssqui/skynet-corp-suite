@@ -43,6 +43,20 @@ const BELONGS_TO = {
   // D8c: a sub-campaign belongs to its main campaign; a lead's membership to the lead (the campaign is a plain ref).
   campaign: ['campaign'],
   lead_campaign: ['lead', 'business'],
+  // D9: playbooks and their runs belong to one of our businesses; steps to their playbook, a run's copy to the run.
+  playbook: ['business'],
+  playbook_step: ['playbook', 'business'],
+  playbook_run: ['business'],
+  run_step: ['playbook_run', 'business'],
+  // D17/D18: quotes and invoices belong to one of our businesses (their client, lead… are plain refs); lines and
+  // payments to their document; a credit note to its invoice.
+  quote: ['business'],
+  quote_line: ['quote', 'business'],
+  invoice: ['business'],
+  invoice_line: ['invoice', 'business'],
+  invoice_payment: ['invoice', 'business'],
+  credit_note: ['invoice', 'business'],
+  credit_note_line: ['credit_note', 'invoice', 'business'],
 };
 
 const caches = new WeakMap(); // engine -> { entries: Map<entity, Promise<Entry>>, off }

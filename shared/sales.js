@@ -9,8 +9,9 @@ import { BUSINESS_IDS } from './crm.js';
  * Where a day's totals came from: `woo` (D12), `ebay` (D13), `wholesale` (D11: the Order Manager, worked out from the
  * suite's own holding area) and `manual` (D11: sales entered by hand — invoices, anything not connected — whose rows
  * know only total and orders: `totalOnly`). D13's months entered by hand are not rows here (sales_manual_months).
+ * D18: `invoices` = the suite's own invoices — the money they brought in and kept, on the day it came in (billing module).
  */
-export const SALES_SOURCES = Object.freeze(['woo', 'ebay', 'wholesale', 'manual']);
+export const SALES_SOURCES = Object.freeze(['woo', 'ebay', 'wholesale', 'manual', 'invoices']);
 
 /** D11: kinds of a sale entered by hand. Refunds and credit notes are stored as negative amounts. */
 export const ENTRY_KINDS = Object.freeze(['sale', 'refund', 'credit_note']);

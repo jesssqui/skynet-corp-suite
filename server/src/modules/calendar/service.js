@@ -12,6 +12,7 @@ import { ACTORS } from '@suite/shared/actors';
 import { addDays } from '@suite/shared/planner';
 import { HttpError } from '../../lib/httpError.js';
 import { buildCalendar, dateIn } from './ics.js';
+import { createAppleService } from './apple.js';
 
 export const CONNECTION_ID = 'calendar-feed';
 /** The feed covers overdue tasks from this many days back (shown on their due date)… */
@@ -228,7 +229,12 @@ export function createCalendarService({ db, config, log, services, now = Date.no
     resume() { log?.info?.('on again: calendar feeds answer'); },
   });
 
+  // C6b: meetings read from each person's Apple Calendar (CalDAV), as synced read-only `meeting` records.
+  // The feed above never sends them back: it reads tasks only (planner.feedTasks).
+  const apple = createAppleService({ db, config, log, services, now });
+
   return {
+    apple,
     state,
     makeLink,
     turnOff,
