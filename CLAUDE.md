@@ -1171,6 +1171,28 @@ it uses.
   flag's job moves to the owner's Today (and turns overdue if ignored) instead of a passive flag; finishing it
   without setting a real next step brings the flag back, and the next run makes a new task.
 
+## Expenses (C9)
+Code `server/src/modules/expenses/` (record types in `entities.js`), the money rules `shared/expenses.js`, client
+`client/src/modules/expenses/` (`/expenses`); tests `shared/test/expenses.test.js`, `server/test/expenses.test.js`,
+`client/test/expenses.test.js`. Two synced record types, no HTTP routes: devices use their offline copy, server code
+would write through `sync.applyLocal`. Registered after `planner` (its shares point at CRM businesses); like the
+planner it is left out of any test app that leaves out `crm`.
+- `expense` (`expenses_items`): description* (≤ 200), amount_cents* (whole cents, 1 … 1,000,000,000 = $10 million;
+  checked by `checkExpense`), spent_on* (the local day), paid_by (owner | partner, optional), category (≤ 80), notes.
+- `expense_share` (`expenses_shares`): expense_id* (parent: deleting the expense hides its shares), business_id* (one
+  of ours, Personal included; checked by `checkExpenseShare`). Created or deleted, never edited (like links). An
+  expense with no shares is not for any business and shows under "Not assigned".
+- **Split**: a tagged expense is split evenly between its businesses, to the cent (`splitCents`). The cents that do not
+  divide go one each to the businesses in id order, so the parts always add up to the amount exactly. No percentage is
+  stored; `shareLabel` only shows it (50%, 33.3%). Shares of the same business from two offline devices count once.
+- **Totals** (`expenseTotals`): the all-businesses total counts each expense once; each business shows its parts; the
+  unassigned amount is shown on its own, so parts + unassigned = total. One business's view shows only its parts.
+- **Saving** (`expenseFieldsFrom`, `tagChanges`): an edit sends only the fields that changed; tags are added and
+  removed by difference. A save that fails part-way keeps the expense's id and the tags already made, so a retry
+  never makes the expense twice or repeats a tag.
+- Not built: uneven or custom splits, refunds (negative amounts), receipts or files, currencies other than CAD,
+  an HTTP route or a CSV export, the pull scope (see C2b), browser (Playwright) tests for the expenses page.
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
