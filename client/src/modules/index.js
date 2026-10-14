@@ -13,10 +13,11 @@ import auth from './auth/index.jsx';
 import sync from './sync/index.jsx';
 import crm from './crm/index.jsx';
 import planner from './planner/index.jsx';
+import sales from './sales/index.jsx';
 import connections from './connections/index.jsx';
 import automations from './automations/index.jsx';
 
-export const modules = [planner, crm, health, connections, automations, auth, sync];
+export const modules = [planner, crm, sales, health, connections, automations, auth, sync];
 
 export const navItems = modules
   .flatMap((m) => (Array.isArray(m.nav) ? m.nav : m.nav ? [m.nav] : [])

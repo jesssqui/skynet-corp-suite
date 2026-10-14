@@ -13,6 +13,7 @@
     "./normalize": "./normalize.js",
     "./crm": "./crm.js",
     "./planner": "./planner.js",
+    "./sales": "./sales.js",
     "./csv": "./csv.js",
     "./intake": "./intake.js"
   },

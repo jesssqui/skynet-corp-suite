@@ -17,6 +17,8 @@ import, which runs on the server and never overwrites or creates anything twice)
 screen (module `connections`: every connection's last success, queue and last error, with an off switch) and the
 automation framework (module `automations`: trigger, on/off, silent/alert, runs, the minute scheduler, synced in-app
 alerts) with the first two automations (the planner's Friday review list and relationships with no next step).
+Save Point Shop's hand-typed sales by channel (module `sales`: a day's Whatnot, Poshmark and Facebook Marketplace totals,
+typed offline, added for past days) sit beside it; eBay's automatic totals come with its connection.
 
 ## Stack
 - **Server**: Node 22+ (ESM), Express 5, SQLite via better-sqlite3 (WAL, foreign keys, busy_timeout), helmet. Port **3100**.
@@ -75,6 +77,8 @@ server/src/
                            checkTask/checkGoal/checkWorkday, automatedOwnerFor, goals(), seedWorkdays; C8 reads for
                            its automations), migrations/001_create_planner.sql, 002_goals.sql; no routes.
                            C8: automations.js (friday-review, no-next-step: reviewNumbers, relationshipsToChase)
+  modules/sales/           sales by channel: entities.js (sale_day), service.js (registration, the amount rule,
+                           totals(businessId, from, to) for the overview); migrations/001_create_sales.sql. No routes
   modules/connections/     C8: service.js (the registry: register/placeholder/setPaused/list, the backup row,
                            PLACEHOLDERS), routes.js (GET /, PUT /:id), migrations/001 (connections_switches, _changes)
   modules/automations/     C8: service.js (registry, execute/runNow/tick/emit, startScheduler, alerts + onAlert),
@@ -128,6 +132,8 @@ client/src/
                            FocusPage (/focus), goals.jsx (GoalSheet, GoalItem, GoalTick, CarryOver), planParts.jsx
                            (PlanTabs, Meter, DayLoadPanel, SortList), plan.js + goalForm.js (no React;
                            client/test/plan.test.js, planning-forms.test.js)
+  modules/sales/           SalesPage (/sales: totals per channel and period, add/change/delete a day's sales),
+                           logic.js (periods, typed amounts, entry list; no React), data.js (useSales)
 client/public/             manifest.webmanifest, icons (placeholders)
 client/test/               node --test: the engine against a real server with syncdemo + fixtures/chk (a UNIQUE column),
                            overlay, the CRM screens' logic (clients.test.js) and forms with two devices
@@ -1171,6 +1177,31 @@ it uses.
   flag's job moves to the owner's Today (and turns overdue if ignored) instead of a passive flag; finishing it
   without setting a real next step brings the flag back, and the next run makes a new task.
 
+## Sales by channel (sales module)
+Code `server/src/modules/sales/` (record type in `entities.js`), shared facts `shared/sales.js`, client
+`client/src/modules/sales/`; tests `server/test/sales.test.js`, `client/test/sales.test.js`. Save Point Shop sells on eBay
+and, by hand-typed totals, on Whatnot, Poshmark and Facebook Marketplace (tradeshows and events later). This module is
+the hand-typed part.
+- **Record type** `sale_day` (table `sales_days`): `business_id` (parent ref `business`), `channel` (`whatnot` |
+  `poshmark` | `facebook_marketplace`; new channels are one value in `SALES_CHANNELS`, no migration), `sale_date`
+  ("YYYY-MM-DD" — the Toronto day as typed, never converted), `amount` (dollars, 0 … 1 000 000, at most two decimals:
+  `checkSaleDay`, plus `isSaleAmount` on the client), `notes`. Create, update and delete; offline like everything else.
+- **Per day, summed**: a day's total for a channel is the **sum** of its `sale_day` records, not one record per
+  (channel, day). Two devices adding the same day offline can't lose one (no uniqueness to clash on); the page tells
+  you when an entry already exists ("already has $X for this day — this adds to it") and lets you change or delete.
+- **Past days** are always allowed (missed sales are added later); so are future dates on the server (a phone's clock
+  may be off) — the page's date picker stops at today.
+- **eBay is not here.** Its totals are automatic and arrive with its connection (a `connections` placeholder row and
+  automation, not added yet); the Sales page shows an eBay tile as "Automatic · not connected yet" and its total says
+  "not counting eBay". `'ebay'` is deliberately not in the channel list, so nobody can type a number that would later
+  be counted twice.
+- **For the overview (C8)**: `ctx.services.sales.totals(businessId, from, to)` → `{ byChannel: { [channel]: { total,
+  days } }, total }` (only channels with entries; inclusive dates). Add eBay's automatic totals to it there. The
+  client's `totalsByChannel(rows, { from, to })` (`@suite/shared/sales`) gives the same on a device, every
+  hand-entered channel present.
+- **Tests that build the app without the CRM** must also leave out `sales` (it needs the CRM, like the planner):
+  `['automations', 'crm', 'planner', 'sales']`.
+
 ## Decisions for later packages
 - **C1 (sign-in)**: done — see "Sign-in". Passkeys later through the seam described there. Keep the localhost binding.
 - **C2 (offline sync)**: done — server half in C2a, browser half and service worker in C2b (see both "Offline sync"
@@ -1197,6 +1228,8 @@ it uses.
     tasks via `automatedOwnerFor`, `made(key)` for "once per order/customer/period", event triggers with a `key`.
   - **C5** turns alerts into phone notifications through `onAlert` (and adds quiet hours / the morning digest); until
     then "alert" means the in-app alert.
+- **Sales by channel**: done — see "Sales by channel". Next: eBay's automatic totals (a connection) and the overview
+  (C8) that adds them to `sales.totals`; tradeshows and events as a channel or their own record when they start.
 - The live database sits in a Docker **named volume** (SQLite locking on Docker Desktop bind mounts to macOS is not
   trustworthy); only finished backup files cross to the Mac via the `/offsite` bind mount.
 - Ports: suite 3100 (Order Manager uses 3000 in its container). Node 22 is the tested runtime (`engines >=22.12`).
