@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  addPeriods, rollForward, yearlyCents, costTotals, costState, wantsCostReminder, costsRenewingBetween, moneyText, costAmountText,
+  addPeriods, rollForward, yearlyCents, costTotals, costState, wantsCostReminder, costsRenewingBetween, moneyText, costAmountText, splitCents, shareLabel, costBusinesses, costShareYearly,
   daysFromTo, isCurrency, costCurrency, monthlyFromYearly, dayOfMonth, isAnchorDay, effectiveAnchor,
 } from '../costs.js';
 
@@ -127,4 +127,70 @@ test('money: CAD with $, other currencies named; amounts per period', () => {
   assert.equal(isCurrency('CAD'), true);
   assert.equal(isCurrency('cad'), false);
   assert.equal(costCurrency({ currency: null }), 'CAD');
+});
+
+test('splitCents: an even split to the cent; the shares always add up to the whole', () => {
+  assert.deepEqual(splitCents(10000, ['b', 'a']), [{ businessId: 'a', cents: 5000 }, { businessId: 'b', cents: 5000 }]);
+  assert.deepEqual(splitCents(10000, ['c', 'a', 'b']).map((p) => p.cents), [3334, 3333, 3333], 'the leftover cent goes to the first id');
+  assert.deepEqual(splitCents(1, ['a', 'b', 'c']).map((p) => p.cents), [1, 0, 0]);
+  assert.deepEqual(splitCents(500, ['a', 'a']), [{ businessId: 'a', cents: 500 }], 'a business named twice is one');
+  assert.deepEqual(splitCents(500, []), []);
+  assert.deepEqual(splitCents(null, ['a']), []);
+  for (const amount of [0, 1, 7, 99, 1999, 123457]) {
+    for (const n of [1, 2, 3, 4, 5, 7]) {
+      const ids = Array.from({ length: n }, (_, i) => `b${i}`);
+      const parts = splitCents(amount, ids);
+      assert.equal(parts.reduce((t, p) => t + p.cents, 0), amount, `${amount} / ${n}`);
+      assert.ok(Math.max(...parts.map((p) => p.cents)) - Math.min(...parts.map((p) => p.cents)) <= 1);
+    }
+  }
+  assert.deepEqual([1, 2, 3, 4, 6].map(shareLabel), ['100%', '50%', '33.3%', '25%', '16.7%']);
+  assert.equal(shareLabel(0), '');
+});
+
+test('costTotals with shares: each tagged business shows an even share; overall is the full amount; untagged is whole', () => {
+  const c = (id, over) => ({ id, name: id, business_id: 'A', period: 'yearly', amount_cents: 12000, status: 'active', next_renewal: '2026-12-01', ...over });
+  const costs = [
+    c('canva', { amount_cents: 1000, period: 'monthly' }), // $120/yr used by all three
+    c('storage', { amount_cents: 6000, business_id: 'B' }), // no tags: whole to B
+    c('qb', { amount_cents: 4000, business_id: 'C', period: 'quarterly' }), // tagged for C alone
+    c('old', { status: 'cancelled', amount_cents: 99900 }),
+    c('once', { period: 'once', amount_cents: 50000 }),
+  ];
+  const shares = new Map([['canva', ['C', 'A', 'B']], ['qb', ['C']]]);
+  const t = costTotals(costs, { shares });
+  const cad = (map, id) => (id ? map.get(id).get('CAD') : map.get('CAD'));
+  assert.deepEqual([cad(t.overall).yearly_cents, cad(t.overall).monthly_cents, cad(t.overall).count], [12000 + 6000 + 16000, 2833, 3]);
+  assert.deepEqual([cad(t.byBusiness, 'A').yearly_cents, cad(t.byBusiness, 'A').monthly_cents], [4000, 333], 'a third of $120, the extra cent to the first id: none to spare here');
+  assert.equal(cad(t.byBusiness, 'B').yearly_cents, 4000 + 6000);
+  assert.equal(cad(t.byBusiness, 'C').yearly_cents, 4000 + 16000);
+  const sum = [...t.byBusiness.values()].reduce((n, m) => n + m.get('CAD').yearly_cents, 0);
+  assert.equal(sum, cad(t.overall).yearly_cents, 'the businesses’ shares add up to the full picture');
+  // Counted once in each business it is used by, once overall.
+  assert.deepEqual(['A', 'B', 'C'].map((id) => cad(t.byBusiness, id).count), [1, 2, 2]);
+
+  // Without shares, nothing changes: every cost counts whole to the business that pays.
+  const plain = costTotals(costs);
+  assert.equal(cad(plain.byBusiness, 'A').yearly_cents, 12000 + 0, 'canva alone, whole, to A');
+  assert.equal(plain.byBusiness.has('B'), true);
+  assert.deepEqual(cad(plain.overall), cad(t.overall));
+  // An uneven amount: the shares still add up to the cent.
+  const odd = costTotals([c('x', { amount_cents: 10001 })], { shares: new Map([['x', ['A', 'B', 'C']]]) });
+  assert.deepEqual(['A', 'B', 'C'].map((id) => cad(odd.byBusiness, id).yearly_cents), [3334, 3334, 3333]);
+  assert.equal(cad(odd.overall).yearly_cents, 10001);
+  // The resold side splits the same way.
+  const resold = costTotals([c('r', { amount_cents: 3000, relationship_id: 'rel', resold_amount_cents: 5000 })], { shares: new Map([['r', ['A', 'B']]]) });
+  assert.deepEqual(['A', 'B'].map((id) => cad(resold.byBusiness, id).resold_yearly_cents), [2500, 2500]);
+  assert.equal(cad(resold.overall).resold_yearly_cents, 5000);
+  assert.equal(costTotals([c('r', { relationship_id: 'rel', resold_amount_cents: 5000 })], { resoldLive: () => false, shares: new Map([['r', ['A', 'B']]]) }).overall.get('CAD').resold_yearly_cents, 0);
+});
+
+test('costBusinesses and costShareYearly: the tagged businesses, else the one that pays', () => {
+  const cost = { id: 'k', business_id: 'A', period: 'monthly', amount_cents: 1000 };
+  assert.deepEqual(costBusinesses(cost, new Map()), ['A']);
+  assert.deepEqual(costBusinesses(cost, null), ['A']);
+  assert.deepEqual(costBusinesses(cost, new Map([['k', []]])), ['A'], 'an empty list is no tags');
+  assert.deepEqual(costBusinesses(cost, new Map([['k', ['C', 'B', 'C']]])), ['B', 'C']);
+  const shares = new Map([['k', ['A', 'B', 'C']]]);
+  assert.deepEqual(['A', 'B', 'C', 'D'].map((id) => costShareYearly(cost, id, shares)), [4000, 4000, 4000, 0]);
 });

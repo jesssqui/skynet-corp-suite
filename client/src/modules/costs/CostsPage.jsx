@@ -12,14 +12,14 @@ import { BusinessChip, Badges, RecordSync } from '../crm/parts.jsx';
 import { pickableBusinesses } from '../crm/logic.js';
 import { useToday } from '../planner/parts.jsx';
 import { useCostsData } from './data.js';
-import { filterCosts, groupCosts, totalsText, resoldTotalsText, renewalLabel, STATUS_FILTERS } from './logic.js';
+import { filterCosts, groupCosts, totalsText, resoldTotalsText, renewalLabel, shareLine, STATUS_FILTERS } from './logic.js';
 import { CostForm } from './CostForm.jsx';
 import MoneyTabs from './MoneyTabs.jsx';
 import './costs.css';
 
 const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-sm)' };
 
-function CostRow({ cost, today, resoldTo, onOpen }) {
+function CostRow({ cost, today, resoldTo, share, onOpen }) {
   const label = renewalLabel(cost, today);
   const amount = costAmountText(cost);
   const resold = costAmountText(cost, 'resold_amount_cents');
@@ -33,6 +33,11 @@ function CostRow({ cost, today, resoldTo, onOpen }) {
             {cost.auto_renews && cost.period !== 'once' ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}><Icon name="repeat" size={14} />Renews on its own</span> : null}
             {cost.payment_method ? <span>{cost.payment_method}</span> : null}
           </span>
+          {share ? (
+            <span style={muted} data-testid="cost-share">
+              Shared by {share.count} businesses · your share {share.percent}{share.text ? `: ${share.text}` : ''}
+            </span>
+          ) : null}
           {resoldTo ? (
             <span style={muted} data-testid="cost-resold">
               Resold to {resoldTo.name}{resold ? `: they pay ${resold}` : ''}
@@ -88,11 +93,12 @@ export default function CostsPage() {
   };
   const { groups, overall, shown } = useMemo(() => {
     if (!data) return { groups: [], overall: new Map(), shown: 0 };
-    const rows = filterCosts(data.costs, { business, status, q });
+    const shares = data.shares;
+    const rows = filterCosts(data.costs, { business, status, q, shares });
     // Totals always count every active cost of the business(es) shown, whatever the status/words filter;
     // the resold side only for costs whose relationship is still on the device (as their line).
-    const totalsOf = groupCosts(filterCosts(data.costs, { business, status: 'active' }), data.businesses, { resoldLive: (c) => Boolean(resoldTo(c)) });
-    const g = groupCosts(rows, data.businesses).groups.map((x) => ({ ...x, totals: totalsOf.groups.find((y) => y.business.id === x.business.id)?.totals ?? new Map() }));
+    const totalsOf = groupCosts(filterCosts(data.costs, { business, status: 'active', shares }), data.businesses, { resoldLive: (c) => Boolean(resoldTo(c)), shares });
+    const g = groupCosts(rows, data.businesses, { shares }).groups.map((x) => ({ ...x, totals: totalsOf.groups.find((y) => y.business.id === x.business.id)?.totals ?? new Map() }));
     return { groups: g, overall: totalsOf.overall, shown: rows.length };
   }, [data, business, status, q]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -129,7 +135,7 @@ export default function CostsPage() {
           </div>
           <SelectField
             id="costs-business"
-            label="Paid by"
+            label="Business"
             value={business}
             onChange={(v) => setParam('business', v)}
             options={[{ value: '', label: 'All our businesses and Personal' }, ...businessOptions.map((b) => ({ value: b.id, label: b.name }))]}
@@ -156,7 +162,7 @@ export default function CostsPage() {
                     <span className="costs-group-total" data-testid="costs-business-total">{totalsText(g.totals) || 'Nothing recurring'}</span>
                   </div>
                   <ul className="costs-list">
-                    {g.costs.map((c) => <CostRow key={c.id} cost={c} today={today} resoldTo={resoldTo(c)} onOpen={(cost) => setSheet({ record: cost })} />)}
+                    {g.costs.map((c) => <CostRow key={c.id} cost={c} today={today} resoldTo={resoldTo(c)} share={shareLine(c, g.business.id, data.shares)} onOpen={(cost) => setSheet({ record: cost })} />)}
                   </ul>
                 </section>
               </Card>

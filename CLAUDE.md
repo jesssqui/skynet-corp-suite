@@ -158,7 +158,8 @@ server/src/
   modules/costs/           D6: entities.js (the synced recurring_cost), service.js (registration + checkCost, reads:
                            cost/renewingBetween/autoRenewingPassed/liveCosts, monthlyTotals for D15), reminders.js
                            (the reminder engine reminderPlan/applyReminderPlan, rollCostsForward, the service-renewals
-                           and cost-renewals automations), migrations/001_create_costs.sql (costs_recurring), 002_anchor_day.sql; no routes
+                           and cost-renewals automations), migrations/001_create_costs.sql (costs_recurring), 002_anchor_day.sql,
+                           003_cost_shares.sql (D6b: costs_shares); no routes
   modules/stockroom/       D16: client.js (the signed GET-only client, connection codes), service.js (the connection with
                            its sealed secret, the pulls + backoff + startPuller, snapshots, the 'stockroom' Connections
                            row), plans.js (pure: reorderPlan/spotCheckPlan/keyedPlan, deliveries/differences, applyPlan,
@@ -245,7 +246,7 @@ client/src/
                            Read now, Forget; the 'calendar' Connections panel links here); planner/meetings.js (no React:
                            meetingsOn, busyMinutes, meetingTimeText; client/test/meetings.test.js)
   modules/sync/            /sync (Offline data), /sync/attention (Needs attention), /sync/data/:entity (plain records view)
-  modules/costs/           D6: CostsPage (/costs: by business, totals, filters in the URL, ?open= / ?new=&relationship=),
+  modules/costs/           D6: CostsPage (/costs: by business, totals, filters in the URL, ?open= / ?new=&relationship=; D6b: shared costs under each business that uses them),
                            CostForm.jsx (the add/edit sheet, the CRM's useForm), data.js (cached reads via crm/data.js),
                            logic.js (no React: filters, groups, totals text, renewalLabel, resoldLine, relationshipOptions,
                            costForm; client/test/costs.test.js), costs.css
@@ -2106,6 +2107,33 @@ and its date has passed: the page says "Overdue — renewed?" until a person set
   server numbers), `autoRenewingPassed(today)`, `liveCosts()`, and **for D15** `monthlyTotals()` →
   `{ businesses: [{ business_id, name, currency, count, monthly_cents, yearly_cents, resold_monthly_cents,
   resold_yearly_cents }], overall: [{ currency, … }] }` (businesses in their order, CAD first; active costs only).
+
+**Shared costs (D6b)** — one cost used by several of our businesses. The company pays the whole amount; each business
+shows an even share, so the shares add up to the full picture.
+- **The record** `cost_share` (`costs_shares`; synced, create/delete only): cost_id*⇧ (parent: a deleted cost hides its
+  tags — deletes never cascade), business_id* (plain ref to one of our businesses, ones added later too). One row per
+  (cost, business). Two devices tagging the same business offline leave two rows: readers dedupe (`costBusinesses`,
+  `sharesByCost`) and the form's save removes every copy of one that is unticked (`shareChanges`/`applyUsedBy`).
+- **No tags = as before** (decision: nothing existing changes, migration 003 only adds a table): a cost with no
+  `cost_share` rows counts whole to its `business_id`. With tags, it counts to the tagged businesses only, and
+  `business_id` stays "Paid by" (where the record belongs and what the reminders use for the task owner).
+- **The split** (`splitCents`, shared/costs.js): the cost's yearly amount (and its resold side) is split evenly **to the
+  cent** among the tagged ids sorted, the leftover cents going one each to the first ids, so the parts always add up to
+  the whole. No percentage is stored; `shareLabel(n)` words it (50%, 33.3%). `costTotals(costs, { resoldLive, shares })`:
+  `byBusiness` holds each business's share, `overall` the full amount **once**; a shared cost counts 1 in each business
+  it is tagged for and 1 overall; monthly = yearly ÷ 12 of the accumulated yearly, as before. `monthlyTotals()` (D15's
+  overview cards, the all-businesses card) uses it through `service.sharesByCost()`, so the overview follows.
+- **Screens**: the sheet has "Used by (optional)" tick-boxes (every non-archived business, plus any already tagged) and a
+  preview ("Split evenly: 3 businesses, 33.3% each"); the form value is a string of ids (`used_by`, not a field of the
+  cost), saved after the cost through `useForm`'s new `after` hook. `/costs` lists a shared cost under each business that
+  uses it with "Shared by 3 businesses · your share 33.3%: $3.33/mo · $40/yr"; the business filter matches paid-by or
+  used-by; each business's total is its share and the top card is the full amount. Reads: `useCostsData().shares`
+  (Map<cost id, business ids>), `cost_share` in the cached lists' parents (`crm/data.js`).
+- Tests: `shared/test/costs.test.js` (splitCents, shares in costTotals), `server/test/costs.test.js` (monthlyTotals with
+  shares, duplicates, deleted cost, create/delete only), `client/test/costs.test.js` (logic + two devices).
+- **Not built / open**: unequal splits (a percentage per business — the model is "even" on purpose); other pages that read costs by
+  `business_id` directly (none today: the overview reads `monthlyTotals()`); a shared cost's reminder task still goes to the
+  paying business's default owner.
 
 **Screens** (offline: `useCostsData` reads cached lists; writes `store.create/update/remove`):
 - **`/costs`** (nav "Money" since D12 — Costs · Sales tabs (`MoneyTabs`); phone tab bar too — eight tabs; at 320 px wide (iPhone SE 1st gen) a tab is 39–45 px wide,

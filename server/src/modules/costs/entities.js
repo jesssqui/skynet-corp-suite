@@ -31,3 +31,18 @@ export const COST_ENTITY = {
     anchor_day: { type: 'integer' },
   },
 };
+
+// D6b: which of our businesses use a cost. One row per (cost, business); the company pays and each
+// tagged business shows an even share. A cost with no rows counts whole to its own business, so every
+// cost made before this keeps its totals. A plain ref to the business (businesses are never deleted;
+// ones added later are fine). Two devices tagging the same business offline leave two rows: readers
+// dedupe (costBusinesses) and the form removes every copy of one it unticks.
+export const COST_SHARE_ENTITY = {
+  entity: 'cost_share',
+  table: 'costs_shares',
+  ops: ['create', 'delete'],
+  fields: {
+    cost_id: { type: 'id', ref: 'recurring_cost', parent: true, required: true },
+    business_id: { type: 'id', ref: 'business', required: true },
+  },
+};

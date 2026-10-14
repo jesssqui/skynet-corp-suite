@@ -31,7 +31,7 @@ const none = (label = '—') => [{ value: '', label }];
  * created with every field (+ `parent`, e.g. its client_id); an edit sends only the fields changed
  * since the sheet opened (formFields.js), so the other person's changes that arrive meanwhile stay.
  */
-export function useForm(form, record, { entity, parent = {}, onDone, initial = null, guard = null, onSaved = null }) {
+export function useForm(form, record, { entity, parent = {}, onDone, initial = null, guard = null, onSaved = null, after = null }) {
   const [start] = useState(() => ({ ...valuesFrom(form, record), ...initial }));
   const [v, setV] = useState(start);
   const [problems, setProblems] = useState({});
@@ -66,6 +66,8 @@ export function useForm(form, record, { entity, parent = {}, onDone, initial = n
         created.current = id;
         await onSaved?.(id);
       } else if (Object.keys(fields).length) await store.update(entity, record.id, fields);
+      // D6b: records saved beside this one (a cost's "used by" rows) — for a new record and an edit, retried on Save again.
+      await after?.(id, v);
     });
     setBlocked(stop);
     if (ok && !stop) onDone(id);

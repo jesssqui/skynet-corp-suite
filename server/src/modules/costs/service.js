@@ -5,7 +5,7 @@
 // auto-renewing cost forward) through sync.applyLocal — the sync module's guard makes any other
 // write fail. It reads only its own table; CRM and planner records through their services.
 import { isCurrency, isAnchorDay, costTotals, costsRenewingBetween } from '@suite/shared/costs';
-import { COST_ENTITY } from './entities.js';
+import { COST_ENTITY, COST_SHARE_ENTITY } from './entities.js';
 import { registerRenewalAutomations } from './reminders.js';
 
 /**
@@ -32,12 +32,16 @@ export function createCostsService({ db, services }) {
   if (!sync) throw new Error('costs needs the sync module registered before it (modules/index.js)');
   if (!crm || !planner) throw new Error('costs needs the crm and planner modules registered before it (its costs belong to our businesses; its reminders are tasks)');
   sync.registerEntity({ module: 'costs', ...COST_ENTITY, check: checkCost });
+  sync.registerEntity({ module: 'costs', ...COST_SHARE_ENTITY });
 
   const q = {
     live: db.prepare('SELECT * FROM costs_recurring WHERE deleted_at IS NULL ORDER BY next_renewal, id'),
     one: db.prepare('SELECT * FROM costs_recurring WHERE id = ? AND deleted_at IS NULL'),
     renewing: db.prepare(`SELECT * FROM costs_recurring WHERE deleted_at IS NULL AND (status IS NULL OR status = 'active')
       AND next_renewal BETWEEN ? AND ? ORDER BY next_renewal, id`),
+    // Live tags of live costs only (a deleted cost hides its tags).
+    shares: db.prepare(`SELECT s.cost_id, s.business_id FROM costs_shares s JOIN costs_recurring c ON c.id = s.cost_id
+      WHERE s.deleted_at IS NULL AND c.deleted_at IS NULL ORDER BY s.cost_id, s.business_id`),
     passed: db.prepare(`SELECT * FROM costs_recurring WHERE deleted_at IS NULL AND (status IS NULL OR status = 'active')
       AND auto_renews = 1 AND period <> 'once' AND next_renewal < ? ORDER BY next_renewal, id`),
   };
@@ -54,6 +58,16 @@ export function createCostsService({ db, services }) {
 
   const service = {
     ...reads,
+    /** D6b: the businesses each cost is tagged "used by": Map<cost id, business ids> (no tags = not in the map). */
+    sharesByCost() {
+      const out = new Map();
+      for (const r of q.shares.all()) {
+        const list = out.get(r.cost_id) ?? [];
+        if (!list.includes(r.business_id)) list.push(r.business_id);
+        out.set(r.cost_id, list);
+      }
+      return out;
+    },
     /** Every live cost (any status), soonest renewal first. */
     liveCosts: () => q.live.all().map(asCost),
     /**
@@ -62,6 +76,7 @@ export function createCostsService({ db, services }) {
      * currencies). Businesses in their usual order (position), CAD first.
      * → { businesses: [{ business_id, name, currency, count, monthly_cents, yearly_cents,
      *       resold_monthly_cents, resold_yearly_cents }], overall: [{ currency, … }] }
+     * D6b: a cost used by several businesses is split evenly (to the cent) among them in `businesses`; `overall` is the full amount.
      * resold_* = what clients pay us for the resold ones among them (same periods), only while their
      * relationship, account and client are live.
      */
@@ -71,7 +86,7 @@ export function createCostsService({ db, services }) {
         const rel = crm.liveRecord('relationship', c.relationship_id);
         return Boolean(rel && crm.liveAccount(rel.account_id));
       };
-      const { byBusiness, overall } = costTotals(service.liveCosts(), { resoldLive });
+      const { byBusiness, overall } = costTotals(service.liveCosts(), { resoldLive, shares: service.sharesByCost() });
       const order = new Map(crm.listBusinesses().map((b, i) => [b.id, { i, name: b.name }]));
       const businesses = [...byBusiness.entries()]
         .sort(([a], [b]) => (order.get(a)?.i ?? 1e9) - (order.get(b)?.i ?? 1e9) || (a < b ? -1 : 1))

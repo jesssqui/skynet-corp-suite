@@ -37,6 +37,8 @@ const BELONGS_TO = {
   wholesale_note: ['account', 'client'], // D5
   // D6: a recurring cost belongs to one of our businesses; its (resold) relationship is a plain ref.
   recurring_cost: ['business'],
+  // D6b: which businesses use a cost belongs to the cost (the business it names is a plain ref).
+  cost_share: ['recurring_cost', 'business'],
   // D8: a lead belongs to one of our businesses (its client/account are plain refs); its timeline to it.
   lead: ['business'],
   lead_activity: ['lead', 'business'],

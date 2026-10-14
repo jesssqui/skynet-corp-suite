@@ -13,9 +13,12 @@ import { startServer, makeDevice, row } from './helpers.js';
 import { valuesFrom, editChanges, isDirty } from '../src/modules/crm/formFields.js';
 import {
   filterCosts, groupCosts, totalsText, resoldTotalsText, renewalLabel, resoldLine, costRenewalsDue, relationshipOptions, costForm, compareCosts,
+  sharesByCost, shareLine, shareChanges, usedByList, usedByValue, toggleUsedBy, applyUsedBy,
 } from '../src/modules/costs/logic.js';
 import { reviewLists } from '../src/modules/planner/plan.js';
-import { effectiveAnchor, rollForward } from '@suite/shared/costs';
+import { effectiveAnchor, rollForward, costTotals } from '@suite/shared/costs';
+
+const costTotalsOf = (costs, shares) => costTotals(costs, { shares });
 
 const AGENCY = BUSINESS_IDS.agency;
 const PERSONAL = BUSINESS_IDS.personal;
@@ -217,4 +220,103 @@ test('two devices: a split date/billing-day pair (one sends the date only) rolls
   assert.deepEqual([r.next_renewal, r.anchor_day], ['2027-03-15', 20], 'the pair is split: the phone’s date, the Mac’s billing day');
   assert.equal(effectiveAnchor(r.next_renewal, r.anchor_day), 15);
   assert.equal(rollForward(r.next_renewal, 'monthly', '2027-03-16', r.anchor_day), '2027-04-15', 'rolled by the date’s own day, not the 20th');
+});
+
+test('shared costs (D6b): who uses a cost, the business filter, grouping with even shares, and the share line on a row', () => {
+  const SAVE = BUSINESS_IDS.save_point;
+  const businessesAll = [...businesses, { id: SAVE, name: 'Save Point Shop', position: 4 }];
+  const canva = cost('Canva', { amount_cents: 1000, period: 'monthly' }); // $120 a year, paid under the agency
+  const storage = cost('Storage', { business_id: SAVE, amount_cents: 6000 });
+  const costs = [canva, storage];
+  const shares = sharesByCost([
+    { cost_id: 'Canva', business_id: SAVE }, { cost_id: 'Canva', business_id: AGENCY }, { cost_id: 'Canva', business_id: PERSONAL },
+    { cost_id: 'Canva', business_id: AGENCY }, // tagged twice by two devices: one
+  ]);
+  assert.deepEqual(shares.get('Canva'), [AGENCY, SAVE, PERSONAL].sort());
+  assert.equal(shares.has('Storage'), false);
+
+  assert.deepEqual(filterCosts(costs, { business: PERSONAL, shares }).map((c) => c.id), ['Canva'], 'a tagged business sees it');
+  assert.deepEqual(filterCosts(costs, { business: PERSONAL }).map((c) => c.id), [], 'without tags it would not');
+  assert.deepEqual(filterCosts(costs, { business: SAVE, shares }).map((c) => c.id).sort(), ['Canva', 'Storage']);
+
+  const { groups, overall } = groupCosts(costs, businessesAll, { shares });
+  assert.deepEqual(groups.map((g) => [g.business.name, g.costs.map((c) => c.id)]), [
+    ['Great White North Design', ['Canva']], ['Save Point Shop', ['Canva', 'Storage']], ['Personal', ['Canva']],
+  ], 'listed under every business that uses it, in our order');
+  assert.deepEqual(groups.map((g) => totalsText(g.totals)), ['$3.33/mo · $40/yr', '$8.33/mo · $100/yr', '$3.33/mo · $40/yr'].map((x) => x));
+  assert.equal(totalsText(overall), '$15/mo · $180/yr', 'the full picture: $120 + $60');
+  // Without the tags, the old behaviour: the whole cost under the business that pays.
+  assert.deepEqual(groupCosts(costs, businessesAll).groups.map((g) => [g.business.name, totalsText(g.totals)]), [
+    ['Great White North Design', '$10/mo · $120/yr'], ['Save Point Shop', '$5/mo · $60/yr'],
+  ]);
+
+  assert.deepEqual(shareLine(canva, SAVE, shares), { count: 3, label: '33.3% of Canva', percent: '33.3%', text: '$3.33/mo · $40/yr' });
+  assert.equal(shareLine(storage, SAVE, shares), null, 'not shared: the whole amount is shown as it is');
+  assert.equal(shareLine(canva, 'someone-else', shares), null);
+  assert.equal(shareLine(cost('Logo', { period: 'once' }), AGENCY, new Map([['Logo', [AGENCY, SAVE]]])).text, null, 'no per-period figure for a one-time cost');
+});
+
+test('shared costs (D6b): the "used by" form value, and what saving it adds and removes', () => {
+  assert.deepEqual(usedByList(''), []);
+  assert.deepEqual(usedByList('b,a,b'), ['a', 'b']);
+  assert.equal(usedByValue(['b', 'a']), 'a,b');
+  assert.equal(toggleUsedBy('a', 'b', true), 'a,b');
+  assert.equal(toggleUsedBy('a,b', 'a', false), 'b');
+  assert.equal(toggleUsedBy('a,b', 'b', true), 'a,b');
+  const rows = [{ id: '1', business_id: 'a' }, { id: '2', business_id: 'b' }, { id: '3', business_id: 'b' }, { id: '4', business_id: 'z' }];
+  assert.deepEqual(shareChanges(rows, 'a,b,c'), { add: ['c'], remove: ['3', '4'] }, 'adds the new, removes the unticked and the repeat');
+  assert.deepEqual(shareChanges([], ''), { add: [], remove: [] });
+  assert.deepEqual(shareChanges(rows.slice(0, 2), 'a,b'), { add: [], remove: [] }, 'nothing to do when they agree');
+  assert.deepEqual(shareChanges(rows, ''), { add: [], remove: ['1', '2', '3', '4'] }, 'unticking all goes back to the paying business');
+  // "used by" is not a field of the cost: ticking it alone sends nothing to the cost record.
+  const start = valuesFrom(costForm, cost('x', {}));
+  assert.deepEqual(editChanges(costForm, start, { ...start, used_by: 'a,b' }).fields, {});
+  assert.equal(isDirty(start, { ...start, used_by: 'a,b' }), true, 'but the sheet counts as changed');
+  assert.equal(isDirty(start, { ...start, used_by: '' }), false);
+});
+
+test('two devices: tagging a cost "used by" several businesses syncs, edits add and remove, and a repeat from two devices counts once', async (t) => {
+  const server = await startServer(t, undefined, { crm: true });
+  const mac = await makeDevice(t, server, 'owner');
+  const phone = await makeDevice(t, server, 'partner');
+  const SAVE = BUSINESS_IDS.save_point;
+  const WHOLESALE = BUSINESS_IDS.wholesale;
+
+  // The Mac, offline, adds Canva (paid under the agency) used by three businesses.
+  mac.online = false;
+  const id = await mac.engine.create('recurring_cost', costForm.toFields({
+    ...valuesFrom(costForm, null), name: 'Canva', business_id: AGENCY, amount: '120', next_renewal: '2027-02-01',
+  }).fields);
+  assert.deepEqual(await applyUsedBy(mac.engine, id, `${AGENCY},${SAVE},${WHOLESALE}`), { added: 3, removed: 0 });
+  assert.deepEqual(await applyUsedBy(mac.engine, id, `${AGENCY},${SAVE},${WHOLESALE}`), { added: 0, removed: 0 }, 'saving again does nothing more');
+  mac.online = true;
+  await mac.engine.syncNow();
+  await phone.engine.syncNow();
+  const onPhone = sharesByCost(await phone.engine.list('cost_share'));
+  assert.deepEqual(onPhone.get(id), [AGENCY, SAVE, WHOLESALE].sort(), 'the phone sees who uses it');
+  assert.equal(server.db.prepare('SELECT count(*) AS n FROM costs_shares WHERE cost_id = ? AND deleted_at IS NULL').get(id).n, 3);
+
+  // The phone unticks wholesale; the Mac, offline, ticks Save Point Shop again (a second row): counted once.
+  await applyUsedBy(phone.engine, id, `${AGENCY},${SAVE}`);
+  mac.online = false;
+  await mac.engine.create('cost_share', { cost_id: id, business_id: SAVE });
+  await phone.engine.syncNow();
+  mac.online = true;
+  await mac.engine.syncNow();
+  await phone.engine.syncNow();
+  for (const device of [mac, phone]) {
+    const shares = sharesByCost(await device.engine.list('cost_share'));
+    assert.deepEqual(shares.get(id), [AGENCY, SAVE].sort(), 'wholesale is out; the repeated Save Point Shop counts once');
+    assert.equal(totalsText(costTotalsOf(await device.engine.list('recurring_cost'), shares).overall), '$10/mo · $120/yr', 'the company still pays all of it');
+  }
+  // Unticking Save Point Shop removes both copies.
+  await applyUsedBy(mac.engine, id, AGENCY);
+  assert.deepEqual(sharesByCost(await mac.engine.list('cost_share')).get(id), [AGENCY]);
+
+  // Deleting the cost hides its tags on the other device (they stay in the table: deletes never cascade).
+  await mac.engine.syncNow();
+  await mac.engine.remove('recurring_cost', id);
+  await mac.engine.syncNow();
+  await phone.engine.syncNow();
+  assert.deepEqual(await phone.engine.list('cost_share'), [], 'hidden under the deleted cost');
 });

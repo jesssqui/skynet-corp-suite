@@ -570,3 +570,45 @@ test('monthly totals for the overview (D15), costs renewing soon, and the Friday
   assert.deepEqual([n.renewals, n.costRenewals], [0, 2]);
   assert.equal(reviewLines(n)[1], '• 2 renewals in the next 30 days (0 client services, 2 of our costs)');
 });
+
+test('shared costs (D6b): tagged businesses split a cost evenly to the cent; untagged costs are unchanged; the full amount stays once overall', async (t) => {
+  const env = await setup(t);
+  const costs = env.ctx.services.costs;
+  const SAVE = SAVE_POINT;
+  const canva = env.local('recurring_cost', { name: 'Canva', business_id: AGENCY, amount_cents: 10001, period: 'yearly', next_renewal: '2027-02-01' });
+  env.local('recurring_cost', { name: 'Storage', business_id: SAVE, amount_cents: 6000, period: 'yearly', next_renewal: '2027-02-01' });
+  for (const b of [AGENCY, SAVE, PERSONAL]) env.local('cost_share', { cost_id: canva, business_id: b });
+  const yearly = (id) => costs.monthlyTotals().businesses.find((b) => b.business_id === id).yearly_cents;
+  const [first, second, third] = [AGENCY, SAVE, PERSONAL].sort();
+  // $100.01 among three is 3333 each with 2 cents over: one each to the first two ids; Storage is untagged and counts whole to Save Point Shop.
+  assert.deepEqual([first, second, third].map(yearly), [first, second, third].map((id, i) => (i < 2 ? 3334 : 3333) + (id === SAVE ? 6000 : 0)));
+  assert.equal(yearly(AGENCY) + yearly(SAVE) + yearly(PERSONAL), 10001 + 6000, 'the shares add up to the full amount');
+  assert.equal(costs.monthlyTotals().overall[0].yearly_cents, 16001);
+  assert.equal(costs.sharesByCost().get(canva).length, 3);
+
+  // The same business tagged twice (two devices offline) counts once; a deleted tag stops counting.
+  const dup = env.local('cost_share', { cost_id: canva, business_id: AGENCY });
+  assert.deepEqual(costs.sharesByCost().get(canva).slice().sort(), [AGENCY, SAVE, PERSONAL].sort());
+  env.apply('cost_share', 'delete', undefined, dup);
+  assert.deepEqual(costs.sharesByCost().get(canva).slice().sort(), [first, second, third], 'the other copy still tags it');
+
+  // A deleted cost hides its tags (deletes never cascade).
+  env.apply('recurring_cost', 'delete', undefined, canva);
+  assert.equal(costs.sharesByCost().has(canva), false);
+  assert.deepEqual(costs.monthlyTotals().overall.map((o) => o.yearly_cents), [6000]);
+});
+
+test('shared costs (D6b): cost_share is create/delete only and needs a live cost and a business', async (t) => {
+  const env = await setup(t);
+  const id = env.local('recurring_cost', { name: 'Hosting', business_id: AGENCY, amount_cents: 1000, period: 'monthly', next_renewal: '2027-02-01' });
+  const share = env.local('cost_share', { cost_id: id, business_id: SAVE_POINT });
+  assert.throws(() => env.edit('cost_share', share, { business_id: AGENCY }), /op_not_allowed|not allowed|update/i);
+  const r = env.sync.applyLocal({ actor: 'owner', entity: 'cost_share', op: 'create', fields: { cost_id: id, business_id: newId() } });
+  assert.notEqual(r.status, 'applied', 'a business that is not there is refused');
+  const r2 = env.sync.applyLocal({ actor: 'owner', entity: 'cost_share', op: 'create', fields: { cost_id: newId(), business_id: AGENCY } });
+  assert.notEqual(r2.status, 'applied', 'a cost that is not there is refused');
+  // Existing costs are untouched by the migration: this one has no tags and counts whole.
+  assert.equal(env.ctx.services.costs.monthlyTotals().businesses.find((b) => b.business_id === SAVE_POINT).yearly_cents, 12000, 'tagged for Save Point Shop alone');
+  env.local('recurring_cost', { name: 'Domain', business_id: AGENCY, amount_cents: 2400, period: 'yearly', next_renewal: '2027-02-01' });
+  assert.equal(env.ctx.services.costs.monthlyTotals().businesses.find((b) => b.business_id === AGENCY).yearly_cents, 2400, 'untagged: whole to the business that pays');
+});

@@ -1,12 +1,13 @@
 // Add / edit one recurring cost (D6), in a sheet like the CRM's forms: written through the offline
 // store (works with no connection), an edit sends only the fields changed since the sheet opened,
 // Delete is behind a confirm (for mistakes — Cancelled is how a cost stops).
-import { COST_PERIODS, COST_PERIOD_LABELS, COST_STATUSES, COST_NAME_MAX, COST_REMINDER_DAYS } from '@suite/shared/costs';
+import { COST_PERIODS, COST_PERIOD_LABELS, COST_STATUSES, COST_NAME_MAX, COST_REMINDER_DAYS, shareLabel } from '@suite/shared/costs';
 import { TextField, SelectField, TextAreaField, CheckboxField } from '../../ui/index.js';
 import { FormSheet } from '../crm/parts.jsx';
 import { useForm, deleter } from '../crm/forms.jsx';
 import { pickableBusinesses, titleCase } from '../crm/logic.js';
-import { costForm, relationshipOptions, currencyOptions } from './logic.js';
+import { store } from '../../sync/index.js';
+import { costForm, relationshipOptions, currencyOptions, usedByList, usedByValue, toggleUsedBy, applyUsedBy } from './logic.js';
 
 const row = { display: 'grid', gap: 'var(--space-3)', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' };
 
@@ -17,8 +18,15 @@ const row = { display: 'grid', gap: 'var(--space-3)', gridTemplateColumns: 'repe
  * @param {{ businesses, relationships, accounts, clients }} props.data what the pickers list
  */
 export function CostForm({ record, initial, data, onClose, onDone, onDeleted }) {
-  const { v, set, save, dirty, problems, busy, error, run } = useForm(costForm, record, { entity: 'recurring_cost', onDone, initial });
+  // D6b: the businesses it is tagged for come from the cost_share rows, not from the cost itself.
+  const taggedNow = usedByValue(record ? data.shares?.get(record.id) : []);
+  const { v, set, save, dirty, problems, busy, error, run } = useForm(costForm, record, {
+    entity: 'recurring_cost', onDone, initial: { ...initial, used_by: taggedNow }, after: (id, values) => applyUsedBy(store, id, values.used_by),
+  });
   const businesses = pickableBusinesses(data.businesses, record?.business_id ?? null);
+  const usedBy = usedByList(v.used_by);
+  // Every non-archived business, plus any already tagged on this cost (even if archived since).
+  const usedByChoices = data.businesses.filter((b) => !b.archived || usedByList(taggedNow).includes(b.id));
   const rels = relationshipOptions(data, record?.relationship_id ?? null);
   const once = v.period === 'once';
   return (
@@ -46,6 +54,27 @@ export function CostForm({ record, initial, data, onClose, onDone, onDeleted }) 
         />
         <TextField id="cost-vendor" label="Vendor (optional)" value={v.vendor} onChange={set('vendor')} maxLength={200} />
       </div>
+      <fieldset style={{ border: 0, padding: 0, margin: 0, display: 'grid', gap: 2 }} data-testid="cost-used-by">
+        <legend style={{ fontSize: 'var(--text-sm)', fontWeight: 600, padding: 0 }}>Used by (optional)</legend>
+        <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+          Tick every business that uses it. The company pays the full amount; each business shows an even share.
+          Leave all unticked and it counts whole to the business that pays.
+        </span>
+        {usedByChoices.map((b) => (
+          <CheckboxField
+            key={b.id}
+            id={`cost-used-${b.id}`}
+            label={b.archived ? `${b.name} (archived)` : b.name}
+            checked={usedBy.includes(b.id)}
+            onChange={(on) => set('used_by')(toggleUsedBy(v.used_by, b.id, on))}
+          />
+        ))}
+        {usedBy.length > 1 ? (
+          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }} data-testid="cost-share-preview">
+            Split evenly: {usedBy.length} businesses, {shareLabel(usedBy.length)} each (to the cent, so the shares add up to the full amount).
+          </span>
+        ) : null}
+      </fieldset>
       <div style={row}>
         <TextField id="cost-amount" label="Amount $ (optional)" inputMode="decimal" value={v.amount} onChange={set('amount')} error={problems.amount} hint="Each time it’s paid" />
         <SelectField id="cost-currency" label="Currency" value={v.currency} onChange={set('currency')} options={currencyOptions(v.currency)} />

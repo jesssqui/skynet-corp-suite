@@ -111,6 +111,49 @@ export function yearlyCents(cost, field = 'amount_cents') {
 export const monthlyFromYearly = (cents) => Math.round(cents / 12);
 
 /**
+ * Splitting a cost across the businesses that use it (D6b). The company pays; each business shows an
+ * even share, to the cent, and the shares add up to the full amount. Ids are sorted so every device
+ * and the server give the same cent to the same business; the leftover cents go one each to the
+ * first ids. No percentage is stored (shareLabel words it: 50%, 33.3%).
+ * → [{ businessId, cents }] (empty when there is nobody to split between)
+ */
+export function splitCents(amountCents, businessIds) {
+  const ids = [...new Set(businessIds)].sort();
+  const n = ids.length;
+  if (!n || !Number.isFinite(amountCents)) return [];
+  const base = Math.floor(amountCents / n);
+  let extra = amountCents - base * n;
+  return ids.map((businessId) => {
+    const cents = base + (extra > 0 ? 1 : 0);
+    if (extra > 0) extra -= 1;
+    return { businessId, cents };
+  });
+}
+
+/** One business's even share as words: 1 → "100%", 2 → "50%", 3 → "33.3%"; '' for none. */
+export function shareLabel(count) {
+  if (!(count > 0)) return '';
+  const percent = 100 / count;
+  return `${Number.isInteger(percent) ? percent : percent.toFixed(1)}%`;
+}
+
+/**
+ * The businesses a cost counts for: the ones it is tagged "used by" (`sharesByCost`: Map<cost id,
+ * business ids>), else only the business that pays (`business_id`) — so a cost with no tags, which is
+ * every cost made before this, counts whole to its own business as always.
+ */
+export function costBusinesses(cost, sharesByCost) {
+  const tagged = sharesByCost?.get(cost.id);
+  return tagged?.length ? [...new Set(tagged)].sort() : [cost.business_id];
+}
+
+/** What one business's share of a cost's amount (`field`) is, in cents: even split of its yearly figure. */
+export function costShareYearly(cost, businessId, sharesByCost, field = 'amount_cents') {
+  const parts = splitCents(yearlyCents(cost, field), costBusinesses(cost, sharesByCost));
+  return parts.find((p) => p.businessId === businessId)?.cents ?? 0;
+}
+
+/**
  * Monthly-equivalent and yearly totals of ACTIVE costs (cancelled ones and `once` left out), per
  * business and overall, per currency — amounts in different currencies are never added together.
  * → { byBusiness: Map<business_id, Map<currency, Sum>>, overall: Map<currency, Sum> } where
@@ -118,25 +161,43 @@ export const monthlyFromYearly = (cents) => Math.round(cents / 12);
  * `count` counts the recurring ones that went in. `resoldLive(cost)` says whether a resold cost's
  * relationship (and its account and client) is still there: the resold side of one whose client is
  * gone (deleted, or hidden under a deleted parent) is left out, as the page leaves out its line.
+ * D6b: `shares` (Map<cost id, business ids>) splits a cost evenly, to the cent, among the businesses
+ * it is tagged for (byBusiness); `overall` always holds the full amount once. A cost with no tags
+ * counts whole to its own business, as before. A cost used by three businesses counts 1 in each.
  */
-export function costTotals(costs, { resoldLive = () => true } = {}) {
+export function costTotals(costs, { resoldLive = () => true, shares = null } = {}) {
   const byBusiness = new Map();
   const overall = new Map();
-  const add = (map, currency, cost) => {
+  const slot = (map, currency) => {
     const s = map.get(currency) ?? { count: 0, yearly_cents: 0, monthly_cents: 0, resold_yearly_cents: 0, resold_monthly_cents: 0 };
-    s.count += 1;
-    s.yearly_cents += yearlyCents(cost);
-    s.resold_yearly_cents += cost.relationship_id && resoldLive(cost) ? yearlyCents(cost, 'resold_amount_cents') : 0;
+    map.set(currency, s);
+    return s;
+  };
+  const settle = (s) => {
     s.monthly_cents = monthlyFromYearly(s.yearly_cents);
     s.resold_monthly_cents = monthlyFromYearly(s.resold_yearly_cents);
-    map.set(currency, s);
   };
   for (const c of costs) {
     if (!isActiveCost(c) || c.period === 'once' || !PER_YEAR[c.period]) continue;
     const currency = costCurrency(c);
-    if (!byBusiness.has(c.business_id)) byBusiness.set(c.business_id, new Map());
-    add(byBusiness.get(c.business_id), currency, c);
-    add(overall, currency, c);
+    const yearly = yearlyCents(c);
+    const resold = c.relationship_id && resoldLive(c) ? yearlyCents(c, 'resold_amount_cents') : 0;
+    const o = slot(overall, currency);
+    o.count += 1;
+    o.yearly_cents += yearly;
+    o.resold_yearly_cents += resold;
+    settle(o);
+    const who = costBusinesses(c, shares);
+    const yearlyParts = new Map(splitCents(yearly, who).map((p) => [p.businessId, p.cents]));
+    const resoldParts = new Map(splitCents(resold, who).map((p) => [p.businessId, p.cents]));
+    for (const id of who) {
+      if (!byBusiness.has(id)) byBusiness.set(id, new Map());
+      const s = slot(byBusiness.get(id), currency);
+      s.count += 1;
+      s.yearly_cents += yearlyParts.get(id) ?? 0;
+      s.resold_yearly_cents += resoldParts.get(id) ?? 0;
+      settle(s);
+    }
   }
   return { byBusiness, overall };
 }

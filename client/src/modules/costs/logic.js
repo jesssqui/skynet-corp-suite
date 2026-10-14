@@ -3,7 +3,7 @@
 // what changed is sent on an edit — the CRM's editChanges). Tested in client/test/costs.test.js.
 import {
   costTotals, costState, costAmountText, moneyText, costCurrency, costStatus, daysFromTo, costsRenewingBetween,
-  CURRENCIES, DEFAULT_CURRENCY, dayOfMonth,
+  CURRENCIES, DEFAULT_CURRENCY, dayOfMonth, costBusinesses, costShareYearly, shareLabel, monthlyFromYearly,
 } from '@suite/shared/costs';
 import { addDays } from '@suite/shared/planner';
 import { formatDate } from '../../ui/format.js';
@@ -15,11 +15,30 @@ export const STATUS_FILTERS = Object.freeze([
 /** The Friday review lists costs renewing in this many days (as client services). */
 export const REVIEW_DAYS = 30;
 
-/** Costs matching the page's filters: our business ('' = all), status (active | cancelled | all), words in name, vendor or payment method. */
-export function filterCosts(costs, { business = '', status = 'active', q = '' } = {}) {
+/**
+ * D6b: which businesses use each cost, from the device's `cost_share` rows: Map<cost id, business ids>
+ * (sorted, no repeats — two devices tagging the same business offline leave two rows). No tags = not in the map.
+ */
+export function sharesByCost(rows) {
+  const out = new Map();
+  for (const r of rows ?? []) {
+    if (!r.cost_id || !r.business_id) continue;
+    const list = out.get(r.cost_id) ?? [];
+    if (!list.includes(r.business_id)) list.push(r.business_id);
+    out.set(r.cost_id, list.sort());
+  }
+  return out;
+}
+
+/**
+ * Costs matching the page's filters: one of our businesses ('' = all) — a cost counts for each business it is
+ * tagged "used by", else for the one that pays —, status (active | cancelled | all), words in name, vendor or
+ * payment method.
+ */
+export function filterCosts(costs, { business = '', status = 'active', q = '', shares = null } = {}) {
   const words = fold(q).split(/\s+/).filter(Boolean);
   return costs.filter((c) => {
-    if (business && c.business_id !== business) return false;
+    if (business && !costBusinesses(c, shares).includes(business)) return false;
     if (status !== 'all' && costStatus(c) !== status) return false;
     if (!words.length) return true;
     const text = fold([c.name, c.vendor, c.payment_method].filter(Boolean).join(' '));
@@ -39,18 +58,42 @@ export function compareCosts(a, b) {
  * The page's sections: one per business that has costs (in our businesses' order, Personal
  * included), each with its costs (soonest first) and its totals (active ones: costTotals; `resoldLive(cost)`
  * leaves out the resold side of a cost whose relationship, account or client isn't on the device).
+ * D6b: a cost used by several businesses is listed under each of them (`shares`: Map<cost id, business ids>)
+ * and each total is that business's even share; `overall` is the full amount once. A cost with no tags is
+ * listed under the business that pays, whole.
  * → { groups: [{ business, costs, totals: Map<currency, Sum> }], overall: Map<currency, Sum> }
  */
-export function groupCosts(costs, businesses, { resoldLive } = {}) {
+export function groupCosts(costs, businesses, { resoldLive, shares = null } = {}) {
   const order = new Map(businesses.map((b, i) => [b.id, b.position ?? 1000 + i]));
   const byBusiness = new Map();
-  for (const c of costs) byBusiness.set(c.business_id, [...(byBusiness.get(c.business_id) ?? []), c]);
-  const totals = costTotals(costs, resoldLive ? { resoldLive } : {});
+  for (const c of costs) {
+    for (const id of costBusinesses(c, shares)) byBusiness.set(id, [...(byBusiness.get(id) ?? []), c]);
+  }
+  const totals = costTotals(costs, { ...(resoldLive ? { resoldLive } : {}), shares });
   const byId = new Map(businesses.map((b) => [b.id, b]));
   const groups = [...byBusiness.entries()]
     .sort(([a], [b]) => (order.get(a) ?? 1e9) - (order.get(b) ?? 1e9) || (a < b ? -1 : 1))
     .map(([id, list]) => ({ business: byId.get(id) ?? { id, name: 'Unknown business' }, costs: [...list].sort(compareCosts), totals: totals.byBusiness.get(id) ?? new Map() }));
   return { groups, overall: totals.overall };
+}
+
+/**
+ * One business's share of a cost, for its row: { count, label, text } — "1 of 3 · 33.3%" and the share as
+ * money per the cost's own period ("$1.67/mo" style via costAmountText on a copy); null when the cost is not
+ * shared (one business: the whole amount is shown as it is) or has no amount or is a one-time cost.
+ */
+export function shareLine(cost, businessId, shares) {
+  const who = costBusinesses(cost, shares);
+  if (who.length < 2 || !who.includes(businessId)) return null;
+  const yearly = costShareYearly(cost, businessId, shares);
+  const perPeriod = { monthly: 12, quarterly: 4, yearly: 1 }[cost.period];
+  const out = { count: who.length, label: `${shareLabel(who.length)} of ${cost.name}`, percent: shareLabel(who.length), text: null };
+  if (perPeriod && Number.isFinite(cost.amount_cents)) {
+    const cur = costCurrency(cost);
+    const monthly = monthlyFromYearly(yearly);
+    out.text = `${moneyText(monthly, cur)}/mo · ${moneyText(yearly, cur)}/yr`;
+  }
+  return out;
 }
 
 /**
@@ -143,6 +186,9 @@ export const costForm = {
     // The billing day (anchor_day) goes with the date: kept as stored while the date isn't changed,
     // else the new date's day (date0 = the date the form opened with).
     anchor_day: '', date0: '',
+    // D6b: the businesses that use it, as sorted ids joined by commas (a string, so the form's "changed?" check
+    // compares it like any other input). Not a field of the cost: saved as cost_share rows (shareChanges).
+    used_by: '',
   },
   fromRecord: (v, record) => ({
     ...v,
@@ -176,3 +222,41 @@ export const costForm = {
     };
   },
 };
+
+/** The form's "used by" value (sorted ids joined by commas) <-> a list of business ids. */
+export const usedByList = (value) => [...new Set(String(value ?? '').split(',').filter(Boolean))].sort();
+export const usedByValue = (ids) => usedByList((ids ?? []).join(',')).join(',');
+export const toggleUsedBy = (value, businessId, on) => {
+  const set = new Set(usedByList(value));
+  if (on) set.add(businessId); else set.delete(businessId);
+  return [...set].sort().join(',');
+};
+
+/**
+ * What saving "used by" must do, from the share rows now on the device for this cost and the ids ticked:
+ * { add: [business ids with no row], remove: [row ids to delete — every copy of an unticked business, and
+ * rows for a business named twice beyond the first] }. Nothing to do when they already agree.
+ */
+export function shareChanges(rows, wanted) {
+  const want = new Set(usedByList(Array.isArray(wanted) ? wanted.join(',') : wanted));
+  const seen = new Set();
+  const remove = [];
+  for (const r of rows) {
+    if (!want.has(r.business_id) || seen.has(r.business_id)) remove.push(r.id);
+    else seen.add(r.business_id);
+  }
+  return { add: [...want].filter((id) => !seen.has(id)), remove };
+}
+
+/**
+ * Make a cost's "used by" rows match `wanted` (the form's value): add the missing, delete the unticked and
+ * any repeat. `store` is the offline store (or an engine in tests). It works from the rows on the device now,
+ * so Save again after a failure part-way only does what is left.
+ */
+export async function applyUsedBy(store, costId, wanted) {
+  const rows = await store.list('cost_share', { where: { cost_id: costId } });
+  const { add, remove } = shareChanges(rows, wanted);
+  for (const businessId of add) await store.create('cost_share', { cost_id: costId, business_id: businessId });
+  for (const id of remove) await store.remove('cost_share', id);
+  return { added: add.length, removed: remove.length };
+}
