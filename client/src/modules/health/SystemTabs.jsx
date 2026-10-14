@@ -1,11 +1,12 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Segmented, Icon } from '../../ui/index.js';
 
-// System, Connections and Automations share the System nav entry; this switches between them.
+// System, Connections, Automations and Admin share the System nav entry; this switches between them.
 const TABS = [
   { value: '/system', label: 'System', icon: 'pulse' },
   { value: '/system/connections', label: 'Connections', icon: 'plug' },
   { value: '/system/automations', label: 'Automations', icon: 'bolt' },
+  { value: '/system/admin', label: 'Admin', icon: 'user' },
 ];
 
 export default function SystemTabs() {

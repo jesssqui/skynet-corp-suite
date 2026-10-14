@@ -754,3 +754,21 @@ test('users.js add sets up two-factor before saving; reset-2fa, password and unl
   assert.match(pw.out, /unlocked/);
   assert.equal((await old.post('/api/auth/login', { username: 'jessy', password: 'a different passphrase' })).status, 200);
 });
+
+test('the Admin page lists both accounts: who, and whether two-factor is on — never a secret', async (t) => {
+  const env = await setup(t);
+  const mac = browser(env.base, { userAgent: MAC });
+  // Signed out: nothing about the accounts is shown.
+  assert.equal((await mac.get('/api/auth/people')).status, 401);
+
+  await signIn(env, mac, 'jessy');
+  const res = await mac.get('/api/auth/people');
+  assert.equal(res.status, 200);
+  const people = res.body.people;
+  assert.deepEqual(people.map((p) => p.actor).sort(), ['owner', 'partner']);
+  for (const p of people) {
+    assert.equal(p.twoFactorOn, true);
+    assert.deepEqual(Object.keys(p).sort(), ['actor', 'displayName', 'twoFactorOn', 'username']);
+    assert.doesNotMatch(JSON.stringify(p), /hash|secret|totp|recovery/i);
+  }
+});

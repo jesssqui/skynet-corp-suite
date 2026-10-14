@@ -386,6 +386,16 @@ export function createAuthService({ db, config, log, services, now = Date.now })
     })();
   }
 
+  /** The two accounts, for the Admin page: who, and whether two-factor is set up. Never a secret. */
+  function listPeople() {
+    return accounts.listUsers().map((u) => ({
+      actor: u.actor,
+      username: u.username,
+      displayName: u.display_name,
+      twoFactorOn: Boolean(accounts.getTotp(u.id)),
+    }));
+  }
+
   function listDevices() {
     const t = now();
     return allDevices.all({ now: iso(t), idle_cutoff: iso(t - cfg.sessionIdleMs) }).map((d) => ({
@@ -507,6 +517,7 @@ export function createAuthService({ db, config, log, services, now = Date.now })
     finishSignIn,
     signOutDevice,
     listDevices,
+    listPeople,
     renameDevice,
     changePassword,
     regenerateRecoveryCodes,
